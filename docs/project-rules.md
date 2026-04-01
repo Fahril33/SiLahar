@@ -1,0 +1,32 @@
+# Project Rules
+
+- Sistem ini adalah platform pengisian laporan harian.
+- Frontend menggunakan React, TypeScript, dan Tailwind CSS.
+- Komponen harus dibangun modular dan bertahap selama pengembangan.
+- Jangan menunggu satu file menjadi besar sebelum dipecah.
+- `App.tsx` harus tetap tipis dan hanya menjadi penghubung view utama.
+- Logika berat dipisah ke hook, service, util, dan komponen.
+- Database menggunakan Supabase.
+- Setiap perubahan database ditambahkan pada file SQL baru dengan nomor urut di depan nama file.
+- Struktur data harus relasional, modular, rapi, dan menghindari duplikasi.
+- Data tertentu harus dipertimbangkan sejak awal agar nantinya mudah diubah oleh admin.
+- Zona waktu aplikasi adalah WITA / `Asia/Makassar`.
+- Laporan hanya boleh dibuat untuk hari berjalan.
+- Nama yang disimpan dan ditampilkan selalu uppercase.
+- Tanggal tampilan dokumen selalu terisi otomatis, uppercase, dan tidak bisa diedit user.
+- `report_date` dipakai internal sistem, tidak perlu ditampilkan sebagai input user.
+- Input waktu harus menggunakan input jam yang proper, bukan teks bebas.
+- Jika HTML native tidak cukup, boleh menggunakan komponen shadcn.
+- `proof text` tidak dipakai.
+- Bukti aktivitas saat ini dibatasi ketat 1 foto per baris aktivitas.
+- Aturan batas foto harus diperlakukan sebagai aturan modular yang nantinya bisa diubah admin.
+- Batas upload foto harus dibaca dari database terlebih dahulu, diterapkan di UI, dan tetap dijaga lagi di level database.
+- Preview dan hasil print harus menampilkan gambar bukti memenuhi kolom dengan tinggi otomatis.
+- Preview dokumen harus memiliki batas lebar yang jelas.
+- Kolom detail aktivitas pada preview harus mendukung word wrap.
+- Header halaman form dihilangkan.
+- Feedback dan konfirmasi aksi menggunakan SweetAlert.
+- Tidak menampilkan banner status di atas form setelah aksi dilakukan.
+- UX yang baik menjadi pertimbangan utama.
+- Draft form tetap disimpan lokal agar aman saat reload atau keluar aplikasi.
+- Aplikasi harus tetap ringan, mobile-friendly, dan cukup kuat menangani beberapa request ke database.
