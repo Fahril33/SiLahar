@@ -1,76 +1,236 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import pdfStyles from "../styles/report-pdf.css?inline";
+import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
 
-function downloadBlob(fileName: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
+function sanitizeFileSegment(value: string) {
+  return value
+    .trim()
+    .replace(/[.,/\\]/g, " ")
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Z0-9_()-]/gi, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function buildDocumentTitle(report: Report) {
+  const nameSegment = sanitizeFileSegment(report.nama || "LAPORAN");
+  const dateSegment = sanitizeFileSegment(
+    report.tanggal || report.reportDate || "TANGGAL",
+  );
+  return `${nameSegment}_${dateSegment}`;
+}
+
+function buildPdfFileName(report: Report) {
+  return `${buildDocumentTitle(report)}.pdf`;
+}
+
+function renderReportMarkup(report: Report) {
+  return `<div class="pdf-report-shell">${renderToStaticMarkup(createElement(ReportPdfDocument, { report }))}</div>`;
+}
+
+function createPdfContainer(report: Report) {
+  const container = document.createElement("div");
+  container.style.width = "210mm";
+  container.style.background = "#ffffff";
+  container.innerHTML = `
+    <style>${pdfStyles}</style>
+    ${renderReportMarkup(report)}
+  `;
+  return container;
+}
+
+function waitForPaint() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
+async function waitForImages(container: HTMLElement) {
+  const images = Array.from(container.querySelectorAll("img"));
+
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+
+          const complete = () => resolve();
+          image.addEventListener("load", complete, { once: true });
+          image.addEventListener("error", complete, { once: true });
+        }),
+    ),
+  );
+}
+
+type Html2PdfInstance = {
+  set: (options: Record<string, unknown>) => Html2PdfInstance;
+  from: (element: HTMLElement | string) => Html2PdfInstance;
+  toPdf: () => Html2PdfInstance;
+  outputPdf: (type: "blob") => Promise<Blob>;
+};
+
+type Html2PdfFactory = {
+  (): Html2PdfInstance;
+};
+
+function getPdfOptions(
+  report: Report,
+  paperFormat: "a4" | "f4" | "legal" | "letter",
+) {
+  const formatArray = paperFormat === "f4" ? [210, 330] : paperFormat;
+
+  return {
+    margin: [20, 0, 20, 0], // Hanya top dan bottom yang ditangani library agar lebar canvas asli 210mm tidak terdistorsi
+    filename: buildPdfFileName(report),
+    image: { type: "jpeg", quality: 0.98 },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: 794,
+    },
+    jsPDF: {
+      unit: "mm",
+      format: formatArray,
+      orientation: "portrait",
+    },
+    pagebreak: {
+      mode: ["css", "legacy"],
+      avoid: ["tr", "img", ".pdf-report-footer", ".pdf-report-identity"],
+    },
+  };
+}
+
+async function buildPdfBlob(
+  report: Report,
+  paperFormat: "a4" | "f4" | "legal" | "letter",
+) {
+  const html2pdfModule = await import("html2pdf.js");
+  const html2pdf = html2pdfModule.default as unknown as Html2PdfFactory;
+  const container = createPdfContainer(report);
+
+  container.innerHTML += `
+    <style>
+      .pdf-report-shell, .pdf-report-page {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        min-height: auto !important;
+      }
+    </style>
+  `;
+
+  // Pre-load images in the background so they enter the browser's cache instantly
+  const preloader = document.createElement("div");
+  preloader.style.position = "fixed";
+  preloader.style.width = "1px";
+  preloader.style.height = "1px";
+  preloader.style.overflow = "hidden";
+  preloader.style.opacity = "0";
+  preloader.innerHTML = container.innerHTML;
+  document.body.appendChild(preloader);
+
+  try {
+    await waitForImages(preloader);
+    await waitForPaint();
+    // Gunakan murni string container.innerHTML agar html2pdf membangun ulang canvas tanpa terkontaminasi CSS tersembunyi
+    return await html2pdf()
+      .set(getPdfOptions(report, paperFormat))
+      .from(container.innerHTML)
+      .toPdf()
+      .outputPdf("blob");
+  } finally {
+    document.body.removeChild(preloader);
+  }
+}
+
+export async function exportReportAsPdf(
+  report: Report,
+  paperFormat: "a4" | "f4" | "legal" | "letter",
+) {
+  const blob = await buildPdfBlob(report, paperFormat);
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName;
+  link.download = buildPdfFileName(report);
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function renderPhotoCell(report: Report, activityNo: number) {
-  const activity = report.activities.find((item) => item.no === activityNo);
-  const photo = activity?.photos[0];
+export async function printReportDocument(
+  report: Report,
+  paperFormat: "a4" | "f4" | "legal" | "letter",
+) {
+  const originalTitle = document.title;
+  const container = createPdfContainer(report);
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  iframe.style.border = "0";
+  iframe.setAttribute("aria-hidden", "true");
+  document.body.appendChild(iframe);
 
-  if (!photo) {
-    return "-";
+  const frameWindow = iframe.contentWindow;
+  const frameDoc = frameWindow?.document;
+
+  if (!frameWindow || !frameDoc) {
+    document.body.removeChild(iframe);
+    return;
   }
 
-  return `<img src="${photo.publicUrl}" alt="${photo.originalFileName}" style="display:block;width:100%;height:auto;object-fit:cover;border-radius:8px;" />`;
-}
+  frameDoc.open();
+  frameDoc.write(`<!DOCTYPE html><html><head><title>${buildDocumentTitle(report)}</title>
+  <style>
+    @page {
+      size: ${paperFormat === "f4" ? "210mm 330mm" : paperFormat} portrait !important;
+      margin: 20mm 18mm 20mm 20mm !important;
+    }
+    body {
+      margin: 0 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .pdf-report-shell, .pdf-report-page {
+      width: 100% !important;
+      min-height: auto !important;
+      padding: 0 !important;
+    }
+  </style>
+  </head><body>`);
+  frameDoc.write(container.innerHTML);
+  frameDoc.write("</body></html>");
+  frameDoc.close();
 
-export function exportReportAsExcel(report: Report) {
-  const rows = [
-    ["NAMA", report.nama],
-    ["HARI/TANGGAL", report.tanggal],
-    [],
-    ["NO", "DETAIL AKTIVITAS YANG DILAKSANAKAN", "MULAI", "SELESAI", "BUKTI DOKUMENTASI"],
-    ...report.activities.map((activity) => [
-      activity.no,
-      activity.description,
-      activity.startTime,
-      `${activity.endTime} WITA`,
-      activity.photos[0]?.publicUrl ?? "-",
-    ]),
-  ];
-  const csv = rows.map((row) => row.map((item) => `"${String(item).replace(/"/g, '""')}"`).join(",")).join("\n");
-  downloadBlob(`laporan-${report.nama}-${report.reportDate}.csv`, csv, "text/csv;charset=utf-8");
-}
+  try {
+    await waitForImages(frameDoc.body);
+    await waitForPaint();
+    await new Promise<void>((resolve) => {
+      document.title = buildDocumentTitle(report);
+      const cleanupAndResolve = () => resolve();
 
-export function exportReportAsWord(report: Report) {
-  const content = `
-    <html>
-      <body>
-        <h1>LAPORAN HARIAN KINERJA TIM REAKSI CEPAT</h1>
-        <p><strong>NAMA:</strong> ${report.nama}</p>
-        <p><strong>HARI/TANGGAL:</strong> ${report.tanggal}</p>
-        <table border="1" cellspacing="0" cellpadding="6" style="width:100%;border-collapse:collapse;table-layout:fixed;">
-          <thead>
-            <tr>
-              <th style="width:8%;">NO</th>
-              <th style="width:46%;word-break:break-word;">DETAIL AKTIVITAS YANG DILAKSANAKAN</th>
-              <th style="width:18%;">WAKTU PELAKSANAAN</th>
-              <th style="width:28%;">BUKTI DOKUMENTASI</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${report.activities
-              .map(
-                (activity) => `
-                  <tr>
-                    <td style="vertical-align:top;">${activity.no}</td>
-                    <td style="vertical-align:top;white-space:pre-wrap;word-break:break-word;">${activity.description}</td>
-                    <td style="vertical-align:top;">${activity.startTime} - ${activity.endTime} WITA</td>
-                    <td style="vertical-align:top;">${renderPhotoCell(report, activity.no)}</td>
-                  </tr>`,
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </body>
-    </html>
-  `;
-  downloadBlob(`laporan-${report.nama}-${report.reportDate}.doc`, content, "application/msword");
+      frameWindow.onafterprint = cleanupAndResolve;
+      // timeout just in case onafterprint doesn't fire or print dialog is closed implicitly in some browsers
+      window.setTimeout(cleanupAndResolve, 15000);
+      frameWindow.focus();
+      frameWindow.print();
+    });
+  } finally {
+    document.title = originalTitle;
+/*  */    document.body.removeChild(iframe);
+  }
 }

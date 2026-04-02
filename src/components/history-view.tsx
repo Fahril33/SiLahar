@@ -1,8 +1,7 @@
 import { formatWitaDateTime } from "../lib/time";
 import type { Report } from "../types/report";
 
-const inputClassName =
-  "w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-lagoon";
+const inputClassName = "field-input";
 
 export function HistoryView(props: {
   loading: boolean;
@@ -12,8 +11,11 @@ export function HistoryView(props: {
   setHistoryDate: (value: string) => void;
   historyResults: Report[];
   onHandleLoadEdit: (report: Report) => Promise<void>;
-  onHandleExport: (report: Report, format: "excel" | "word") => Promise<void>;
+  onHandleExport: (report: Report) => Promise<void>;
+  onHandlePrint: (report: Report) => Promise<void>;
   today: string;
+  paperFormat: "a4" | "f4" | "legal" | "letter";
+  setPaperFormat: (format: "a4" | "f4" | "legal" | "letter") => void;
 }) {
   const {
     loading,
@@ -24,20 +26,33 @@ export function HistoryView(props: {
     historyResults,
     onHandleLoadEdit,
     onHandleExport,
+    onHandlePrint,
     today,
+    paperFormat,
+    setPaperFormat,
   } = props;
 
   return (
     <section className="space-y-4">
-      <div className="glass rounded-[28px] border border-sky-100/80 bg-gradient-to-br from-sky-50/90 via-white/90 to-cyan-50/70 p-5 shadow-soft">
-        <div className="grid gap-4 md:grid-cols-3">
+      <div className="panel-glass rounded-[28px] p-5">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
           <input value={historyName} onChange={(event) => setHistoryName(event.target.value.toUpperCase())} placeholder="FILTER NAMA" className={inputClassName} />
           <input type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className={inputClassName} />
-          <div className="rounded-2xl border border-sky-100 bg-white/80 p-4 text-sm text-ink/70">{loading ? "Memuat..." : `Menampilkan ${historyResults.length} laporan.`}</div>
+          <select
+            value={paperFormat}
+            onChange={(e) => setPaperFormat(e.target.value as "a4" | "f4" | "legal" | "letter")}
+            className={inputClassName}
+          >
+            <option value="a4">PDF: A4</option>
+            <option value="f4">PDF: F4</option>
+            <option value="legal">PDF: Legal</option>
+            <option value="letter">PDF: Letter</option>
+          </select>
+          <div className="surface-muted rounded-2xl p-4 text-sm text-[var(--text-muted)]">{loading ? "Memuat..." : `Menampilkan ${historyResults.length} laporan.`}</div>
         </div>
       </div>
       {historyResults.map((report) => (
-        <article key={report.id} className="glass rounded-[24px] border border-amber-100/80 bg-gradient-to-br from-white/95 to-amber-50/60 p-5 shadow-soft">
+        <article key={report.id} className="surface-card rounded-[24px] p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h3 className="text-xl font-bold">{report.nama}</h3>
@@ -45,9 +60,9 @@ export function HistoryView(props: {
               <ul className="mt-2 space-y-1 text-sm text-ink/80">{report.activities.slice(0, 3).map((activity) => <li key={`${report.id}-${activity.no}`}>{activity.no}. {activity.description} ({activity.startTime} - {activity.endTime} WITA)</li>)}</ul>
             </div>
             <div className="flex flex-wrap gap-2">
-              {report.reportDate === today ? <button type="button" onClick={() => void onHandleLoadEdit(report)} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold">Edit</button> : null}
-              <button type="button" onClick={() => void onHandleExport(report, "excel")} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold">Download Excel</button>
-              <button type="button" onClick={() => void onHandleExport(report, "word")} className="rounded-full bg-coral px-4 py-2 text-sm font-semibold text-white">Download Word</button>
+              {report.reportDate === today ? <button type="button" onClick={() => void onHandleLoadEdit(report)} className="btn-secondary px-4 py-2 text-sm">Edit</button> : null}
+              <button type="button" onClick={() => void onHandleExport(report)} className="btn-secondary hidden px-4 py-2 text-sm">Download PDF</button>
+              <button type="button" onClick={() => void onHandlePrint(report)} className="btn-secondary px-4 py-2 text-sm">Print</button>
             </div>
           </div>
         </article>

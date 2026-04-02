@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { askConfirmation, showError, showInfo, showSuccess } from "../lib/alerts";
 import { DEFAULT_REPORT_RULES, type ReportRules } from "../config/report-rules";
-import { exportReportAsExcel, exportReportAsWord } from "../lib/exporters";
+import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
   createEmptyDraft,
@@ -21,14 +21,28 @@ import {
   loadDeviceSubmittedNames,
   loadDraft,
   pushDeviceSubmittedName,
+  removeDeviceSubmittedName,
+  saveDraft as persistDraft,
   saveCachedReporterNames,
   saveCachedReports,
-  saveDraft,
 } from "../lib/storage";
 import { isWitaFriday } from "../lib/time";
 import type { DraftReport, Report } from "../types/report";
 
 export type View = "entry" | "history" | "status";
+export type DraftCacheStatus = "idle" | "saving" | "saved";
+
+function hasMeaningfulDraft(draft: DraftReport) {
+  return Boolean(
+    draft.activities.some(
+      (activity) =>
+        activity.description.trim() ||
+        activity.photos.length > 0 ||
+        activity.startTime !== "09:00" ||
+        activity.endTime !== "09:00",
+    ),
+  );
+}
 
 function createDraftSnapshot(draft: DraftReport, pendingPhotos: PendingPhotoMap) {
   return JSON.stringify({
@@ -58,6 +72,7 @@ function createDraftSnapshot(draft: DraftReport, pendingPhotos: PendingPhotoMap)
 
 export function useReportDashboard() {
   const [view, setView] = useState<View>("entry");
+  const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
   const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
@@ -75,8 +90,33 @@ export function useReportDashboard() {
   const [reportRules, setReportRules] = useState<ReportRules>(DEFAULT_REPORT_RULES);
   const [loadedSearchReportId, setLoadedSearchReportId] = useState<string | null>(null);
   const [loadedSearchSnapshot, setLoadedSearchSnapshot] = useState<string | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
+  const [searchOpen, setSearchOpen] = useState(false);
 
-  useEffect(() => saveDraft(draft), [draft]);
+  function handleRemoveSavedName(name: string) {
+    const updated = removeDeviceSubmittedName(name);
+    setDeviceSubmittedNames(updated);
+  }
+
+  useEffect(() => {
+    setDraftCacheStatus("saving");
+    persistDraft(draft);
+    
+    const timeoutId1 = window.setTimeout(() => {
+      setDraftSavedAt(new Date().toISOString());
+      setDraftCacheStatus("saved");
+    }, 500);
+
+    const timeoutId2 = window.setTimeout(() => {
+      setDraftCacheStatus("idle");
+    }, 2000);
+
+    return () => {
+      window.clearTimeout(timeoutId1);
+      window.clearTimeout(timeoutId2);
+    };
+  }, [draft]);
   useEffect(() => {
     void loadDashboardData();
   }, []);
@@ -127,6 +167,7 @@ export function useReportDashboard() {
   }
 
   const currentDraftSnapshot = useMemo(() => createDraftSnapshot(draft, pendingPhotos), [draft, pendingPhotos]);
+  const hasDraftContent = useMemo(() => hasMeaningfulDraft(draft), [draft]);
   const similarName = useMemo(() => getSimilarName(draft.nama, reporterNames), [draft.nama, reporterNames]);
   const duplicateToday = useMemo(
     () => reports.find((report) => report.reportDate === today && report.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase()) ?? null,
@@ -268,6 +309,8 @@ export function useReportDashboard() {
     setLoadedSearchSnapshot(null);
     clearDraft();
     setDraft(createEmptyDraft());
+    setDraftSavedAt(null);
+    setDraftCacheStatus("idle");
   }
 
   function loadReportIntoDraft(report: Report) {
@@ -319,11 +362,22 @@ export function useReportDashboard() {
     resetDraftState();
   }
 
-  async function handleExport(report: Report, format: "excel" | "word") {
-    const confirmed = await askConfirmation("Unduh laporan?", `Laporan ${report.nama} akan diunduh dalam format ${format.toUpperCase()}.`, `Unduh ${format.toUpperCase()}`);
-    if (!confirmed) return;
-    if (format === "excel") exportReportAsExcel(report);
-    else exportReportAsWord(report);
+  async function handleExport(report: Report) {
+    try {
+      await exportReportAsPdf(report, paperFormat);
+    } catch (error) {
+      console.error(error);
+      await showError("Export gagal", "PDF belum berhasil dibuat. Coba lagi setelah memastikan foto dan data laporan sudah lengkap.");
+    }
+  }
+
+  async function handlePrint(report: Report) {
+    try {
+      await printReportDocument(report, paperFormat);
+    } catch (error) {
+      console.error(error);
+      await showError("Print gagal", "Dokumen belum berhasil dibuka untuk print. Coba lagi setelah memastikan data dan foto sudah termuat.");
+    }
   }
 
   async function saveReport() {
@@ -378,6 +432,8 @@ export function useReportDashboard() {
   return {
     view,
     setView,
+    paperFormat,
+    setPaperFormat,
     draft,
     reports,
     savedNames: deviceSubmittedNames,
@@ -406,6 +462,11 @@ export function useReportDashboard() {
     searchResultCanReload,
     searchResultNeedsReload,
     statusRows,
+    hasDraftContent,
+    draftSavedAt,
+    draftCacheStatus,
+    searchOpen,
+    setSearchOpen,
     change,
     changeActivity,
     addActivity,
@@ -414,6 +475,8 @@ export function useReportDashboard() {
     handleLoadEdit,
     handleResetDraft,
     handleExport,
+    handlePrint,
     saveReport,
+    handleRemoveSavedName,
   };
 }

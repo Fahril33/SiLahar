@@ -1,0 +1,181 @@
+@page {
+  size: A4 portrait;
+  margin: 20mm 18mm 20mm 20mm;
+  transform: scale(0.9);
+}
+
+.pdf-report-shell {
+  width: 210mm;
+  background: #ffffff;
+}
+
+.pdf-report-page {
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm 18mm 20mm 20mm;
+  background: #ffffff;
+  color: #000000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11pt;
+  line-height: 1.35;
+}
+
+.pdf-report-header {
+  margin-bottom: 25px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 12pt;
+}
+
+.pdf-report-header p {
+  margin: 0 0 4px;
+}
+
+.pdf-report-identity {
+  margin-bottom: 20px;
+}
+
+.pdf-report-identity table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pdf-report-identity td {
+  padding: 0 0 4px;
+  font-weight: 700;
+  vertical-align: top;
+}
+
+.pdf-report-identity td:nth-child(1) {
+  width: 150px;
+}
+
+.pdf-report-identity td:nth-child(2) {
+  width: 18px;
+}
+
+.pdf-report-main-table table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.pdf-report-main-table th,
+.pdf-report-main-table td {
+  border: 1px solid #000000;
+  padding: 12px 7px 12px;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pdf-report-main-table th {
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.pdf-report-main-table td {
+  vertical-align: middle;
+}
+
+.pdf-report-main-table .col-no {
+  width: 8%;
+}
+
+.pdf-report-main-table .col-detail {
+  width: 52%;
+}
+
+.pdf-report-main-table .col-time {
+  width: 24%;
+}
+
+.pdf-report-main-table .col-proof {
+  width: 20%;
+}
+
+.pdf-report-main-table .no-cell {
+  text-align: center;
+}
+
+.pdf-report-main-table .detail-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.pdf-report-main-table .proof-cell {
+  padding: 6px;
+}
+
+.pdf-report-main-table .proof-image {
+  display: block;
+  /* height: 120px; */
+  height: auto;
+  /* width: auto; */
+  width: 100%;
+  object-fit: contain;
+}
+
+.pdf-report-approval {
+  margin-top: 22px;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pdf-report-approval .approval-title {
+  margin: 0 0 10px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.pdf-report-approval .approval-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+
+.pdf-report-approval .approval-column {
+  text-align: center;
+}
+
+.pdf-report-approval .approval-role {
+  margin: 0;
+  font-weight: 700;
+}
+
+.pdf-report-approval .signature-space {
+  min-height: 90px;
+}
+
+.pdf-report-approval .approval-name {
+  margin: 0 0 4px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.pdf-report-approval .approval-meta {
+  margin: 0 0 2px;
+}
+
+.pdf-report-notes {
+  margin-top: 30px;
+  font-size: 8pt;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pdf-report-notes .notes-title {
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.pdf-report-notes ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.pdf-report-notes li {
+  margin-bottom: 4px;
+}

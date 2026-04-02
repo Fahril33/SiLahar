@@ -67,3 +67,9 @@ export function pushDeviceSubmittedName(name: string) {
   saveDeviceSubmittedNames(nextNames);
   return nextNames;
 }
+export function removeDeviceSubmittedName(name: string) {
+  const current = loadDeviceSubmittedNames();
+  const nextNames = current.filter((n) => n !== name.trim().toUpperCase());
+  saveDeviceSubmittedNames(nextNames);
+  return nextNames;
+}

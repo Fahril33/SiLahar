@@ -63,3 +63,33 @@ export function showInfo(title: string, text: string) {
     buttonsStyling: false,
   });
 }
+
+export async function askPdfPaperSize(): Promise<"a4" | "f4" | "legal" | "letter" | null> {
+  const result = await Swal.fire({
+    title: "Pilih Ukuran Kertas",
+    text: "Tentukan ukuran dokumen PDF yang akan diunduh.",
+    input: "select",
+    inputOptions: {
+      a4: "A4 (210 x 297 mm)",
+      f4: "F4 / Folio (210 x 330 mm)",
+      legal: "Legal (216 x 356 mm)",
+      letter: "Letter (216 x 279 mm)",
+    },
+    inputValue: "a4",
+    showCancelButton: true,
+    confirmButtonText: "Unduh PDF",
+    cancelButtonText: "Batal",
+    reverseButtons: true,
+    customClass: {
+      popup: popupClass,
+      confirmButton: "swal-confirm",
+      cancelButton: "swal-cancel",
+    },
+    buttonsStyling: false,
+  });
+
+  if (result.isConfirmed) {
+    return result.value as "a4" | "f4" | "legal" | "letter";
+  }
+  return null;
+}

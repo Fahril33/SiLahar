@@ -7,6 +7,7 @@ type AutocompleteInputProps = {
   placeholder: string;
   className?: string;
   emptyMessage?: string;
+  endAdornment?: React.ReactNode;
 };
 
 export function AutocompleteInput(props: AutocompleteInputProps) {
@@ -15,8 +16,9 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
     onChange,
     options,
     placeholder,
-    className,
+    className = "",
     emptyMessage = "Belum ada saran nama yang cocok.",
+    endAdornment,
   } = props;
   const [isOpen, setIsOpen] = useState(false);
 
@@ -41,10 +43,15 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
         onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
         placeholder={placeholder}
         autoComplete="off"
-        className={className}
+        className={`${className} ${endAdornment ? "pr-11" : ""}`}
       />
+      {endAdornment && (
+        <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+          {endAdornment}
+        </div>
+      )}
       {showPanel ? (
-        <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-[22px] border border-slate-200 bg-white/95 shadow-[0_18px_36px_rgba(23,32,51,0.12)] backdrop-blur">
+        <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] shadow-[var(--shadow-card)] backdrop-blur">
           {filteredOptions.length > 0 ? (
             <div className="max-h-56 overflow-y-auto p-2">
               {filteredOptions.map((option) => (
@@ -56,14 +63,14 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
                     onChange(option);
                     setIsOpen(false);
                   }}
-                  className="block w-full rounded-2xl px-3 py-2 text-left text-sm text-ink transition hover:bg-slate-100"
+                  className="block w-full rounded-2xl px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                 >
                   {option}
                 </button>
               ))}
             </div>
           ) : (
-            <p className="px-4 py-3 text-sm text-ink/55">{emptyMessage}</p>
+            <p className="px-4 py-3 text-sm text-[var(--text-muted)]">{emptyMessage}</p>
           )}
         </div>
       ) : null}
