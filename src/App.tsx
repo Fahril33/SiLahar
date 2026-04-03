@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { AdminView } from "./components/admin-view";
 import { AppTabs } from "./components/app-tabs";
 import { EntryView } from "./components/entry-view";
 import { HistoryView } from "./components/history-view";
@@ -6,7 +7,9 @@ import { StatusView } from "./components/status-view";
 import { useReportDashboard } from "./hooks/use-report-dashboard";
 import { today } from "./lib/report-draft";
 
-type ThemeMode = "light" | "dark" | "comfort";
+type ThemeMode = "light" | "dark" | "cheerfull";
+type NavbarPosition = "top" | "left" | "right";
+type NavbarMotion = "to-top" | "to-left" | "to-right";
 
 function SunIcon() {
   return (
@@ -25,12 +28,54 @@ function MoonIcon() {
   );
 }
 
-function ComfortIcon() {
+function CheerfullIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5z" />
-      <path d="M8 9h8M8 12h5M8 15h7" strokeLinecap="round" />
+      <path d="M12 2.8l1.65 4.45 4.75.2-3.72 2.95 1.28 4.58L12 12.35 8.04 14.98l1.28-4.58L5.6 7.45l4.75-.2L12 2.8z" />
+      <path d="M6.5 18.5h11" strokeLinecap="round" />
     </svg>
+  );
+}
+
+const THEME_OPTIONS: Array<{ value: ThemeMode; label: string; icon: JSX.Element }> = [
+  { value: "light", label: "Terang", icon: <SunIcon /> },
+  { value: "dark", label: "Gelap", icon: <MoonIcon /> },
+  { value: "cheerfull", label: "Cheerfull", icon: <CheerfullIcon /> },
+];
+
+function ThemeSwitcher({
+  themeMode,
+  onChange,
+  className = "",
+}: {
+  themeMode: ThemeMode;
+  onChange: (mode: ThemeMode) => void;
+  className?: string;
+}) {
+  const activeIndex = Math.max(
+    0,
+    THEME_OPTIONS.findIndex((option) => option.value === themeMode),
+  );
+
+  return (
+    <div
+      className={`theme-switcher ${className}`.trim()}
+      style={{ "--active-theme-index": activeIndex } as CSSProperties}
+    >
+      <span className="theme-switcher-slider" aria-hidden="true" />
+      {THEME_OPTIONS.map(({ value, label, icon }) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => onChange(value)}
+          className={themeMode === value ? "is-active" : ""}
+          aria-label={label}
+          title={label}
+        >
+          {icon}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -68,25 +113,84 @@ function LayoutIcon(props: { position: "top" | "left" | "right", className?: str
   );
 }
 
+function getNextNavbarPosition(current: NavbarPosition): NavbarPosition {
+  if (current === "top") return "left";
+  if (current === "left") return "right";
+  return "top";
+}
+
+function getNavbarMotion(nextPosition: NavbarPosition): NavbarMotion {
+  if (nextPosition === "left") return "to-left";
+  if (nextPosition === "right") return "to-right";
+  return "to-top";
+}
+
 function loadThemeMode(): ThemeMode {
   if (typeof window === "undefined") return "light";
 
   const stored = window.localStorage.getItem("silahar:theme-mode");
-  return stored === "dark" || stored === "comfort" ? stored : "light";
+  if (stored === "comfort" || stored === "cheerfull") return "cheerfull";
+  return stored === "dark" ? "dark" : "light";
 }
 
 export default function App() {
   const dashboard = useReportDashboard();
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadThemeMode);
-  const [navbarPosition, setNavbarPosition] = useState<"top" | "left" | "right">("top");
+  const [navbarPosition, setNavbarPosition] = useState<NavbarPosition>("top");
+  const [navbarMotion, setNavbarMotion] = useState<NavbarMotion>("to-top");
+  const [navbarMotionKey, setNavbarMotionKey] = useState(0);
+  const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
+    typeof window === "undefined"
+      ? true
+      : window.matchMedia("(min-width: 1024px)").matches,
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem("silahar:theme-mode", themeMode);
   }, [themeMode]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const handleChange = () => setIsDesktopLayout(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (dashboard.view !== "entry" || !isDesktopLayout) {
+      setNavbarPosition("top");
+    }
+  }, [dashboard.view, isDesktopLayout]);
+
+  const canMoveNavbar = dashboard.view === "entry" && isDesktopLayout;
+
+  function handleMoveNavbar() {
+    if (!canMoveNavbar) return;
+
+    const nextPosition = getNextNavbarPosition(navbarPosition);
+    setNavbarMotion(getNavbarMotion(nextPosition));
+    setNavbarMotionKey((key) => key + 1);
+    setNavbarPosition(nextPosition);
+  }
+
+  const navbarMotionLine = (
+    <div className="navbar-motion-track" aria-hidden="true">
+      <span
+        key={navbarMotionKey}
+        className={`navbar-motion-line navbar-motion-line-${navbarMotion}`}
+      />
+    </div>
+  );
+
   const compactNavbar = (
-    <div className="flex flex-wrap items-center justify-between gap-3 p-3 border-b border-[var(--border-soft)] bg-[var(--surface-panel)]/50 backdrop-blur-md">
+    <div className="relative flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-soft)] bg-[var(--surface-panel)]/50 p-3 backdrop-blur-md">
+      {navbarMotionLine}
       <div className="flex flex-1 items-center gap-2 overflow-x-auto min-w-0 hide-scrollbar">
         {dashboard.view === "entry" && (
           <button
@@ -102,33 +206,25 @@ export default function App() {
             <SearchIcon />
           </button>
         )}
-        <div className="flex-1 min-w-0 shrink-0">
+        <div className="min-w-0 flex-1">
           <AppTabs view={dashboard.view} onChange={dashboard.setView} />
         </div>
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2">
-        <div className="theme-switcher shrink-0 flex hidden sm:flex">
-          {[
-            { value: "light", label: "Terang", icon: <SunIcon /> },
-            { value: "dark", label: "Gelap", icon: <MoonIcon /> },
-            { value: "comfort", label: "Comfort", icon: <ComfortIcon /> },
-          ].map(({ value, label, icon }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setThemeMode(value as ThemeMode)}
-              className={themeMode === value ? "is-active" : ""}
-              aria-label={label as string}
-              title={label as string}
-            >
-              {icon}
-            </button>
-          ))}
-        </div>
+        <ThemeSwitcher
+          themeMode={themeMode}
+          onChange={setThemeMode}
+          className="hidden shrink-0 sm:flex"
+        />
         <button
           type="button"
-          onClick={() => setNavbarPosition((p) => p === "top" ? "left" : p === "left" ? "right" : "top")}
-          className="hidden lg:flex shrink-0 h-[38px] w-[38px] items-center justify-center rounded-[10px] bg-[var(--surface-elevated)] text-[var(--text-primary)] border border-[var(--border-soft)] hover:bg-[var(--surface-hover)]"
+          onClick={handleMoveNavbar}
+          disabled={!canMoveNavbar}
+          className={`hidden lg:flex shrink-0 h-[38px] w-[38px] items-center justify-center rounded-[10px] border border-[var(--border-soft)] bg-[var(--surface-elevated)] text-[var(--text-primary)] ${
+            canMoveNavbar
+              ? "hover:bg-[var(--surface-hover)]"
+              : "cursor-not-allowed opacity-40"
+          }`}
           title="Pindah posisi Navbar"
         >
           <LayoutIcon position={navbarPosition} />
@@ -141,7 +237,8 @@ export default function App() {
     <div className="app-shell min-h-screen px-4 py-4 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-[1760px] flex-col gap-4">
         {navbarPosition === "top" && (
-          <header className="panel-glass flex flex-col gap-3 rounded-[24px] px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+          <header className="panel-glass relative flex flex-col gap-3 overflow-hidden rounded-[24px] px-4 py-3 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+            {navbarMotionLine}
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-semibold text-[var(--text-primary)] sm:text-xl">
@@ -151,24 +248,11 @@ export default function App() {
                   Sistem laporan harian tim reaksi cepat
                 </p>
               </div>
-              <div className="theme-switcher shrink-0 lg:hidden">
-                {[
-                  { value: "light", label: "Terang", icon: <SunIcon /> },
-                  { value: "dark", label: "Gelap", icon: <MoonIcon /> },
-                  { value: "comfort", label: "Comfort", icon: <ComfortIcon /> },
-                ].map(({ value, label, icon }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setThemeMode(value as ThemeMode)}
-                    className={themeMode === value ? "is-active" : ""}
-                    aria-label={label as string}
-                    title={label as string}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
+              <ThemeSwitcher
+                themeMode={themeMode}
+                onChange={setThemeMode}
+                className="shrink-0 lg:hidden"
+              />
             </div>
 
             <div className="flex flex-row items-center gap-2 lg:min-w-0 lg:gap-3">
@@ -186,7 +270,7 @@ export default function App() {
                 </button>
               )}
 
-              <div className="flex-1 lg:flex-none">
+              <div className="min-w-0 flex-1 lg:flex-none">
                 <AppTabs view={dashboard.view} onChange={dashboard.setView} />
               </div>
 
@@ -205,29 +289,21 @@ export default function App() {
                 </button>
               )}
 
-              <div className="theme-switcher hidden shrink-0 lg:flex">
-                {[
-                  { value: "light", label: "Terang", icon: <SunIcon /> },
-                  { value: "dark", label: "Gelap", icon: <MoonIcon /> },
-                  { value: "comfort", label: "Comfort", icon: <ComfortIcon /> },
-                ].map(({ value, label, icon }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setThemeMode(value as ThemeMode)}
-                    className={themeMode === value ? "is-active" : ""}
-                    aria-label={label as string}
-                    title={label as string}
-                  >
-                    {icon}
-                  </button>
-                ))}
-              </div>
+              <ThemeSwitcher
+                themeMode={themeMode}
+                onChange={setThemeMode}
+                className="hidden shrink-0 lg:flex"
+              />
 
               <button
                 type="button"
-                onClick={() => setNavbarPosition((p) => p === "top" ? "left" : p === "left" ? "right" : "top")}
-                className="hidden lg:flex shrink-0 h-[42px] w-[42px] items-center justify-center rounded-[12px] bg-[var(--surface-elevated)] text-[var(--text-primary)] border border-[var(--border-soft)] hover:bg-[var(--surface-hover)]"
+                onClick={handleMoveNavbar}
+                disabled={!canMoveNavbar}
+                className={`hidden lg:flex shrink-0 h-[42px] w-[42px] items-center justify-center rounded-[12px] border border-[var(--border-soft)] bg-[var(--surface-elevated)] text-[var(--text-primary)] ${
+                  canMoveNavbar
+                    ? "hover:bg-[var(--surface-hover)]"
+                    : "cursor-not-allowed opacity-40"
+                }`}
                 title="Pindah posisi Navbar"
               >
                 <LayoutIcon position={navbarPosition} />
@@ -253,8 +329,9 @@ export default function App() {
             nameCheckLoading={dashboard.nameCheckLoading}
             nameExistsInDirectory={dashboard.nameExistsInDirectory}
             reportRules={dashboard.reportRules}
+            canUseAnyReportDate={dashboard.canUseAnyReportDate}
             activityTimeIssues={dashboard.activityTimeIssues}
-            duplicateToday={dashboard.duplicateToday}
+            duplicateReport={dashboard.duplicateReport}
             pendingPreviews={dashboard.pendingPreviews}
             preview={dashboard.preview}
             submitting={dashboard.submitting}
@@ -262,7 +339,6 @@ export default function App() {
             draftSavedAt={dashboard.draftSavedAt}
             draftCacheStatus={dashboard.draftCacheStatus}
             searchOpen={dashboard.searchOpen}
-            setSearchOpen={dashboard.setSearchOpen}
             onChange={dashboard.change}
             onChangeActivity={dashboard.changeActivity}
             onAddActivity={dashboard.addActivity}
@@ -292,7 +368,10 @@ export default function App() {
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandleDeleteReport={dashboard.handleDeleteReport}
             today={today}
+            canUseAnyReportDate={dashboard.canUseAnyReportDate}
+            canManageReports={dashboard.canManageReports}
             paperFormat={dashboard.paperFormat}
             setPaperFormat={dashboard.setPaperFormat}
           />
@@ -304,6 +383,23 @@ export default function App() {
             setHistoryDate={dashboard.setHistoryDate}
             statusRows={dashboard.statusRows}
             loading={dashboard.loading}
+          />
+        ) : null}
+
+        {dashboard.view === "admin" ? (
+          <AdminView
+            adminSession={dashboard.adminSession}
+            adminEmail={dashboard.adminEmail}
+            setAdminEmail={dashboard.setAdminEmail}
+            adminPassword={dashboard.adminPassword}
+            setAdminPassword={dashboard.setAdminPassword}
+            adminAuthLoading={dashboard.adminAuthLoading}
+            adminSubmitting={dashboard.adminSubmitting}
+            adminRuleDraft={dashboard.adminRuleDraft}
+            onChangeAdminRule={dashboard.changeAdminRule}
+            onHandleAdminLogin={dashboard.handleAdminLogin}
+            onHandleAdminLogout={dashboard.handleAdminLogout}
+            onHandleSaveAdminRules={dashboard.handleSaveAdminRules}
           />
         ) : null}
       </div>

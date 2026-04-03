@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 type StatusRow = {
   name: string;
   done: boolean;
@@ -5,6 +7,36 @@ type StatusRow = {
 };
 
 const inputClassName = "field-input";
+
+function StatusBadge({ done }: { done: boolean }) {
+  const [statusLabel, setStatusLabel] = useState(done);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  useEffect(() => {
+    if (done === statusLabel) {
+      return;
+    }
+
+    setIsTransitioning(true);
+    const timeoutId = window.setTimeout(() => {
+      setStatusLabel(done);
+      setIsTransitioning(false);
+    }, 320);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [done, statusLabel]);
+
+  return (
+    <span
+      className={`status-pill ${
+        statusLabel ? "status-pill-success" : "status-pill-danger"
+      } ${isTransitioning ? "status-pill-transitioning" : ""}`}
+    >
+      {isTransitioning ? <span className="status-pill-spinner" /> : null}
+      <span>{statusLabel ? "Sudah isi" : "Belum isi"}</span>
+    </span>
+  );
+}
 
 export function StatusView(props: {
   historyDate: string;
@@ -30,9 +62,7 @@ export function StatusView(props: {
                 {row.report ? ` | ${row.report.activities.length} aktivitas` : ""}
               </p>
             </div>
-            <span className={`rounded-full px-3 py-1 text-sm font-semibold ${row.done ? "bg-[var(--success-soft)] text-[var(--success)]" : "bg-[var(--danger-soft)] text-[var(--danger)]"}`}>
-              {row.done ? "Sudah isi" : "Belum isi"}
-            </span>
+            <StatusBadge done={row.done} />
           </div>
         ))}
       </div>

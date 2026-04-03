@@ -1,4 +1,13 @@
 const WITA_TIMEZONE = "Asia/Makassar";
+const WITA_UTC_OFFSET = "+08:00";
+
+function toWitaDateObject(dateInput: Date | string) {
+  if (dateInput instanceof Date) {
+    return dateInput;
+  }
+
+  return new Date(`${dateInput}T00:00:00${WITA_UTC_OFFSET}`);
+}
 
 export function getWitaToday() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -16,7 +25,7 @@ export function formatWitaDate(date: string) {
     day: "2-digit",
     month: "long",
     year: "numeric",
-  }).format(new Date(`${date}T00:00:00+08:00`));
+  }).format(toWitaDateObject(date));
 }
 
 export function formatWitaDateTime(dateTime: string) {
@@ -34,7 +43,7 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
-export function getWitaDisplayDateUppercase(date = new Date()) {
+export function getWitaDisplayDateUppercase(date: Date | string = new Date()) {
   const parts = new Intl.DateTimeFormat("id-ID", {
     timeZone: WITA_TIMEZONE,
     weekday: "long",
@@ -42,7 +51,7 @@ export function getWitaDisplayDateUppercase(date = new Date()) {
     month: "long",
     year: "numeric",
   })
-    .formatToParts(date)
+    .formatToParts(toWitaDateObject(date))
     .reduce<Record<string, string>>((acc, part) => {
       if (part.type !== "literal") {
         acc[part.type] = part.value;
@@ -53,11 +62,11 @@ export function getWitaDisplayDateUppercase(date = new Date()) {
   return `${parts.weekday}, ${parts.day} ${parts.month} ${parts.year}`.toUpperCase();
 }
 
-export function isWitaFriday(date = new Date()) {
+export function isWitaFriday(date: Date | string = new Date()) {
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: WITA_TIMEZONE,
     weekday: "short",
-  }).format(date);
+  }).format(toWitaDateObject(date));
 
   return weekday === "Fri";
 }

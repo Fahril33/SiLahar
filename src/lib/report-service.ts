@@ -1,5 +1,6 @@
 import { defaultDraft } from "../data/mock";
 import { DEFAULT_REPORT_RULES, normalizeReportRules, type ReportRules } from "../config/report-rules";
+import type { AdminProfile, AdminSessionState } from "../types/admin";
 import { supabase } from "./supabase";
 import { mapReportRow } from "./report-mappers";
 import type { DraftReport, Report } from "../types/report";
@@ -9,11 +10,28 @@ const PROOF_BUCKET = "daily-report-proofs";
 type PendingPhotoMap = Record<number, File[]>;
 
 type ReportRulesRow = {
+  allow_any_report_date?: boolean;
   max_photos_per_activity?: number;
+};
+
+type AdminProfileRow = {
+  id: string;
+  full_name: string;
+  role: "admin" | "super_admin";
+  is_active: boolean;
 };
 
 function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
+}
+
+function mapAdminProfile(row: AdminProfileRow): AdminProfile {
+  return {
+    id: row.id,
+    fullName: row.full_name.toUpperCase(),
+    role: row.role,
+    isActive: row.is_active,
+  };
 }
 
 async function removeExistingAssets(report: Report) {
@@ -125,8 +143,193 @@ export async function fetchReportRules() {
   const rules = row as ReportRulesRow | null;
 
   return normalizeReportRules({
+    allowAnyReportDate: rules?.allow_any_report_date,
     maxPhotosPerActivity: rules?.max_photos_per_activity,
   });
+}
+
+async function fetchAdminProfile(userId: string) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { data, error } = await supabase
+    .from("admin_profiles")
+    .select("id, full_name, role, is_active")
+    .eq("id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Akun ini belum terdaftar sebagai admin aktif.");
+  }
+
+  return mapAdminProfile(data as AdminProfileRow);
+}
+
+export async function getActiveAdminSession() {
+  if (!supabase) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data.session?.user) {
+    return null;
+  }
+
+  const profile = await fetchAdminProfile(data.session.user.id);
+
+  return {
+    session: data.session,
+    user: data.session.user,
+    profile,
+  } satisfies AdminSessionState;
+}
+
+export function subscribeAdminSession(
+  onChange: (session: AdminSessionState | null) => void,
+) {
+  if (!supabase) {
+    return () => {};
+  }
+
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (!session?.user) {
+      onChange(null);
+      return;
+    }
+
+    void fetchAdminProfile(session.user.id)
+      .then((profile) => onChange({ session, user: session.user, profile }))
+      .catch((error) => {
+        console.error(error);
+        onChange(null);
+      });
+  });
+
+  return () => data.subscription.unsubscribe();
+}
+
+export function subscribeReportData(onChange: () => void) {
+  if (!supabase) {
+    return () => {};
+  }
+
+  const client = supabase;
+  const channel = client
+    .channel("silahar-report-data")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "daily_reports" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "daily_report_activities" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "daily_report_activity_photos",
+      },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "reporter_directory" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "app_settings" },
+      () => onChange(),
+    )
+    .subscribe();
+
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+export async function signInAdminAccount(email: string, password: string) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim(),
+    password,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data.session?.user) {
+    throw new Error("Sesi login admin belum berhasil dibuat.");
+  }
+
+  try {
+    const profile = await fetchAdminProfile(data.session.user.id);
+
+    return {
+      session: data.session,
+      user: data.session.user,
+      profile,
+    } satisfies AdminSessionState;
+  } catch (error) {
+    await supabase.auth.signOut();
+    throw error;
+  }
+}
+
+export async function signOutAdminAccount() {
+  if (!supabase) {
+    return;
+  }
+
+  const { error } = await supabase.auth.signOut();
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function saveReportRulesToDatabase(rules: ReportRules) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const normalizedRules = normalizeReportRules(rules);
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: "report_rules",
+      value: {
+        allow_any_report_date: normalizedRules.allowAnyReportDate,
+        max_photos_per_activity: normalizedRules.maxPhotosPerActivity,
+      },
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "key" },
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  return fetchReportRules();
 }
 
 export async function checkReporterNameExists(name: string) {
@@ -147,6 +350,32 @@ export async function checkReporterNameExists(name: string) {
   }
 
   return Boolean(data);
+}
+
+export async function deleteReportFromDatabase(report: Report) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const storagePaths = report.activities
+    .flatMap((activity) => activity.photos.map((photo) => photo.storagePath))
+    .filter(Boolean);
+
+  if (storagePaths.length > 0) {
+    const { error: removeStorageError } = await supabase.storage
+      .from(PROOF_BUCKET)
+      .remove(storagePaths);
+
+    if (removeStorageError) {
+      throw removeStorageError;
+    }
+  }
+
+  const { error } = await supabase.from("daily_reports").delete().eq("id", report.id);
+
+  if (error) {
+    throw error;
+  }
 }
 
 async function upsertReporterDirectory(name: string) {
@@ -180,7 +409,6 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
   const payload = {
     reporter_directory_id: reporterDirectoryId,
     reporter_name: draft.nama,
-    display_date_text: draft.tanggal,
     report_date: draft.reportDate,
     approver_coordinator_name: draft.approverCoordinator,
     approver_coordinator_nip: draft.approverCoordinatorNip,

@@ -2,6 +2,11 @@ import { formatWitaDateTime } from "../lib/time";
 import type { Report } from "../types/report";
 
 const inputClassName = "field-input";
+const NEW_REPORT_WINDOW_MS = 5 * 60 * 1000;
+
+function isRecentlyCreated(createdAt: string) {
+  return Date.now() - new Date(createdAt).getTime() <= NEW_REPORT_WINDOW_MS;
+}
 
 export function HistoryView(props: {
   loading: boolean;
@@ -13,7 +18,10 @@ export function HistoryView(props: {
   onHandleLoadEdit: (report: Report) => Promise<void>;
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (report: Report) => Promise<void>;
+  onHandleDeleteReport: (report: Report) => Promise<void>;
   today: string;
+  canUseAnyReportDate: boolean;
+  canManageReports: boolean;
   paperFormat: "a4" | "f4" | "legal" | "letter";
   setPaperFormat: (format: "a4" | "f4" | "legal" | "letter") => void;
 }) {
@@ -27,7 +35,10 @@ export function HistoryView(props: {
     onHandleLoadEdit,
     onHandleExport,
     onHandlePrint,
+    onHandleDeleteReport,
     today,
+    canUseAnyReportDate,
+    canManageReports,
     paperFormat,
     setPaperFormat,
   } = props;
@@ -55,14 +66,38 @@ export function HistoryView(props: {
         <article key={report.id} className="surface-card rounded-[24px] p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h3 className="text-xl font-bold">{report.nama}</h3>
-              <p className="mt-1 text-sm text-ink/65">{report.tanggal} | {report.activities.length} aktivitas | diperbarui {formatWitaDateTime(report.updatedAt)}</p>
-              <ul className="mt-2 space-y-1 text-sm text-ink/80">{report.activities.slice(0, 3).map((activity) => <li key={`${report.id}-${activity.no}`}>{activity.no}. {activity.description} ({activity.startTime} - {activity.endTime} WITA)</li>)}</ul>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-xl font-bold text-[var(--text-primary)]">{report.nama}</h3>
+                {isRecentlyCreated(report.createdAt) ? (
+                  <span className="rounded-full bg-[var(--info-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--info)]">
+                    Baru ditambahkan
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">{report.tanggal} | {report.activities.length} aktivitas | diperbarui {formatWitaDateTime(report.updatedAt)}</p>
+              <ul className="mt-2 space-y-1 text-sm text-[var(--text-primary)]">{report.activities.slice(0, 3).map((activity) => <li key={`${report.id}-${activity.no}`}>{activity.no}. {activity.description} ({activity.startTime} - {activity.endTime} WITA)</li>)}</ul>
             </div>
             <div className="flex flex-wrap gap-2">
-              {report.reportDate === today ? <button type="button" onClick={() => void onHandleLoadEdit(report)} className="btn-secondary px-4 py-2 text-sm">Edit</button> : null}
+              {report.reportDate === today || canUseAnyReportDate ? (
+                <button
+                  type="button"
+                  onClick={() => void onHandleLoadEdit(report)}
+                  className="btn-secondary px-4 py-2 text-sm"
+                >
+                  Edit
+                </button>
+              ) : null}
               <button type="button" onClick={() => void onHandleExport(report)} className="btn-secondary hidden px-4 py-2 text-sm">Download PDF</button>
               <button type="button" onClick={() => void onHandlePrint(report)} className="btn-secondary px-4 py-2 text-sm">Print</button>
+              {canManageReports ? (
+                <button
+                  type="button"
+                  onClick={() => void onHandleDeleteReport(report)}
+                  className="btn-danger px-4 py-2 text-sm"
+                >
+                  Delete
+                </button>
+              ) : null}
             </div>
           </div>
         </article>

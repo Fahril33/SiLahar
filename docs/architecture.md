@@ -15,6 +15,7 @@ Base project ini difokuskan untuk menyiapkan fondasi UI, state, dan skema databa
 - Quick entry nama, typo hint, duplicate report detection hari ini.
 - Export mock ke CSV dan dokumen Word sederhana.
 - Placeholder client Supabase.
+- Tab Admin dengan login Supabase Auth dan pengaturan `report_rules`.
 
 ## Catatan penting
 
@@ -37,7 +38,7 @@ Base project ini difokuskan untuk menyiapkan fondasi UI, state, dan skema databa
    - pencarian histori
    - daftar nama pengisi
    - audit log
-4. Tambahkan autentikasi admin dengan Supabase Auth.
+4. Autentikasi admin memakai Supabase Auth dan data profil admin di `admin_profiles`.
 5. Pindahkan export berat ke server bila format Word/Excel final menjadi kompleks.
 
 ## Catatan akses data

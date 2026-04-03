@@ -5,7 +5,8 @@
 - User mengetik nama.
 - Sistem melakukan pengecekan async ke database apakah nama pernah tercatat.
 - Jika nama belum tercatat, sistem akan mempertimbangkan penambahannya saat submit.
-- User mengisi laporan untuk hari berjalan.
+- User memilih tanggal laporan bila rule database sedang membuka semua tanggal; jika tidak, sistem otomatis memakai hari berjalan.
+- Sistem mengisi teks hari/tanggal dokumen otomatis dari tanggal laporan yang dipilih.
 - User menambahkan aktivitas per baris.
 - User memilih jam mulai dan jam selesai lewat input waktu.
 - User mengunggah maksimal 1 foto bukti untuk setiap aktivitas.
@@ -16,4 +17,5 @@
 - `reporter_directory` menjadi sumber daftar nama yang pernah mengisi.
 - Halaman histori memuat data laporan dari database.
 - Halaman status memuat daftar nama dari `reporter_directory` dan mencocokkan status isi berdasarkan laporan pada tanggal tertentu.
+- Admin membuka tab Admin, login, lalu mengatur `allow_any_report_date` dan rules lain yang tersedia.
 - Export Excel dan Word mengikuti template dokumen yang sedang dipakai.

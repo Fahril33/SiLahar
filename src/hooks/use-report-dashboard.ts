@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { askConfirmation, showError, showInfo, showSuccess } from "../lib/alerts";
-import { DEFAULT_REPORT_RULES, type ReportRules } from "../config/report-rules";
+import {
+  DEFAULT_REPORT_RULES,
+  normalizeReportRules,
+  type ReportRules,
+} from "../config/report-rules";
 import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
@@ -13,7 +17,20 @@ import {
   type PendingPhotoMap,
   type PendingPreviewMap,
 } from "../lib/report-draft";
-import { checkReporterNameExists, fetchReportRules, fetchReporterDirectoryNames, fetchReports, saveReportToDatabase } from "../lib/report-service";
+import {
+  checkReporterNameExists,
+  deleteReportFromDatabase,
+  fetchReportRules,
+  fetchReporterDirectoryNames,
+  fetchReports,
+  getActiveAdminSession,
+  saveReportRulesToDatabase,
+  saveReportToDatabase,
+  signInAdminAccount,
+  signOutAdminAccount,
+  subscribeAdminSession,
+  subscribeReportData,
+} from "../lib/report-service";
 import {
   clearDraft,
   loadCachedReporterNames,
@@ -27,9 +44,11 @@ import {
   saveCachedReports,
 } from "../lib/storage";
 import { isWitaFriday } from "../lib/time";
+import { optimizeReportImages } from "../lib/image-optimizer";
+import type { AdminSessionState } from "../types/admin";
 import type { DraftReport, Report } from "../types/report";
 
-export type View = "entry" | "history" | "status";
+export type View = "entry" | "history" | "status" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
 
 function hasMeaningfulDraft(draft: DraftReport) {
@@ -88,11 +107,18 @@ export function useReportDashboard() {
   const [nameCheckLoading, setNameCheckLoading] = useState(false);
   const [nameExistsInDirectory, setNameExistsInDirectory] = useState<boolean | null>(null);
   const [reportRules, setReportRules] = useState<ReportRules>(DEFAULT_REPORT_RULES);
+  const [adminSession, setAdminSession] = useState<AdminSessionState | null>(null);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminAuthLoading, setAdminAuthLoading] = useState(true);
+  const [adminSubmitting, setAdminSubmitting] = useState(false);
+  const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(DEFAULT_REPORT_RULES);
   const [loadedSearchReportId, setLoadedSearchReportId] = useState<string | null>(null);
   const [loadedSearchSnapshot, setLoadedSearchSnapshot] = useState<string | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
   const [searchOpen, setSearchOpen] = useState(false);
+  const realtimeReloadTimeoutRef = useRef<number | null>(null);
 
   function handleRemoveSavedName(name: string) {
     const updated = removeDeviceSubmittedName(name);
@@ -120,6 +146,57 @@ export function useReportDashboard() {
   useEffect(() => {
     void loadDashboardData();
   }, []);
+  useEffect(() => {
+    const unsubscribe = subscribeReportData(() => {
+      if (realtimeReloadTimeoutRef.current !== null) {
+        window.clearTimeout(realtimeReloadTimeoutRef.current);
+      }
+
+      realtimeReloadTimeoutRef.current = window.setTimeout(() => {
+        void loadDashboardData();
+      }, 300);
+    });
+
+    return () => {
+      if (realtimeReloadTimeoutRef.current !== null) {
+        window.clearTimeout(realtimeReloadTimeoutRef.current);
+      }
+      unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+
+    void getActiveAdminSession()
+      .then((session) => {
+        if (!alive) return;
+        setAdminSession(session);
+      })
+      .catch((error) => {
+        console.error(error);
+        if (alive) setAdminSession(null);
+      })
+      .finally(() => {
+        if (alive) setAdminAuthLoading(false);
+      });
+
+    const unsubscribe = subscribeAdminSession((session) => {
+      setAdminSession(session);
+      setAdminAuthLoading(false);
+    });
+
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === today) {
+      return;
+    }
+
+    setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
+  }, [adminSession, draft.reportDate, reportRules.allowAnyReportDate]);
   useEffect(() => () => revokePreviews(pendingPreviews), [pendingPreviews]);
   useEffect(() => {
     if (!draft.nama.trim()) {
@@ -153,6 +230,7 @@ export function useReportDashboard() {
       setReports(dbReports);
       setReporterNames(dbReporterNames);
       setReportRules(dbReportRules);
+      setAdminRuleDraft(dbReportRules);
       saveCachedReports(dbReports);
       saveCachedReporterNames(dbReporterNames);
     } catch (error) {
@@ -169,9 +247,14 @@ export function useReportDashboard() {
   const currentDraftSnapshot = useMemo(() => createDraftSnapshot(draft, pendingPhotos), [draft, pendingPhotos]);
   const hasDraftContent = useMemo(() => hasMeaningfulDraft(draft), [draft]);
   const similarName = useMemo(() => getSimilarName(draft.nama, reporterNames), [draft.nama, reporterNames]);
-  const duplicateToday = useMemo(
-    () => reports.find((report) => report.reportDate === today && report.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase()) ?? null,
-    [draft.nama, reports],
+  const duplicateReport = useMemo(
+    () =>
+      reports.find(
+        (report) =>
+          report.reportDate === draft.reportDate &&
+          report.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase(),
+      ) ?? null,
+    [draft.nama, draft.reportDate, reports],
   );
   const preview = useMemo(() => createPreviewReport(draft, pendingPreviews), [draft, pendingPreviews]);
   const historyResults = useMemo(
@@ -223,6 +306,11 @@ export function useReportDashboard() {
   );
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
+    if (key === "reportDate" && !adminSession && !reportRules.allowAnyReportDate) {
+      setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
+      return;
+    }
+
     setDraft((current) => normalizeDraft({ ...current, [key]: value }));
   }
 
@@ -278,9 +366,9 @@ export function useReportDashboard() {
     });
   }
 
-  function setActivityFiles(activityNo: number, files: FileList | null) {
+  async function setActivityFiles(activityNo: number, files: FileList | null) {
     const selectedFiles = files ? Array.from(files) : [];
-    const nextFiles = selectedFiles.slice(0, reportRules.maxPhotosPerActivity);
+    const limitedFiles = selectedFiles.slice(0, reportRules.maxPhotosPerActivity);
 
     if (selectedFiles.length > reportRules.maxPhotosPerActivity) {
       void showInfo(
@@ -290,6 +378,8 @@ export function useReportDashboard() {
           : `Saat ini setiap baris aktivitas hanya dapat menyimpan ${reportRules.maxPhotosPerActivity} foto. Sistem hanya mengambil file sesuai batas tersebut.`,
       );
     }
+
+    const nextFiles = await optimizeReportImages(limitedFiles);
 
     setPendingPhotos((current) => ({ ...current, [activityNo]: nextFiles }));
     setPendingPreviews((current) => {
@@ -317,7 +407,7 @@ export function useReportDashboard() {
     const nextDraft = normalizeDraft({
       nama: report.nama,
       tanggal: report.tanggal,
-      reportDate: today,
+      reportDate: report.reportDate,
       activities: report.activities.map((activity) => ({
         id: activity.id,
         no: activity.no,
@@ -343,12 +433,20 @@ export function useReportDashboard() {
   }
 
   async function handleLoadEdit(report: Report) {
+    if (!adminSession && !reportRules.allowAnyReportDate && report.reportDate !== today) {
+      await showError(
+        "Edit laporan belum diizinkan",
+        "Saat ini laporan publik di luar hari berjalan hanya bisa dibaca, belum bisa diedit.",
+      );
+      return;
+    }
+
     const isReloadingOriginal = loadedSearchReportId === report.id && loadedSearchSnapshot !== currentDraftSnapshot;
     const confirmed = await askConfirmation(
       isReloadingOriginal ? "Muat ulang data asli?" : "Buka mode edit?",
       isReloadingOriginal
         ? `Perubahan yang belum disimpan akan diganti dengan data asli ${report.nama} dari database.`
-        : `Data ${report.nama} akan dimuat ke form dan perubahan berikutnya akan menggantikan laporan hari ini.`,
+        : `Data ${report.nama} untuk ${report.tanggal} akan dimuat ke form dan perubahan berikutnya akan menggantikan laporan pada tanggal tersebut.`,
       isReloadingOriginal ? "Muat ulang" : "Lanjut edit",
     );
     if (!confirmed) return;
@@ -386,30 +484,38 @@ export function useReportDashboard() {
       return;
     }
 
+    if (!adminSession && !reportRules.allowAnyReportDate && draft.reportDate !== today) {
+      await showError(
+        "Tanggal laporan belum diizinkan",
+        "Saat ini admin membatasi pengisian laporan hanya untuk hari berjalan.",
+      );
+      return;
+    }
+
     if (activityTimeIssues.some((issue) => issue.endBeforeStart || issue.startsBeforePreviousEnd)) {
       await showError("Jam aktivitas belum valid", "Pastikan jam selesai tidak kurang dari jam mulai, dan jam mulai aktivitas berikutnya tidak lebih kecil dari jam selesai aktivitas sebelumnya.");
       return;
     }
 
     const confirmed = await askConfirmation(
-      duplicateToday ? "Perbarui laporan hari ini?" : "Simpan laporan ke database?",
-      duplicateToday
-        ? `Laporan ${draft.nama} untuk hari ini sudah ada dan akan diperbarui.`
-        : `Laporan ${draft.nama} akan disimpan ke database beserta foto bukti yang diunggah.`,
-      duplicateToday ? "Perbarui" : "Simpan",
+      duplicateReport ? "Perbarui laporan tanggal ini?" : "Simpan laporan ke database?",
+      duplicateReport
+        ? `Laporan ${draft.nama} untuk ${draft.tanggal} sudah ada dan akan diperbarui.`
+        : `Laporan ${draft.nama} untuk ${draft.tanggal} akan disimpan ke database beserta foto bukti yang diunggah.`,
+      duplicateReport ? "Perbarui" : "Simpan",
     );
 
     if (!confirmed) return;
 
     setSubmitting(true);
     try {
-      await saveReportToDatabase(draft, pendingPhotos, duplicateToday, reportRules);
+      await saveReportToDatabase(draft, pendingPhotos, duplicateReport, reportRules);
       await loadDashboardData();
       setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
       resetDraftState();
       await showSuccess(
         "Laporan tersimpan",
-        isWitaFriday()
+        isWitaFriday(draft.reportDate)
           ? "terimakasih atas kerja keras anda. sampai jumpa hari senin."
           : "terimakasih atas kerja keras anda. sampai jumpa besok",
       );
@@ -426,6 +532,119 @@ export function useReportDashboard() {
       await showError("Simpan gagal", message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteReport(report: Report) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    const confirmed = await askConfirmation(
+      "Hapus laporan ini?",
+      `Laporan ${report.nama} untuk ${report.tanggal} akan dihapus permanen beserta foto buktinya.`,
+      "Hapus laporan",
+    );
+
+    if (!confirmed) return;
+
+    setSubmitting(true);
+    try {
+      await deleteReportFromDatabase(report);
+      if (loadedSearchReportId === report.id) {
+        resetDraftState();
+      }
+      await loadDashboardData();
+      await showSuccess("Laporan dihapus", "Data laporan dan foto bukti sudah dihapus.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Laporan belum berhasil dihapus.";
+      await showError("Hapus gagal", message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAdminLogin() {
+    if (!adminEmail.trim() || !adminPassword) {
+      await showError("Login admin belum lengkap", "Email dan password admin wajib diisi.");
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      const session = await signInAdminAccount(adminEmail, adminPassword);
+      setAdminSession(session);
+      setAdminEmail("");
+      setAdminPassword("");
+      await showSuccess("Login berhasil", `Selamat datang, ${session.profile.fullName}.`);
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Login admin belum berhasil. Periksa email dan password.";
+      await showError("Login gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  async function handleAdminLogout() {
+    setAdminSubmitting(true);
+    try {
+      await signOutAdminAccount();
+      setAdminSession(null);
+      await showSuccess("Logout berhasil", "Sesi admin sudah ditutup.");
+    } catch (error) {
+      console.error(error);
+      await showError("Logout gagal", "Sesi admin belum berhasil ditutup.");
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  function changeAdminRule<K extends keyof ReportRules>(
+    key: K,
+    value: ReportRules[K],
+  ) {
+    setAdminRuleDraft((current) => normalizeReportRules({ ...current, [key]: value }));
+  }
+
+  async function handleSaveAdminRules() {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      const savedRules = await saveReportRulesToDatabase(adminRuleDraft);
+      setReportRules(savedRules);
+      setAdminRuleDraft(savedRules);
+      await showSuccess("Rules tersimpan", "Pengaturan laporan publik berhasil diperbarui.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Pengaturan rules belum berhasil disimpan.";
+      await showError("Simpan rules gagal", message);
+    } finally {
+      setAdminSubmitting(false);
     }
   }
 
@@ -453,7 +672,17 @@ export function useReportDashboard() {
     nameCheckLoading,
     nameExistsInDirectory,
     reportRules,
-    duplicateToday,
+    adminSession,
+    adminEmail,
+    setAdminEmail,
+    adminPassword,
+    setAdminPassword,
+    adminAuthLoading,
+    adminSubmitting,
+    adminRuleDraft,
+    canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
+    canManageReports: Boolean(adminSession),
+    duplicateReport,
     activityTimeIssues,
     preview,
     historyResults,
@@ -472,11 +701,16 @@ export function useReportDashboard() {
     addActivity,
     removeActivity,
     setActivityFiles,
+    handleDeleteReport,
     handleLoadEdit,
     handleResetDraft,
     handleExport,
     handlePrint,
     saveReport,
     handleRemoveSavedName,
+    changeAdminRule,
+    handleAdminLogin,
+    handleAdminLogout,
+    handleSaveAdminRules,
   };
 }

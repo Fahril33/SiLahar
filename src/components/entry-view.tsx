@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect, ReactNode } from "react";
+import { useMemo, useState, ReactNode } from "react";
 import { formatWitaDateTime } from "../lib/time";
 import type { ReportRules } from "../config/report-rules";
 import type { DraftReport, Report } from "../types/report";
@@ -27,10 +27,11 @@ type EntryViewProps = {
   searchResultCanReload: boolean;
   searchResultNeedsReload: boolean;
   similarName: string | null;
-  duplicateToday: Report | null;
+  duplicateReport: Report | null;
   nameCheckLoading: boolean;
   nameExistsInDirectory: boolean | null;
   reportRules: ReportRules;
+  canUseAnyReportDate: boolean;
   activityTimeIssues: Array<{
     startAfterMorning: boolean;
     endBeforeStart: boolean;
@@ -56,7 +57,10 @@ type EntryViewProps = {
   ) => void;
   onAddActivity: () => void;
   onRemoveActivity: (index: number) => void;
-  onSetActivityFiles: (activityNo: number, files: FileList | null) => void;
+  onSetActivityFiles: (
+    activityNo: number,
+    files: FileList | null,
+  ) => Promise<void>;
   onHandleLoadEdit: (report: Report) => Promise<void>;
 
   onHandleExport: (report: Report) => Promise<void>;
@@ -64,17 +68,23 @@ type EntryViewProps = {
   onHandleResetDraft: () => Promise<void>;
   onSaveReport: () => Promise<void>;
   onHandleRemoveSavedName: (name: string) => void;
-  
+
   searchOpen: boolean;
-  setSearchOpen: (open: boolean) => void;
-  
   navbarPosition?: "top" | "left" | "right";
   navbarSlot?: ReactNode;
 };
 
 function SaveIcon(props: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className || "h-4 w-4"}>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
       <polyline points="17 21 17 13 7 13 7 21" />
       <polyline points="7 3 7 8 15 8" />
@@ -84,7 +94,15 @@ function SaveIcon(props: { className?: string }) {
 
 function PrintIcon(props: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={props.className || "h-4 w-4"}>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
       <polyline points="6 9 6 2 18 2 18 9" />
       <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
       <rect x="6" y="14" width="12" height="8" />
@@ -201,36 +219,20 @@ export function EntryView(props: EntryViewProps) {
     () => getPaperPreview(props.paperFormat),
     [props.paperFormat],
   );
-  const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        searchContainerRef.current &&
-        !searchContainerRef.current.contains(event.target as Node)
-      ) {
-        props.setSearchOpen(false);
-      }
-    }
-    if (props.searchOpen) document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [props.searchOpen, props.setSearchOpen]);
-
-  const hClass = props.navbarPosition === "top" || !props.navbarPosition 
-    ? "xl:h-[calc(100vh-9.25rem)]" 
-    : "xl:h-[calc(100vh-4rem)]";
+  const hClass =
+    props.navbarPosition === "top" || !props.navbarPosition
+      ? "lg:h-[calc(100vh-9.25rem)]"
+      : "lg:h-[calc(100vh-4rem)]";
 
   return (
     <section
-      className={`grid gap-4 ${hClass} xl:grid-cols-[minmax(360px,1fr)_minmax(860px,58vw)]`}
+      className={`grid gap-4 ${hClass} lg:grid-cols-[minmax(320px,0.95fr)_minmax(360px,1.05fr)] xl:grid-cols-[minmax(360px,1fr)_minmax(720px,58vw)]`}
     >
       <div className="panel-glass flex min-h-0 flex-col overflow-hidden rounded-[32px]">
         {props.navbarPosition === "left" && props.navbarSlot}
         {props.searchOpen ? (
-          <div
-            ref={searchContainerRef}
-            className="border-b border-[var(--border-soft)] px-4 py-4 sm:px-5 bg-[var(--surface-base)]"
-          >
+          <div className="border-b border-[var(--border-soft)] px-4 py-4 sm:px-5 bg-[var(--surface-base)]">
             <div className="surface-muted rounded-[24px] p-4">
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
                 <AutocompleteInput
@@ -299,10 +301,10 @@ export function EntryView(props: EntryViewProps) {
                     penulisannya sudah benar.
                   </div>
                 ) : null}
-                {props.duplicateToday ? (
+                {props.duplicateReport ? (
                   <div className="inline-note inline-note-warning md:col-span-2">
-                    Sudah ada laporan atas nama ini untuk hari ini. Jika
-                    disimpan, data sebelumnya akan diperbarui.
+                    Sudah ada laporan atas nama ini untuk tanggal yang dipilih.
+                    Jika disimpan, data sebelumnya akan diperbarui.
                   </div>
                 ) : null}
                 <div className="md:col-span-2">
@@ -314,14 +316,19 @@ export function EntryView(props: EntryViewProps) {
                     className={inputClassName}
                     emptyMessage="Nama belum ada di database, tetapi laporan tetap bisa dilanjutkan."
                     endAdornment={
-                      props.draft.nama.trim() && (props.nameCheckLoading || props.nameExistsInDirectory === true) ? (
-                        <div tabIndex={0} className="group relative flex items-center justify-center focus:outline-none">
+                      props.draft.nama.trim() &&
+                      (props.nameCheckLoading ||
+                        props.nameExistsInDirectory === true) ? (
+                        <div
+                          tabIndex={0}
+                          className="ui-tooltip-group focus:outline-none"
+                        >
                           {props.nameCheckLoading ? (
                             <SpinnerIcon className="h-5 w-5 animate-spin text-[var(--info)]" />
                           ) : (
                             <SmileIcon className="h-5 w-5 text-[var(--success)]" />
                           )}
-                          <div className="pointer-events-none absolute bottom-full right-0 mb-3 w-max max-w-[220px] sm:max-w-xs whitespace-normal rounded-lg bg-[var(--surface-tooltip)] px-3 py-2 text-[0.8rem] leading-relaxed text-[var(--text-tooltip)] opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 z-10">
+                          <div className="ui-tooltip ui-tooltip-right">
                             {props.nameCheckLoading
                               ? "Mengecek apakah nama ini sudah pernah tercatat di sistem."
                               : "Nama ini sudah pernah tercatat di sistem."}
@@ -331,11 +338,37 @@ export function EntryView(props: EntryViewProps) {
                     }
                   />
                 </div>
-                <input
-                  value={props.draft.tanggal}
-                  disabled
-                  className={`${inputClassName} md:col-span-2 cursor-not-allowed opacity-90`}
-                />
+                {props.canUseAnyReportDate ? (
+                  <label className="space-y-2">
+                    <span className="text-sm font-medium">Tanggal laporan</span>
+                    <input
+                      type="date"
+                      value={props.draft.reportDate}
+                      onChange={(event) =>
+                        props.onChange("reportDate", event.target.value)
+                      }
+                      className={inputClassName}
+                    />
+                  </label>
+                ) : null}
+                <label
+                  className={`space-y-2 ${props.canUseAnyReportDate ? "" : "md:col-span-2"}`}
+                >
+                  <span className="text-sm font-medium">
+                    Hari / Tanggal dokumen
+                  </span>
+                  <input
+                    value={props.draft.tanggal}
+                    disabled
+                    className={`${inputClassName} cursor-not-allowed opacity-90`}
+                  />
+                </label>
+                {!props.canUseAnyReportDate ? (
+                  <div className="inline-note inline-note-info md:col-span-2">
+                    Admin saat ini membatasi pengisian laporan hanya untuk hari
+                    berjalan.
+                  </div>
+                ) : null}
               </div>
             </section>
 
@@ -463,7 +496,7 @@ export function EntryView(props: EntryViewProps) {
                         accept="image/png,image/jpeg,image/webp"
                         multiple={props.reportRules.maxPhotosPerActivity > 1}
                         onChange={(event) =>
-                          props.onSetActivityFiles(
+                          void props.onSetActivityFiles(
                             activity.no,
                             event.target.files,
                           )
@@ -622,7 +655,7 @@ export function EntryView(props: EntryViewProps) {
 
         <div className="sticky-fade mt-auto border-t border-[var(--border-soft)] px-4 py-3 sm:px-5">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="group relative flex items-center justify-center">
+            <div className="ui-tooltip-group">
               {props.hasDraftContent ? (
                 props.draftCacheStatus === "saving" ? (
                   <SpinnerIcon className="h-5 w-5 animate-spin text-[var(--info)]" />
@@ -632,7 +665,7 @@ export function EntryView(props: EntryViewProps) {
               ) : (
                 <XCircleIcon className="h-5 w-5 text-[var(--danger)] opacity-60" />
               )}
-              <div className="pointer-events-none absolute bottom-full left-0 mb-3 w-max rounded-lg bg-[var(--surface-tooltip)] px-3 py-2 text-xs text-[var(--text-tooltip)] opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+              <div className="ui-tooltip ui-tooltip-left">
                 {props.hasDraftContent
                   ? props.draftSavedAt
                     ? `Draft tersimpan lokal - ${formatWitaDateTime(props.draftSavedAt)}`
@@ -661,23 +694,23 @@ export function EntryView(props: EntryViewProps) {
       </div>
 
       <aside
-        className={`panel-glass min-h-0 overflow-hidden rounded-[32px] xl:sticky xl:top-0 ${hClass}`}
+        className={`panel-glass min-h-0 overflow-hidden rounded-[32px] lg:sticky lg:top-0 ${hClass}`}
       >
         <div className="relative flex h-full min-h-0 flex-col bg-[var(--preview-surface)]">
           <div className="absolute top-0 left-0 right-0 z-20 border-b border-[var(--border-soft)] bg-[var(--surface-panel)]/80 backdrop-blur-xl flex flex-col pointer-events-none">
             {props.navbarPosition === "right" && (
               <div className="pointer-events-auto">{props.navbarSlot}</div>
             )}
-            <div className="pointer-events-auto px-4 py-4 sm:px-5 flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="w-full text-center md:w-auto md:text-left">
+            <div className="pointer-events-auto flex flex-row items-center justify-between gap-2 px-3 py-3 sm:px-4 2xl:gap-3 2xl:px-5 2xl:py-4">
+              <div className="min-w-0 shrink">
                 <p
-                  className={`${eyebrowClassName} md:self-center md:rounded-[10px] md:px-2 md:w-max text-lg font-semibold text-[var(--text-primary)] bg-[var(--field-bg)]`}
+                  className={`${eyebrowClassName} truncate rounded-[10px] bg-[var(--field-bg)] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] sm:text-sm 2xl:text-lg`}
                 >
                   Preview Dokumen
                 </p>
               </div>
-              <div className="flex flex-wrap w-full md:w-auto justify-center md:justify-end items-center gap-2">
-                <div className="flex items-center rounded-full border border-[var(--border-soft)] bg-[var(--field-bg)] px-1 py-1 mr-1">
+              <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2">
+                <div className="mr-1 flex items-center rounded-full border border-[var(--border-soft)] bg-[var(--field-bg)] px-1 py-1">
                   <button
                     type="button"
                     onClick={() =>
@@ -685,12 +718,12 @@ export function EntryView(props: EntryViewProps) {
                         Math.max(0.4, Number((s - 0.1).toFixed(1))),
                       )
                     }
-                    className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)]"
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
                     title="Perkecil"
                   >
                     -
                   </button>
-                  <span className="w-12 text-center text-xs font-medium text-[var(--text-primary)]">
+                  <span className="w-10 text-center text-[10px] font-medium text-[var(--text-primary)] sm:w-12 sm:text-xs">
                     {Math.round(previewScale * 100)}%
                   </span>
                   <button
@@ -700,7 +733,7 @@ export function EntryView(props: EntryViewProps) {
                         Math.min(1.5, Number((s + 0.1).toFixed(1))),
                       )
                     }
-                    className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)]"
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
                     title="Perbesar"
                   >
                     +
@@ -713,30 +746,31 @@ export function EntryView(props: EntryViewProps) {
                       event.target.value as "a4" | "f4" | "legal" | "letter",
                     )
                   }
-                  className="field-input w-full md:w-auto min-w-[170px] py-2.5 text-sm"
+                  className="field-input w-[80px] px-3 py-2 text-xs sm:text-sm 2xl:py-2.5"
                 >
-                  <option value="a4">A4 (210 x 297 mm)</option>
-                  <option value="f4">F4 (210 x 330 mm)</option>
-                  <option value="legal">Legal (216 x 356 mm)</option>
-                  <option value="letter">Letter (216 x 279 mm)</option>
+                  <option value="a4">A4</option>
+                  <option value="f4">F4</option>
+                  <option value="legal">Legal</option>
+                  <option value="letter">Letter</option>
                 </select>
-                <div className="flex w-full md:w-auto items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
                     onClick={() => void props.onHandlePrint(props.preview)}
-                    className="btn-secondary flex-1 md:flex-none px-4 py-2.5 text-sm"
+                    className="btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
-                    <PrintIcon /> <span>Print</span>
+                    <PrintIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <span className="hidden sm:inline">Print</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => void props.onSaveReport()}
                     disabled={props.submitting}
-                    className="btn-primary flex-1 md:flex-none px-4 py-2.5 text-sm"
+                    className="btn-primary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
-                    <SaveIcon />{" "}
-                    <span>
-                      {props.submitting ? "Menyimpan..." : "Simpan laporan"}
+                    <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />{" "}
+                    <span className="whitespace-nowrap">
+                      {props.submitting ? "Menyimpan..." : "Simpan"}
                     </span>
                   </button>
                 </div>

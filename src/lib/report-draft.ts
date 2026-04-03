@@ -31,12 +31,18 @@ export function timeToMinutes(value: string) {
   return hours * 60 + minutes;
 }
 
+function normalizeReportDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : today;
+}
+
 export function normalizeDraft(draft: DraftReport): DraftReport {
+  const reportDate = normalizeReportDate(draft.reportDate || today);
+
   return {
     ...draft,
     nama: (draft.nama ?? "").toUpperCase(),
-    tanggal: todayDisplay,
-    reportDate: today,
+    tanggal: getWitaDisplayDateUppercase(reportDate),
+    reportDate,
     activities: draft.activities.map((activity, index) => ({
       id: activity.id,
       no: activity.no || index + 1,

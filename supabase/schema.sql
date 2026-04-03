@@ -104,9 +104,20 @@ create table if not exists public.daily_report_activities (
   unique (report_id, activity_order)
 );
 
+create table if not exists public.daily_report_activity_photos (
+  id uuid primary key default gen_random_uuid(),
+  activity_id uuid not null references public.daily_report_activities(id) on delete cascade,
+  storage_path text not null unique,
+  public_url text not null,
+  original_file_name text not null,
+  sort_order integer not null default 1 check (sort_order > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.daily_report_audit_logs (
   id bigserial primary key,
-  report_id uuid not null references public.daily_reports(id) on delete cascade,
+  report_id uuid references public.daily_reports(id) on delete set null,
   action_type text not null check (action_type in ('create', 'update', 'delete', 'export')),
   actor_role text not null check (actor_role in ('admin', 'anonymous')),
   actor_label text not null,
@@ -124,13 +135,41 @@ create table if not exists public.app_settings (
 create index if not exists idx_daily_reports_report_date on public.daily_reports(report_date desc);
 create index if not exists idx_daily_reports_name_date on public.daily_reports(normalized_reporter_name, report_date desc);
 create index if not exists idx_daily_report_activities_report_order on public.daily_report_activities(report_id, activity_order);
+create index if not exists idx_daily_report_activity_photos_activity on public.daily_report_activity_photos(activity_id, sort_order);
 
-create or replace function public.sync_reporter_name()
+create or replace function public.wita_display_date(input_date date default public.wita_today())
+returns text
+language plpgsql
+stable
+as $$
+declare
+  day_names text[] := array['MINGGU', 'SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT', 'SABTU'];
+  month_names text[] := array['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI', 'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'];
+begin
+  return day_names[extract(dow from input_date)::int + 1]
+    || ', '
+    || lpad(extract(day from input_date)::int::text, 2, '0')
+    || ' '
+    || month_names[extract(month from input_date)::int]
+    || ' '
+    || extract(year from input_date)::int;
+end;
+$$;
+
+create or replace function public.sync_daily_report_fields()
 returns trigger
 language plpgsql
 as $$
 begin
+  new.reporter_name = upper(trim(coalesce(new.reporter_name, '')));
   new.normalized_reporter_name = public.normalize_name(new.reporter_name);
+
+  if new.report_date is null then
+    new.report_date = public.wita_today();
+  end if;
+
+  new.display_date_text = public.wita_display_date(new.report_date);
+
   return new;
 end;
 $$;
@@ -165,11 +204,18 @@ before update on public.daily_report_activities
 for each row
 execute function public.set_updated_at();
 
-drop trigger if exists trg_daily_reports_normalize_name on public.daily_reports;
-create trigger trg_daily_reports_normalize_name
-before insert or update of reporter_name on public.daily_reports
+drop trigger if exists trg_daily_report_activity_photos_updated_at on public.daily_report_activity_photos;
+create trigger trg_daily_report_activity_photos_updated_at
+before update on public.daily_report_activity_photos
 for each row
-execute function public.sync_reporter_name();
+execute function public.set_updated_at();
+
+drop trigger if exists trg_daily_reports_normalize_name on public.daily_reports;
+drop trigger if exists trg_daily_reports_sync_fields on public.daily_reports;
+create trigger trg_daily_reports_sync_fields
+before insert or update of reporter_name, display_date_text, report_date on public.daily_reports
+for each row
+execute function public.sync_daily_report_fields();
 
 alter table public.admin_profiles enable row level security;
 alter table public.reporter_directory enable row level security;
@@ -177,6 +223,7 @@ alter table public.report_templates enable row level security;
 alter table public.report_template_notes enable row level security;
 alter table public.daily_reports enable row level security;
 alter table public.daily_report_activities enable row level security;
+alter table public.daily_report_activity_photos enable row level security;
 alter table public.daily_report_audit_logs enable row level security;
 alter table public.app_settings enable row level security;
 
@@ -184,6 +231,8 @@ create or replace function public.is_admin()
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select exists (
     select 1
@@ -193,8 +242,22 @@ as $$
   );
 $$;
 
+grant execute on function public.is_admin() to anon, authenticated;
+
 drop policy if exists "admin can read admin_profiles" on public.admin_profiles;
-create policy "admin can read admin_profiles"
+drop policy if exists "authenticated users can read own admin profile" on public.admin_profiles;
+drop policy if exists "active admins can read admin_profiles" on public.admin_profiles;
+
+create policy "authenticated users can read own admin profile"
+on public.admin_profiles
+for select
+to authenticated
+using (
+  id = auth.uid()
+  and is_active = true
+);
+
+create policy "active admins can read admin_profiles"
 on public.admin_profiles
 for select
 to authenticated
@@ -260,19 +323,48 @@ to anon, authenticated
 using (true);
 
 drop policy if exists "public create today's report" on public.daily_reports;
-create policy "public create today's report"
+create or replace function public.is_public_report_date_allowed(target_report_date date)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    target_report_date = public.wita_today()
+    or coalesce(
+      (
+        select (value->>'allow_any_report_date')::boolean
+        from public.app_settings
+        where key = 'report_rules'
+      ),
+      false
+    );
+$$;
+
+grant execute on function public.is_public_report_date_allowed(date) to anon, authenticated;
+
+drop policy if exists "public create reports on allowed dates" on public.daily_reports;
+create policy "public create reports on allowed dates"
 on public.daily_reports
 for insert
 to anon, authenticated
-with check (report_date = public.wita_today());
+with check (
+  public.is_public_report_date_allowed(report_date) or public.is_admin()
+);
 
 drop policy if exists "public update today's report only" on public.daily_reports;
-create policy "public update today's report only"
+drop policy if exists "public update reports on allowed dates" on public.daily_reports;
+create policy "public update reports on allowed dates"
 on public.daily_reports
 for update
 to anon, authenticated
-using (report_date = public.wita_today() or public.is_admin())
-with check (report_date = public.wita_today() or public.is_admin());
+using (
+  public.is_public_report_date_allowed(report_date) or public.is_admin()
+)
+with check (
+  public.is_public_report_date_allowed(report_date) or public.is_admin()
+);
 
 drop policy if exists "admin delete all daily_reports" on public.daily_reports;
 create policy "admin delete all daily_reports"
@@ -295,7 +387,8 @@ using (
 );
 
 drop policy if exists "public manage today's activities" on public.daily_report_activities;
-create policy "public manage today's activities"
+drop policy if exists "public manage activities on allowed dates" on public.daily_report_activities;
+create policy "public manage activities on allowed dates"
 on public.daily_report_activities
 for all
 to anon, authenticated
@@ -304,7 +397,10 @@ using (
     select 1
     from public.daily_reports dr
     where dr.id = daily_report_activities.report_id
-      and (dr.report_date = public.wita_today() or public.is_admin())
+      and (
+        public.is_public_report_date_allowed(dr.report_date)
+        or public.is_admin()
+      )
   )
 )
 with check (
@@ -312,7 +408,55 @@ with check (
     select 1
     from public.daily_reports dr
     where dr.id = daily_report_activities.report_id
-      and (dr.report_date = public.wita_today() or public.is_admin())
+      and (
+        public.is_public_report_date_allowed(dr.report_date)
+        or public.is_admin()
+      )
+  )
+);
+
+drop policy if exists "public read daily_report_activity_photos" on public.daily_report_activity_photos;
+create policy "public read daily_report_activity_photos"
+on public.daily_report_activity_photos
+for select
+to anon, authenticated
+using (
+  exists (
+    select 1
+    from public.daily_report_activities dra
+    join public.daily_reports dr on dr.id = dra.report_id
+    where dra.id = daily_report_activity_photos.activity_id
+  )
+);
+
+drop policy if exists "public manage today's activity photos" on public.daily_report_activity_photos;
+drop policy if exists "public manage activity photos on allowed dates" on public.daily_report_activity_photos;
+create policy "public manage activity photos on allowed dates"
+on public.daily_report_activity_photos
+for all
+to anon, authenticated
+using (
+  exists (
+    select 1
+    from public.daily_report_activities dra
+    join public.daily_reports dr on dr.id = dra.report_id
+    where dra.id = daily_report_activity_photos.activity_id
+      and (
+        public.is_public_report_date_allowed(dr.report_date)
+        or public.is_admin()
+      )
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.daily_report_activities dra
+    join public.daily_reports dr on dr.id = dra.report_id
+    where dra.id = daily_report_activity_photos.activity_id
+      and (
+        public.is_public_report_date_allowed(dr.report_date)
+        or public.is_admin()
+      )
   )
 );
 
@@ -363,6 +507,7 @@ create or replace function public.log_daily_report_changes()
 returns trigger
 language plpgsql
 security definer
+set search_path = public
 as $$
 begin
   if tg_op = 'INSERT' then
@@ -385,7 +530,17 @@ begin
     return new;
   elsif tg_op = 'DELETE' then
     insert into public.daily_report_audit_logs (report_id, action_type, actor_role, actor_label, actor_admin_id, snapshot)
-    values (old.id, 'delete', old.updated_by_role, old.updated_by_label, old.updated_by_admin_id, to_jsonb(old));
+    values (
+      null,
+      'delete',
+      old.updated_by_role,
+      old.updated_by_label,
+      old.updated_by_admin_id,
+      jsonb_build_object(
+        'deleted_report_id', old.id,
+        'deleted_report', to_jsonb(old)
+      )
+    );
     return old;
   end if;
   return null;
@@ -453,7 +608,59 @@ values
     jsonb_build_object(
       'template_code', 'bpbd-trc-harian-2026'
     )
+  ),
+  (
+    'report_rules',
+    jsonb_build_object(
+      'allow_any_report_date', true,
+      'max_photos_per_activity', 1
+    )
   )
 on conflict (key) do update
 set value = excluded.value,
     updated_at = now();
+
+create or replace function public.current_max_photos_per_activity()
+returns integer
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select greatest(
+    1,
+    coalesce(
+      (
+        select (value->>'max_photos_per_activity')::int
+        from public.app_settings
+        where key = 'report_rules'
+      ),
+      1
+    )
+  );
+$$;
+
+create or replace function public.get_report_rules()
+returns table (
+  allow_any_report_date boolean,
+  max_photos_per_activity integer
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    coalesce(
+      (
+        select (value->>'allow_any_report_date')::boolean
+        from public.app_settings
+        where key = 'report_rules'
+      ),
+      false
+    ) as allow_any_report_date,
+    public.current_max_photos_per_activity() as max_photos_per_activity;
+$$;
+
+grant execute on function public.current_max_photos_per_activity() to anon, authenticated;
+grant execute on function public.get_report_rules() to anon, authenticated;
