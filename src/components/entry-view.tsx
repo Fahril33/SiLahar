@@ -199,6 +199,39 @@ function TrashIcon(props: { className?: string }) {
   );
 }
 
+function PlusIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
 function getPaperPreview(paperFormat: "a4" | "f4" | "legal" | "letter") {
   return {
     width: paperFormat === "a4" || paperFormat === "f4" ? "210mm" : "216mm",
@@ -215,6 +248,7 @@ function getPaperPreview(paperFormat: "a4" | "f4" | "legal" | "letter") {
 
 export function EntryView(props: EntryViewProps) {
   const [previewScale, setPreviewScale] = useState(1);
+  const [isApproverExpanded, setIsApproverExpanded] = useState(false);
   const paperPreview = useMemo(
     () => getPaperPreview(props.paperFormat),
     [props.paperFormat],
@@ -372,8 +406,9 @@ export function EntryView(props: EntryViewProps) {
               </div>
             </section>
 
-            <section className="surface-card rounded-[15px] py-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 px-2">
+            <section className="surface-card rounded-[15px] overflow-hidden">
+              <div className="p-4 pb-0">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-2">
                 <div>
                   <p className={eyebrowClassName}>Aktivitas Harian</p>
                 </div>
@@ -534,118 +569,159 @@ export function EntryView(props: EntryViewProps) {
                   </article>
                 ))}
               </div>
+            </div>
+            <div className="border-t border-[var(--border-soft)]">
+                <button
+                  type="button"
+                  onClick={props.onAddActivity}
+                  className="flex w-full items-center justify-center gap-2 bg-[var(--surface-accent)]/10 px-4 py-4 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-accent)]/20 active:bg-[var(--surface-accent)]/30"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Tambah baris aktivitas
+                </button>
+              </div>
             </section>
 
-            <section className="surface-card rounded-[15px] p-4">
-              <div className="space-y-1">
-                <p className={eyebrowClassName}>Persetujuan</p>
-                <h3 className="text-lg font-semibold">
-                  Data pejabat penandatangan
-                </h3>
-                <p className="text-sm text-[var(--text-muted)]">
-                  Lengkapi nama, jabatan, dan NIP agar area persetujuan tetap
-                  rapi saat dicetak.
-                </p>
-              </div>
-              <div className="mt-4 grid gap-3 xl:grid-cols-1">
-                <div className="surface-muted rounded-[24px] p-4">
-                  <div className="mb-4 flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--info-soft)] text-sm font-bold text-[var(--info)]">
-                      KT
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                        Pihak 1
-                      </p>
-                      <h4 className="text-lg font-bold">Koordinator Tim</h4>
-                    </div>
-                  </div>
-                  <div className="grid gap-4">
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Nama pejabat</span>
-                      <input
-                        value={props.draft.approverCoordinator}
-                        onChange={(event) =>
-                          props.onChange(
-                            "approverCoordinator",
-                            event.target.value.toUpperCase(),
-                          )
-                        }
-                        placeholder="Nama koordinator tim"
-                        className={inputClassName}
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">NIP</span>
-                      <input
-                        value={props.draft.approverCoordinatorNip}
-                        onChange={(event) =>
-                          props.onChange(
-                            "approverCoordinatorNip",
-                            event.target.value,
-                          )
-                        }
-                        placeholder="Nomor induk pegawai"
-                        className={inputClassName}
-                      />
-                    </label>
-                  </div>
+            <section className="surface-card rounded-[15px] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIsApproverExpanded(!isApproverExpanded)}
+                className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-[var(--surface-accent)]/10"
+              >
+                <div className="space-y-1">
+                  <p className={eyebrowClassName}>Persetujuan</p>
+                  <h3 className="text-lg font-semibold">
+                    Data pejabat penandatangan
+                  </h3>
                 </div>
-                <div className="surface-muted rounded-[24px] p-4">
-                  <div className="mb-4 flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--warning-soft)] text-sm font-bold text-[var(--warning)]">
-                      KB
+                <ChevronDownIcon
+                  className={`h-5 w-5 text-[var(--text-muted)] transition-transform duration-300 ${
+                    isApproverExpanded ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              <div
+                className={`grid transition-all duration-300 ease-in-out ${
+                  isApproverExpanded
+                    ? "grid-rows-[1fr] opacity-100"
+                    : "grid-rows-[0fr] opacity-0"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <div className="p-4 pt-0">
+                    <p className="mb-4 text-sm text-[var(--text-muted)]">
+                      Lengkapi nama, jabatan, dan NIP agar area persetujuan
+                      tetap rapi saat dicetak.
+                    </p>
+                    <div className="grid gap-3 xl:grid-cols-1">
+                      <div className="surface-muted rounded-[24px] p-4">
+                        <div className="mb-4 flex items-center gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--info-soft)] text-sm font-bold text-[var(--info)]">
+                            KT
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                              Pihak 1
+                            </p>
+                            <h4 className="text-lg font-bold">
+                              Koordinator Tim
+                            </h4>
+                          </div>
+                        </div>
+                        <div className="grid gap-4">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">
+                              Nama pejabat
+                            </span>
+                            <input
+                              value={props.draft.approverCoordinator}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverCoordinator",
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                              placeholder="Nama koordinator tim"
+                              className={inputClassName}
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">NIP</span>
+                            <input
+                              value={props.draft.approverCoordinatorNip}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverCoordinatorNip",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Nomor induk pegawai"
+                              className={inputClassName}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      <div className="surface-muted rounded-[24px] p-4">
+                        <div className="mb-4 flex items-center gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--warning-soft)] text-sm font-bold text-[var(--warning)]">
+                            KB
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+                              Pihak 2
+                            </p>
+                            <h4 className="text-lg font-bold">Kepala Bidang</h4>
+                          </div>
+                        </div>
+                        <div className="grid gap-4">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">
+                              Nama pejabat
+                            </span>
+                            <input
+                              value={props.draft.approverDivisionHead}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverDivisionHead",
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                              placeholder="Nama kepala bidang"
+                              className={inputClassName}
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">Jabatan</span>
+                            <input
+                              value={props.draft.approverDivisionHeadTitle}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverDivisionHeadTitle",
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                              placeholder="Jabatan atau pangkat"
+                              className={inputClassName}
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">NIP</span>
+                            <input
+                              value={props.draft.approverDivisionHeadNip}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverDivisionHeadNip",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="Nomor induk pegawai"
+                              className={inputClassName}
+                            />
+                          </label>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-                        Pihak 2
-                      </p>
-                      <h4 className="text-lg font-bold">Kepala Bidang</h4>
-                    </div>
-                  </div>
-                  <div className="grid gap-4">
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Nama pejabat</span>
-                      <input
-                        value={props.draft.approverDivisionHead}
-                        onChange={(event) =>
-                          props.onChange(
-                            "approverDivisionHead",
-                            event.target.value.toUpperCase(),
-                          )
-                        }
-                        placeholder="Nama kepala bidang"
-                        className={inputClassName}
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">Jabatan</span>
-                      <input
-                        value={props.draft.approverDivisionHeadTitle}
-                        onChange={(event) =>
-                          props.onChange(
-                            "approverDivisionHeadTitle",
-                            event.target.value.toUpperCase(),
-                          )
-                        }
-                        placeholder="Jabatan atau pangkat"
-                        className={inputClassName}
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="text-sm font-medium">NIP</span>
-                      <input
-                        value={props.draft.approverDivisionHeadNip}
-                        onChange={(event) =>
-                          props.onChange(
-                            "approverDivisionHeadNip",
-                            event.target.value,
-                          )
-                        }
-                        placeholder="Nomor induk pegawai"
-                        className={inputClassName}
-                      />
-                    </label>
                   </div>
                 </div>
               </div>
