@@ -134,3 +134,20 @@ Setiap patch sebaiknya ditulis dengan pola:
 ### Notes
 - Preferensi theme lama `comfort` otomatis dimigrasikan ke `cheerfull` di client.
 - Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-03 - Admin Kelola Pengguna Publik
+
+### Added
+- Menu Admin dipisah menjadi `Aturan laporan` dan `Kelola pengguna`.
+- Admin dapat meninjau daftar pengguna publik yang pernah tercatat menggunakan sistem.
+- Admin dapat mengubah nama pengguna publik, dan perubahan ikut diterapkan ke laporan terkait.
+- Admin dapat menghapus jejak pengguna publik beserta laporan, status, dan file foto bukti terkait.
+- Migration `011_admin_manage_reporter_directory.sql`.
+
+### Changed
+- Card sesi admin dipindahkan sejajar dengan header Panel Admin agar tampilan lebih compact.
+- `schema.sql` disinkronkan dengan kolom tracking `reporter_directory` dan trigger normalisasi nama reporter.
+
+### Notes
+- Jalankan migration `011` di Supabase sebelum memakai fitur kelola pengguna.
+- Build frontend sudah diverifikasi dengan `npm run build`.

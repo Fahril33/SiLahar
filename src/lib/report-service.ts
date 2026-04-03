@@ -3,7 +3,11 @@ import { DEFAULT_REPORT_RULES, normalizeReportRules, type ReportRules } from "..
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import { supabase } from "./supabase";
 import { mapReportRow } from "./report-mappers";
-import type { DraftReport, Report } from "../types/report";
+import type {
+  DraftReport,
+  Report,
+  ReporterDirectoryProfile,
+} from "../types/report";
 
 const PROOF_BUCKET = "daily-report-proofs";
 
@@ -21,6 +25,24 @@ type AdminProfileRow = {
   is_active: boolean;
 };
 
+type ReporterDirectoryRow = {
+  id: string;
+  full_name: string;
+  first_reported_at: string | null;
+  last_reported_at: string | null;
+  total_reports: number | null;
+  is_active: boolean;
+};
+
+type ReporterTraceReportRow = {
+  id: string;
+  daily_report_activities?: Array<{
+    daily_report_activity_photos?: Array<{
+      storage_path: string;
+    }>;
+  }>;
+};
+
 function sanitizeFileName(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
 }
@@ -30,6 +52,19 @@ function mapAdminProfile(row: AdminProfileRow): AdminProfile {
     id: row.id,
     fullName: row.full_name.toUpperCase(),
     role: row.role,
+    isActive: row.is_active,
+  };
+}
+
+function mapReporterDirectoryRow(
+  row: ReporterDirectoryRow,
+): ReporterDirectoryProfile {
+  return {
+    id: row.id,
+    fullName: row.full_name.toUpperCase(),
+    firstReportedAt: row.first_reported_at,
+    lastReportedAt: row.last_reported_at,
+    totalReports: Number(row.total_reports ?? 0),
     isActive: row.is_active,
   };
 }
@@ -125,6 +160,27 @@ export async function fetchReporterDirectoryNames() {
   }
 
   return (data ?? []).map((row) => row.full_name.toUpperCase());
+}
+
+export async function fetchReporterDirectoryProfiles() {
+  if (!supabase) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("reporter_directory")
+    .select(
+      "id, full_name, first_reported_at, last_reported_at, total_reports, is_active",
+    )
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []).map((row) =>
+    mapReporterDirectoryRow(row as ReporterDirectoryRow),
+  );
 }
 
 export async function fetchReportRules() {
@@ -372,6 +428,76 @@ export async function deleteReportFromDatabase(report: Report) {
   }
 
   const { error } = await supabase.from("daily_reports").delete().eq("id", report.id);
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function renameReporterDirectoryProfile(
+  reporterId: string,
+  nextName: string,
+) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { error } = await supabase.rpc("rename_reporter_directory_profile", {
+    reporter_id_input: reporterId,
+    next_full_name_input: nextName.trim().toUpperCase(),
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function deleteReporterDirectoryTrace(reporterId: string) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { data, error: reportFetchError } = await supabase
+    .from("daily_reports")
+    .select(
+      `
+      id,
+      daily_report_activities (
+        daily_report_activity_photos (
+          storage_path
+        )
+      )
+    `,
+    )
+    .eq("reporter_directory_id", reporterId);
+
+  if (reportFetchError) {
+    throw reportFetchError;
+  }
+
+  const storagePaths = ((data ?? []) as ReporterTraceReportRow[])
+    .flatMap((report) =>
+      (report.daily_report_activities ?? []).flatMap((activity) =>
+        (activity.daily_report_activity_photos ?? []).map(
+          (photo) => photo.storage_path,
+        ),
+      ),
+    )
+    .filter(Boolean);
+
+  if (storagePaths.length > 0) {
+    const { error: removeStorageError } = await supabase.storage
+      .from(PROOF_BUCKET)
+      .remove(storagePaths);
+
+    if (removeStorageError) {
+      throw removeStorageError;
+    }
+  }
+
+  const { error } = await supabase.rpc("delete_reporter_directory_trace", {
+    reporter_id_input: reporterId,
+  });
 
   if (error) {
     throw error;

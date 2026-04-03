@@ -40,6 +40,9 @@ create table if not exists public.reporter_directory (
   full_name text not null unique,
   normalized_name text not null unique,
   unit_name text,
+  first_reported_at timestamptz,
+  last_reported_at timestamptz,
+  total_reports integer not null default 0,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -174,6 +177,17 @@ begin
 end;
 $$;
 
+create or replace function public.sync_reporter_directory_name()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.full_name = upper(trim(coalesce(new.full_name, '')));
+  new.normalized_name = public.normalize_name(new.full_name);
+  return new;
+end;
+$$;
+
 drop trigger if exists trg_admin_profiles_updated_at on public.admin_profiles;
 create trigger trg_admin_profiles_updated_at
 before update on public.admin_profiles
@@ -185,6 +199,12 @@ create trigger trg_reporter_directory_updated_at
 before update on public.reporter_directory
 for each row
 execute function public.set_updated_at();
+
+drop trigger if exists trg_reporter_directory_sync_name on public.reporter_directory;
+create trigger trg_reporter_directory_sync_name
+before insert or update of full_name on public.reporter_directory
+for each row
+execute function public.sync_reporter_directory_name();
 
 drop trigger if exists trg_report_templates_updated_at on public.report_templates;
 create trigger trg_report_templates_updated_at
@@ -552,6 +572,109 @@ create trigger trg_daily_reports_audit
 after insert or update or delete on public.daily_reports
 for each row
 execute function public.log_daily_report_changes();
+
+create or replace function public.rename_reporter_directory_profile(
+  reporter_id_input uuid,
+  next_full_name_input text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_input text := public.normalize_name(next_full_name_input);
+  uppercase_input text := upper(trim(coalesce(next_full_name_input, '')));
+  current_normalized_name text;
+begin
+  if not public.is_admin() then
+    raise exception 'Akses admin diperlukan.';
+  end if;
+
+  if reporter_id_input is null then
+    raise exception 'ID pengguna publik tidak valid.';
+  end if;
+
+  if uppercase_input = '' then
+    raise exception 'Nama pengguna publik wajib diisi.';
+  end if;
+
+  select normalized_name
+  into current_normalized_name
+  from public.reporter_directory
+  where id = reporter_id_input
+  limit 1;
+
+  if current_normalized_name is null then
+    raise exception 'Data pengguna publik tidak ditemukan.';
+  end if;
+
+  if exists (
+    select 1
+    from public.reporter_directory
+    where normalized_name = normalized_input
+      and id <> reporter_id_input
+  ) then
+    raise exception 'Nama pengguna publik tersebut sudah terdaftar.';
+  end if;
+
+  update public.reporter_directory
+  set full_name = uppercase_input,
+      is_active = true,
+      updated_at = now()
+  where id = reporter_id_input;
+
+  update public.daily_reports
+  set reporter_name = uppercase_input,
+      reporter_directory_id = reporter_id_input,
+      updated_by_role = 'admin',
+      updated_by_label = 'Admin',
+      updated_at = now()
+  where reporter_directory_id = reporter_id_input
+    or normalized_reporter_name = current_normalized_name;
+end;
+$$;
+
+create or replace function public.delete_reporter_directory_trace(
+  reporter_id_input uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_normalized_name text;
+begin
+  if not public.is_admin() then
+    raise exception 'Akses admin diperlukan.';
+  end if;
+
+  if reporter_id_input is null then
+    raise exception 'ID pengguna publik tidak valid.';
+  end if;
+
+  select normalized_name
+  into current_normalized_name
+  from public.reporter_directory
+  where id = reporter_id_input
+  limit 1;
+
+  if current_normalized_name is null then
+    raise exception 'Data pengguna publik tidak ditemukan.';
+  end if;
+
+  delete from public.daily_reports
+  where reporter_directory_id = reporter_id_input
+    or normalized_reporter_name = current_normalized_name;
+
+  delete from public.reporter_directory
+  where id = reporter_id_input;
+end;
+$$;
+
+grant execute on function public.rename_reporter_directory_profile(uuid, text) to authenticated;
+grant execute on function public.delete_reporter_directory_trace(uuid) to authenticated;
 
 insert into public.report_templates (
   template_code,

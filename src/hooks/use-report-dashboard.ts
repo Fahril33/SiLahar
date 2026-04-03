@@ -20,10 +20,12 @@ import {
 import {
   checkReporterNameExists,
   deleteReportFromDatabase,
+  deleteReporterDirectoryTrace,
   fetchReportRules,
-  fetchReporterDirectoryNames,
+  fetchReporterDirectoryProfiles,
   fetchReports,
   getActiveAdminSession,
+  renameReporterDirectoryProfile,
   saveReportRulesToDatabase,
   saveReportToDatabase,
   signInAdminAccount,
@@ -46,7 +48,11 @@ import {
 import { isWitaFriday } from "../lib/time";
 import { optimizeReportImages } from "../lib/image-optimizer";
 import type { AdminSessionState } from "../types/admin";
-import type { DraftReport, Report } from "../types/report";
+import type {
+  DraftReport,
+  Report,
+  ReporterDirectoryProfile,
+} from "../types/report";
 
 export type View = "entry" | "history" | "status" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
@@ -94,6 +100,7 @@ export function useReportDashboard() {
   const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
   const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
+  const [reporterProfiles, setReporterProfiles] = useState<ReporterDirectoryProfile[]>([]);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
   const [historyName, setHistoryName] = useState("");
@@ -113,6 +120,9 @@ export function useReportDashboard() {
   const [adminAuthLoading, setAdminAuthLoading] = useState(true);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
   const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(DEFAULT_REPORT_RULES);
+  const [adminReporterDraftNames, setAdminReporterDraftNames] = useState<
+    Record<string, string>
+  >({});
   const [loadedSearchReportId, setLoadedSearchReportId] = useState<string | null>(null);
   const [loadedSearchSnapshot, setLoadedSearchSnapshot] = useState<string | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
@@ -222,15 +232,28 @@ export function useReportDashboard() {
   async function loadDashboardData() {
     setLoading(true);
     try {
-      const [dbReports, dbReporterNames, dbReportRules] = await Promise.all([
+      const [dbReports, dbReporterProfiles, dbReportRules] = await Promise.all([
         fetchReports(),
-        fetchReporterDirectoryNames(),
+        fetchReporterDirectoryProfiles(),
         fetchReportRules(),
       ]);
+      const dbReporterNames = dbReporterProfiles
+        .filter((reporter) => reporter.isActive)
+        .map((reporter) => reporter.fullName);
+
       setReports(dbReports);
+      setReporterProfiles(dbReporterProfiles);
       setReporterNames(dbReporterNames);
       setReportRules(dbReportRules);
       setAdminRuleDraft(dbReportRules);
+      setAdminReporterDraftNames((current) =>
+        Object.fromEntries(
+          dbReporterProfiles.map((reporter) => [
+            reporter.id,
+            current[reporter.id] ?? reporter.fullName,
+          ]),
+        ),
+      );
       saveCachedReports(dbReports);
       saveCachedReporterNames(dbReporterNames);
     } catch (error) {
@@ -621,6 +644,13 @@ export function useReportDashboard() {
     setAdminRuleDraft((current) => normalizeReportRules({ ...current, [key]: value }));
   }
 
+  function changeAdminReporterDraftName(reporterId: string, value: string) {
+    setAdminReporterDraftNames((current) => ({
+      ...current,
+      [reporterId]: value.toUpperCase(),
+    }));
+  }
+
   async function handleSaveAdminRules() {
     if (!adminSession) {
       await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
@@ -648,6 +678,93 @@ export function useReportDashboard() {
     }
   }
 
+  async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    const nextName =
+      adminReporterDraftNames[reporter.id]?.trim().toUpperCase() ?? reporter.fullName;
+
+    if (!nextName) {
+      await showError("Nama belum valid", "Nama pengguna publik wajib diisi.");
+      return;
+    }
+
+    if (nextName === reporter.fullName) {
+      await showInfo("Tidak ada perubahan", "Nama pengguna publik belum berubah.");
+      return;
+    }
+
+    const confirmed = await askConfirmation(
+      "Ubah data pengguna publik?",
+      `Semua laporan atas nama ${reporter.fullName} akan disesuaikan menjadi ${nextName}.`,
+      "Simpan perubahan",
+    );
+
+    if (!confirmed) return;
+
+    setAdminSubmitting(true);
+    try {
+      await renameReporterDirectoryProfile(reporter.id, nextName);
+      if (draft.nama.trim().toUpperCase() === reporter.fullName) {
+        setDraft((current) => normalizeDraft({ ...current, nama: nextName }));
+      }
+      await loadDashboardData();
+      await showSuccess("Data pengguna diperbarui", "Nama pengguna publik dan laporan terkait sudah disesuaikan.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Data pengguna publik belum berhasil diperbarui.";
+      await showError("Simpan gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  async function handleDeleteReporterTrace(reporter: ReporterDirectoryProfile) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    const confirmed = await askConfirmation(
+      "Hapus jejak pengguna publik?",
+      `Nama ${reporter.fullName}, status, laporan, dan foto bukti terkait akan dihapus permanen.`,
+      "Hapus permanen",
+    );
+
+    if (!confirmed) return;
+
+    setAdminSubmitting(true);
+    try {
+      await deleteReporterDirectoryTrace(reporter.id);
+      if (draft.nama.trim().toUpperCase() === reporter.fullName) {
+        resetDraftState();
+      }
+      await loadDashboardData();
+      await showSuccess("Jejak pengguna dihapus", "Data pengguna publik dan laporan terkait sudah dihapus.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Jejak pengguna publik belum berhasil dihapus.";
+      await showError("Hapus gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
   return {
     view,
     setView,
@@ -655,6 +772,7 @@ export function useReportDashboard() {
     setPaperFormat,
     draft,
     reports,
+    reporterProfiles,
     savedNames: deviceSubmittedNames,
     reporterNames,
     historyName,
@@ -680,6 +798,7 @@ export function useReportDashboard() {
     adminAuthLoading,
     adminSubmitting,
     adminRuleDraft,
+    adminReporterDraftNames,
     canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
     canManageReports: Boolean(adminSession),
     duplicateReport,
@@ -709,8 +828,11 @@ export function useReportDashboard() {
     saveReport,
     handleRemoveSavedName,
     changeAdminRule,
+    changeAdminReporterDraftName,
     handleAdminLogin,
     handleAdminLogout,
+    handleDeleteReporterTrace,
+    handleRenameReporterProfile,
     handleSaveAdminRules,
   };
 }

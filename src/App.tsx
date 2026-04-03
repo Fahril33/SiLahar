@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { AdminView } from "./components/admin-view";
+import { AdminDashboardView } from "./components/admin-dashboard-view";
 import { AppTabs } from "./components/app-tabs";
 import { EntryView } from "./components/entry-view";
 import { HistoryView } from "./components/history-view";
@@ -387,7 +387,7 @@ export default function App() {
         ) : null}
 
         {dashboard.view === "admin" ? (
-          <AdminView
+          <AdminDashboardView
             adminSession={dashboard.adminSession}
             adminEmail={dashboard.adminEmail}
             setAdminEmail={dashboard.setAdminEmail}
@@ -396,10 +396,19 @@ export default function App() {
             adminAuthLoading={dashboard.adminAuthLoading}
             adminSubmitting={dashboard.adminSubmitting}
             adminRuleDraft={dashboard.adminRuleDraft}
+            reporterProfiles={dashboard.reporterProfiles}
+            adminReporterDraftNames={dashboard.adminReporterDraftNames}
             onChangeAdminRule={dashboard.changeAdminRule}
+            onChangeAdminReporterDraftName={
+              dashboard.changeAdminReporterDraftName
+            }
             onHandleAdminLogin={dashboard.handleAdminLogin}
             onHandleAdminLogout={dashboard.handleAdminLogout}
             onHandleSaveAdminRules={dashboard.handleSaveAdminRules}
+            onHandleRenameReporterProfile={
+              dashboard.handleRenameReporterProfile
+            }
+            onHandleDeleteReporterTrace={dashboard.handleDeleteReporterTrace}
           />
         ) : null}
       </div>

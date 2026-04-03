@@ -43,3 +43,12 @@ export type DraftReport = Omit<
   Report,
   "id" | "createdAt" | "updatedAt" | "createdByRole" | "createdByLabel" | "updatedByRole" | "updatedByLabel"
 >;
+
+export type ReporterDirectoryProfile = {
+  id: string;
+  fullName: string;
+  firstReportedAt: string | null;
+  lastReportedAt: string | null;
+  totalReports: number;
+  isActive: boolean;
+};
