@@ -15,6 +15,7 @@ type AdminEditableListCardProps = {
   onPrimaryAction?: () => void;
   onDelete?: () => void;
   deleteLabel?: string;
+  extraActions?: ReactNode;
 };
 
 export function AdminEditableListCard(props: AdminEditableListCardProps) {
@@ -94,6 +95,8 @@ export function AdminEditableListCard(props: AdminEditableListCardProps) {
               {props.deleteLabel ?? "Hapus"}
             </button>
           ) : null}
+
+          {props.extraActions}
         </div>
       </div>
     </article>

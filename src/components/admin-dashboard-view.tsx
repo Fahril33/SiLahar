@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ReportRules } from "../config/report-rules";
 import { formatWitaDateTime } from "../lib/time";
 import type { AdminSessionState } from "../types/admin";
@@ -6,12 +6,27 @@ import type {
   ExcelReportTemplate,
   ExcelTemplateUploadDraft,
 } from "../types/excel-template";
-import type { ReporterDirectoryProfile } from "../types/report";
+import type { Report, ReporterDirectoryProfile } from "../types/report";
 import { AdminEditableListCard } from "./admin-editable-list-card";
+import { AdminReporterStatsView } from "./admin-reporter-stats-view";
+import {
+  AdminReporterToolbar,
+  type ReporterSortMode,
+} from "./admin-reporter-toolbar";
+import { FileUploadInput } from "./file-upload-input";
+import {
+  loadSoundSettings,
+  saveSoundSettings,
+  SUCCESS_SOUNDS,
+  FAIL_SOUNDS,
+  playSound,
+  type AppSoundSettings,
+  type SoundMode,
+} from "../lib/sound-utils";
 
 const inputClassName = "field-input";
 
-type AdminSection = "rules" | "reporters" | "templates";
+type AdminSection = "rules" | "reporters" | "templates" | "sounds";
 
 type AdminDashboardViewProps = {
   adminSession: AdminSessionState | null;
@@ -20,6 +35,7 @@ type AdminDashboardViewProps = {
   adminPassword: string;
   setAdminPassword: (value: string) => void;
   adminAuthLoading: boolean;
+  loading: boolean;
   adminSubmitting: boolean;
   adminRuleDraft: ReportRules;
   excelTemplates: ExcelReportTemplate[];
@@ -28,6 +44,7 @@ type AdminDashboardViewProps = {
   adminExcelTemplateDrafts: Record<string, ExcelTemplateUploadDraft>;
   selectedExcelTemplateFileName: string;
   excelTemplateUploading: boolean;
+  reports: Report[];
   reporterProfiles: ReporterDirectoryProfile[];
   adminReporterDraftNames: Record<string, string>;
   onChangeAdminRule: <K extends keyof ReportRules>(
@@ -69,17 +86,18 @@ function AdminSectionTabs({
   onChange: (section: AdminSection) => void;
 }) {
   return (
-    <div className="inline-flex rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-1">
+    <div className="inline-flex max-w-full overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-1 scrollbar-hide">
       {[
         { key: "rules" as const, label: "Aturan laporan" },
         { key: "reporters" as const, label: "Kelola pengguna" },
         { key: "templates" as const, label: "Template Excel" },
+        { key: "sounds" as const, label: "Suara Alert" },
       ].map((section) => (
         <button
           key={section.key}
           type="button"
           onClick={() => onChange(section.key)}
-          className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+          className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${
             activeSection === section.key
               ? "bg-[var(--primary)] text-[var(--primary-contrast)]"
               : "text-[var(--text-muted)] hover:bg-[var(--surface-elevated)] hover:text-[var(--text-primary)]"
@@ -253,18 +271,66 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
   );
 }
 
-function ReporterManagementPanel(props: AdminDashboardViewProps) {
+type ReporterManagementPanelProps = AdminDashboardViewProps & {
+  reporterSearch: string;
+  reporterSortMode: ReporterSortMode;
+  onReporterSearchChange: (value: string) => void;
+  onReporterSortModeChange: (value: ReporterSortMode) => void;
+};
+
+function ReporterManagementPanel(props: ReporterManagementPanelProps) {
   const [editingReporterId, setEditingReporterId] = useState<string | null>(null);
+  const [selectedReporterId, setSelectedReporterId] = useState<string | null>(
+    null,
+  );
+
+  const selectedReporter =
+    props.reporterProfiles.find((reporter) => reporter.id === selectedReporterId) ??
+    null;
+
+  const visibleReporters = props.reporterProfiles
+    .filter((reporter) =>
+      reporter.fullName
+        .toLowerCase()
+        .includes(props.reporterSearch.trim().toLowerCase()),
+    )
+    .slice()
+    .sort((left, right) => {
+      if (props.reporterSortMode === "name-desc") {
+        return right.fullName.localeCompare(left.fullName);
+      }
+
+      if (props.reporterSortMode === "join-time") {
+        return (right.firstReportedAt ?? "").localeCompare(
+          left.firstReportedAt ?? "",
+        );
+      }
+
+      return left.fullName.localeCompare(right.fullName);
+    });
+
+  if (selectedReporter) {
+    return (
+      <AdminReporterStatsView
+        reporter={selectedReporter}
+        reports={props.reports}
+        loading={props.loading}
+        onBack={() => setSelectedReporterId(null)}
+      />
+    );
+  }
 
   return (
-    <div className="grid gap-3">
-      {props.reporterProfiles.length === 0 ? (
+    <div className="grid gap-4">
+      {/* Mobile toolbar is now removed from here, integrated in the main tabs bar */}
+
+      {visibleReporters.length === 0 ? (
         <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)]">
           Belum ada pengguna publik yang tercatat.
         </div>
       ) : null}
 
-      {props.reporterProfiles.map((reporter) => {
+      {visibleReporters.map((reporter) => {
         const isEditing = editingReporterId === reporter.id;
 
         return (
@@ -276,9 +342,13 @@ function ReporterManagementPanel(props: AdminDashboardViewProps) {
                   Edit pengguna publik
                 </span>
               ) : (
-                <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
+                <button
+                  type="button"
+                  onClick={() => setSelectedReporterId(reporter.id)}
+                  className="truncate text-left text-base font-semibold text-[var(--text-primary)] transition hover:text-[var(--primary)]"
+                >
                   {reporter.fullName}
-                </h3>
+                </button>
               )
             }
             meta={
@@ -370,20 +440,20 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
             }
           />
 
-          <label className="space-y-2">
-            <span className="text-sm font-medium">Pilih file .xlsx</span>
-            <input
-              key={props.selectedExcelTemplateFileName || "empty-template-file"}
-              type="file"
+          <div className="lg:-mt-1">
+            <FileUploadInput
+              label="Pilih file .xlsx"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              selectedFileName={props.selectedExcelTemplateFileName}
               disabled={props.excelTemplateUploading}
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                props.onSelectExcelTemplateFile(file);
-              }}
-              className={inputClassName}
+              inputKey={
+                props.selectedExcelTemplateFileName || "empty-template-file"
+              }
+              onChange={(files) =>
+                props.onSelectExcelTemplateFile(files?.[0] ?? null)
+              }
             />
-          </label>
+          </div>
 
           <button
             type="button"
@@ -528,6 +598,20 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
                   : () => void props.onHandleDeleteExcelTemplate(template)
               }
               deleteLabel="Delete"
+              extraActions={
+                template.publicUrl ? (
+                  <a
+                    href={template.publicUrl}
+                    download
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-secondary px-4 py-2 text-sm disabled:opacity-60 items-center flex"
+                    title="Download format Excel"
+                  >
+                    Download
+                  </a>
+                ) : null
+              }
             />
           );
         })}
@@ -536,8 +620,97 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
   );
 }
 
+function SoundSettingsPanel() {
+  const [settings, setSettings] = useState<AppSoundSettings>(() => loadSoundSettings());
+
+  const handleUpdate = (type: "success" | "fail", key: "mode" | "specificFile", value: any) => {
+    const next = {
+      ...settings,
+      [type]: {
+        ...settings[type],
+        [key]: value,
+      },
+    };
+    setSettings(next);
+    saveSoundSettings(next);
+  };
+
+  const renderSection = (type: "success" | "fail", title: string, list: Record<string, string>) => {
+    const config = settings[type];
+    return (
+      <div className="surface-card rounded-[24px] p-5">
+        <h4 className="text-base font-semibold text-[var(--text-primary)] mb-4">{title}</h4>
+        <div className="grid gap-4">
+          <label className="space-y-2">
+            <span className="text-sm font-medium text-[var(--text-muted)]">Mode Putar</span>
+            <select
+              className={inputClassName}
+              value={config.mode}
+              onChange={(e) => handleUpdate(type, "mode", e.target.value as SoundMode)}
+            >
+              <option value="random">Acak (Random Pick)</option>
+              <option value="specific">Pilih Spesifik</option>
+            </select>
+          </label>
+
+          {config.mode === "specific" && (
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-[var(--text-muted)]">File Suara</span>
+              <select
+                className={inputClassName}
+                value={config.specificFile || ""}
+                onChange={(e) => handleUpdate(type, "specificFile", e.target.value)}
+              >
+                <option value="" disabled>Pilih suara...</option>
+                {Object.keys(list).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <button
+            type="button"
+            onClick={() => playSound(type, settings)}
+            className="btn-secondary w-full justify-center text-xs py-2 mt-2"
+          >
+            🔊 Test Suara
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      {renderSection("success", "Suara Berhasil (Success)", SUCCESS_SOUNDS)}
+      {renderSection("fail", "Suara Gagal (Error)", FAIL_SOUNDS)}
+      <div className="md:col-span-2 surface-card rounded-[24px] p-4 bg-[var(--surface-muted)]/30 border border-dashed border-[var(--border-soft)] text-xs text-[var(--text-muted)]">
+        <p>💡 Fitur iseng: Suara hanya tersimpan di browser ini saja (Local Storage). Admin lain mungkin punya selera audio yang berbeda!</p>
+      </div>
+    </div>
+  );
+}
+
 export function AdminDashboardView(props: AdminDashboardViewProps) {
-  const [activeSection, setActiveSection] = useState<AdminSection>("rules");
+  const [activeSection, setActiveSection] = useState<AdminSection>(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("silahar:admin-active-section");
+      if (stored === "rules" || stored === "reporters" || stored === "templates") {
+        return stored as AdminSection;
+      }
+    }
+    return "rules";
+  });
+  const [reporterSearch, setReporterSearch] = useState("");
+  const [reporterSortMode, setReporterSortMode] =
+    useState<ReporterSortMode>("name-asc");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("silahar:admin-active-section", activeSection);
+    }
+  }, [activeSection]);
 
   return (
     <section className="panel-glass rounded-[32px] p-4 sm:p-6">
@@ -564,18 +737,41 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
 
       {props.adminSession ? (
         <div className="space-y-4">
-          <AdminSectionTabs
-            activeSection={activeSection}
-            onChange={setActiveSection}
-          />
+          <div className="flex items-center justify-between gap-2 md:gap-3">
+            <div className="flex min-w-0 shrink basis-auto items-center">
+              <AdminSectionTabs
+                activeSection={activeSection}
+                onChange={setActiveSection}
+              />
+            </div>
+
+            {activeSection === "reporters" ? (
+              <div className="flex-1 shrink-0 md:min-w-[320px]">
+                <AdminReporterToolbar
+                  searchValue={reporterSearch}
+                  onSearchChange={setReporterSearch}
+                  sortMode={reporterSortMode}
+                  onSortModeChange={setReporterSortMode}
+                  disabled={props.adminSubmitting}
+                />
+              </div>
+            ) : null}
+          </div>
 
           {activeSection === "rules" ? <ReportRulesPanel {...props} /> : null}
           {activeSection === "reporters" ? (
-            <ReporterManagementPanel {...props} />
+            <ReporterManagementPanel
+              {...props}
+              reporterSearch={reporterSearch}
+              reporterSortMode={reporterSortMode}
+              onReporterSearchChange={setReporterSearch}
+              onReporterSortModeChange={setReporterSortMode}
+            />
           ) : null}
           {activeSection === "templates" ? (
             <ExcelTemplatePanel {...props} />
           ) : null}
+          {activeSection === "sounds" ? <SoundSettingsPanel /> : null}
         </div>
       ) : null}
     </section>

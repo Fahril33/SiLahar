@@ -4,6 +4,7 @@ import type { ReportRules } from "../config/report-rules";
 import type { DraftReport, Report } from "../types/report";
 import { AutocompleteInput } from "./autocomplete-input";
 import { DeviceNameHistory } from "./device-name-history";
+import { FileUploadInput } from "./file-upload-input";
 import { ReportPdfDocument } from "./report-pdf-document";
 import pdfStyles from "../styles/report-pdf.css?inline";
 
@@ -38,6 +39,7 @@ type EntryViewProps = {
     startsBeforePreviousEnd: boolean;
     overtime: boolean;
   }>;
+  activityCompletionStates: boolean[];
   pendingPreviews: PendingPreviewMap;
   preview: Report;
   submitting: boolean;
@@ -141,6 +143,22 @@ function SpinnerIcon(props: { className?: string }) {
       {...props}
     >
       <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
+function CheckIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <polyline points="20 6 9 17 4 12" />
     </svg>
   );
 }
@@ -426,7 +444,7 @@ export function EntryView(props: EntryViewProps) {
             </section>
 
             <section className="surface-card rounded-[15px] overflow-hidden">
-              <div className="p-4 pb-0">
+              <div className="p-4 pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 px-2">
                 <div>
                   <p className={eyebrowClassName}>Aktivitas Harian</p>
@@ -436,14 +454,25 @@ export function EntryView(props: EntryViewProps) {
                 {props.draft.activities.map((activity, index) => (
                   <article
                     key={activity.no}
-                    className="relative surface-muted p-4 sm:p-5 rounded-[24px]"
+                    className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
                   >
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                       <h4 className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--primary)] text-xs text-white">
+                        <div
+                          className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white transition-colors ${
+                            props.activityCompletionStates[index]
+                              ? "bg-green-400"
+                              : "bg-[var(--primary)]" 
+                          }`} 
+                        >
                           {activity.no}
                         </div>
                         Aktivitas ke-{activity.no}
+                        {props.activityCompletionStates[index] ? (
+                          <span className="ml-2 text-xs font-semibold text-green-400">
+                            <CheckIcon className="h-4 w-4" />
+                          </span>
+                        ) : null}
                       </h4>
                       {props.draft.activities.length > 1 && (
                         <button
@@ -537,25 +566,15 @@ export function EntryView(props: EntryViewProps) {
                         </div>
                       ) : null}
                     </div>
-                    <div className="mt-4 rounded-[22px] border border-dashed border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
-                      <div className="mb-3">
-                        <label className="block text-sm font-medium text-[var(--text-muted)]">
-                          Foto bukti dokumentasi (Maks.{" "}
-                          {props.reportRules.maxPhotosPerActivity} foto per
-                          aktivitas)
-                        </label>
-                      </div>
-                      <input
-                        type="file"
+                    <div className="mt-4">
+                      <FileUploadInput
+                        label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
                         accept="image/png,image/jpeg,image/webp"
                         multiple={props.reportRules.maxPhotosPerActivity > 1}
-                        onChange={(event) =>
-                          void props.onSetActivityFiles(
-                            activity.no,
-                            event.target.files,
-                          )
+                        helperText="Belum ada foto bukti di aktivitas ini."
+                        onChange={(files) =>
+                          void props.onSetActivityFiles(activity.no, files)
                         }
-                        className="mt-1 block w-full text-sm text-[var(--text-muted)] file:mr-3 file:rounded-full file:border-0 file:bg-[var(--surface-accent)] file:px-3 file:py-2 file:text-sm file:font-semibold file:text-[var(--text-primary)]"
                       />
                       {(props.pendingPreviews[activity.no]?.length ?? 0) > 0 ||
                       activity.photos.length > 0 ? (
@@ -579,11 +598,7 @@ export function EntryView(props: EntryViewProps) {
                               />
                             ))}
                         </div>
-                      ) : (
-                        <p className="mt-3 text-sm text-[var(--text-muted)]">
-                          Belum ada foto bukti di aktivitas ini.
-                        </p>
-                      )}
+                      ) : null}
                     </div>
                   </article>
                 ))}
@@ -799,7 +814,7 @@ export function EntryView(props: EntryViewProps) {
             <div className="pointer-events-auto flex flex-row items-center justify-between gap-2 px-3 py-3 sm:px-4 2xl:gap-3 2xl:px-5 2xl:py-4">
               <div className="min-w-0 shrink">
                 <p
-                  className={`${eyebrowClassName} truncate rounded-[10px] bg-[var(--field-bg)] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] sm:text-sm 2xl:text-lg`}
+                  className={`preview-title-pill ${eyebrowClassName} block truncate rounded-[10px] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] sm:text-sm lg:hidden xl:block 2xl:text-lg`}
                 >
                   Preview Dokumen
                 </p>
@@ -881,7 +896,7 @@ export function EntryView(props: EntryViewProps) {
                     className="btn-primary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
                     <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />{" "}
-                    <span className="whitespace-nowrap">
+                    <span className="whitespace-nowrap lg:hidden xl:inline">
                       {props.submitting ? "Menyimpan..." : "Simpan"}
                     </span>
                   </button>

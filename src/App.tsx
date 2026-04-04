@@ -331,6 +331,7 @@ export default function App() {
             reportRules={dashboard.reportRules}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             activityTimeIssues={dashboard.activityTimeIssues}
+            activityCompletionStates={dashboard.activityCompletionStates}
             duplicateReport={dashboard.duplicateReport}
             pendingPreviews={dashboard.pendingPreviews}
             preview={dashboard.preview}
@@ -396,6 +397,7 @@ export default function App() {
             adminPassword={dashboard.adminPassword}
             setAdminPassword={dashboard.setAdminPassword}
             adminAuthLoading={dashboard.adminAuthLoading}
+            loading={dashboard.loading}
             adminSubmitting={dashboard.adminSubmitting}
             adminRuleDraft={dashboard.adminRuleDraft}
             excelTemplates={dashboard.excelTemplates}
@@ -406,6 +408,7 @@ export default function App() {
               dashboard.selectedExcelTemplateFileName
             }
             excelTemplateUploading={dashboard.excelTemplateUploading}
+            reports={dashboard.reports}
             reporterProfiles={dashboard.reporterProfiles}
             adminReporterDraftNames={dashboard.adminReporterDraftNames}
             onChangeAdminRule={dashboard.changeAdminRule}

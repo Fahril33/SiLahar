@@ -110,8 +110,37 @@ function createDraftSnapshot(draft: DraftReport, pendingPhotos: PendingPhotoMap)
   });
 }
 
+function isActivityComplete(
+  activity: DraftReport["activities"][number],
+  pendingPhotos: PendingPhotoMap,
+  issue: {
+    endBeforeStart: boolean;
+    startsBeforePreviousEnd: boolean;
+  },
+) {
+  const hasPhoto =
+    activity.photos.length > 0 || (pendingPhotos[activity.no]?.length ?? 0) > 0;
+
+  return Boolean(
+    activity.description.trim() &&
+      activity.startTime &&
+      activity.endTime &&
+      hasPhoto &&
+      !issue.endBeforeStart &&
+      !issue.startsBeforePreviousEnd,
+  );
+}
+
 export function useReportDashboard() {
-  const [view, setView] = useState<View>("entry");
+  const [view, setView] = useState<View>(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("silahar:active-view");
+      if (stored === "entry" || stored === "history" || stored === "status" || stored === "admin") {
+        return stored as View;
+      }
+    }
+    return "entry";
+  });
   const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
   const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
@@ -158,6 +187,12 @@ export function useReportDashboard() {
   const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
   const [searchOpen, setSearchOpen] = useState(false);
   const realtimeReloadTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("silahar:active-view", view);
+    }
+  }, [view]);
 
   function handleRemoveSavedName(name: string) {
     const updated = removeDeviceSubmittedName(name);
@@ -401,6 +436,20 @@ export function useReportDashboard() {
       }),
     [draft.activities],
   );
+  const activityCompletionStates = useMemo(
+    () =>
+      draft.activities.map((activity, index) =>
+        isActivityComplete(
+          activity,
+          pendingPhotos,
+          activityTimeIssues[index] ?? {
+            endBeforeStart: false,
+            startsBeforePreviousEnd: false,
+          },
+        ),
+      ),
+    [activityTimeIssues, draft.activities, pendingPhotos],
+  );
   const activeExcelTemplate = useMemo(
     () => excelTemplates.find((template) => template.isActive) ?? null,
     [excelTemplates],
@@ -575,6 +624,7 @@ export function useReportDashboard() {
       await generateDailyReportExcel({
         report,
         template: activeExcelTemplate,
+        pendingPhotos: report.id === "preview" ? pendingPhotos : undefined,
       });
     } catch (error) {
       console.error(error);
@@ -597,8 +647,26 @@ export function useReportDashboard() {
   }
 
   async function saveReport() {
-    if (!draft.nama.trim() || !draft.activities.some((item) => item.description.trim())) {
-      await showError("Data belum lengkap", "Nama dan minimal satu detail aktivitas wajib diisi sebelum disimpan.");
+    if (!draft.nama.trim()) {
+      await showError(
+        "Data belum lengkap",
+        "Nama petugas wajib diisi sebelum laporan disimpan.",
+      );
+      return;
+    }
+
+    const incompleteActivityIndex = activityCompletionStates.findIndex(
+      (isComplete) => !isComplete,
+    );
+
+    if (incompleteActivityIndex !== -1) {
+      const activityNo =
+        draft.activities[incompleteActivityIndex]?.no ??
+        incompleteActivityIndex + 1;
+      await showError(
+        "Data aktivitas belum lengkap",
+        `Lengkapi detail aktivitas, jam pelaksanaan, dan minimal 1 foto bukti pada Aktivitas ke-${activityNo}.`,
+      );
       return;
     }
 
@@ -1130,6 +1198,7 @@ export function useReportDashboard() {
     canManageReports: Boolean(adminSession),
     duplicateReport,
     activityTimeIssues,
+    activityCompletionStates,
     preview,
     historyResults,
     searchResult,

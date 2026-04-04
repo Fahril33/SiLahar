@@ -6,6 +6,8 @@ export type ExcelCellPatch = {
 };
 
 export type ExcelImagePatch = {
+  activityNo: number;
+  photoIndex: number;
   photo: ReportActivityPhoto;
   range: {
     startColumn: number;
@@ -56,10 +58,10 @@ export const EXCEL_TEMPLATE_LAYOUT = {
 
 export function mapReportToExcelTemplate(report: Report): ExcelMappedReport {
   const textCells: ExcelCellPatch[] = [
-    { cell: EXCEL_TEMPLATE_LAYOUT.reporterNameCell, value: report.nama },
+    { cell: EXCEL_TEMPLATE_LAYOUT.reporterNameCell, value: `: ${report.nama}` },
     {
       cell: EXCEL_TEMPLATE_LAYOUT.reportDateTextCell,
-      value: report.tanggal,
+      value: `: ${report.tanggal}`,
     },
   ];
 
@@ -94,6 +96,8 @@ export function mapReportToExcelTemplate(report: Report): ExcelMappedReport {
 
     if (firstPhoto) {
       imageCells.push({
+        activityNo: activity.no,
+        photoIndex: 0,
         photo: firstPhoto,
         range: {
           startColumn: EXCEL_TEMPLATE_LAYOUT.activityImageStartColumn,

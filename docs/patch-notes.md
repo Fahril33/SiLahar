@@ -174,4 +174,23 @@ Setiap patch sebaiknya ditulis dengan pola:
 ### Notes
 - Jalankan migration `012` di Supabase.
 - Mapping sel Excel di `excelMapper.ts` masih memakai layout awal dan bisa disesuaikan mengikuti struktur template master final.
-- Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-04 - Refresh UX Admin Manage Users dan Stats
+
+### Added
+- Filter *rentang waktu* interaktif pada grafik aktivitas pengguna (menarik per bulan spesifik, dan per minggu default dengan bantalan garis nol untuk visual timeline konstan).
+- Subtext deskriptif untuk informasi tingkat bolos pengguna (persentase dihitung berdasarkan rentang tracking dari awal bergabung).
+- Fitur efek suara (SFX) saat notifikasi `Success` atau `Fail` muncul (mengambil acak atau spesifik sesuai pengaturan lokal).
+- Halaman admin "Suara Alert" untuk memilih file suara atau mode acak (disimpan secara lokal di *browser* masing-masing admin/pengguna).
+- Tombol `Download` untuk setiap file asali (template Excel) yang terekam pada panel admin "Template Excel".
+- Sinkronisasi status halaman (`silahar:active-view`) dan sub-halaman admin ke *local storage*, sehingga browser kini akan mengingat posisi halaman terakhir secara otomatis saat *refresh* / memuat ulang.
+
+### Changed
+- Toolbar pencarian dan pengurutan pengguna kini sejajar (sebaris) dengan navigasi tab admin agar tampilan lebih ringkas.
+- Layout toolbar Admin pada perangkat mobile dioptimasi: ikon search tersembunyi inline dengan tab, ketika di-klik komponen pencarian merenggang di bawahnya.
+- Penyempurnaan `StatCard` pada `AdminReporterStatsView` agar mendukung flex spacing yang responsif.
+- Komponen pencarian yang modular di halaman Admin digunakan bersama dari history view.
+- Format isian variabel `Nama` dan `Tanggal` pada hasil export Excel kini menyertakan awalan `: ` untuk keselarasan visual dengan label pada template.
+
+### Notes
+- Build frontend selesai dan sudah terverifikasi `npm run build`.

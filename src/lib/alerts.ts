@@ -1,4 +1,5 @@
 import Swal from "sweetalert2";
+import { loadSoundSettings, playSound } from "./sound-utils";
 
 const popupClass = "rounded-[28px]";
 
@@ -23,6 +24,8 @@ export async function askConfirmation(title: string, text: string, confirmText: 
 }
 
 export function showSuccess(title: string, text: string) {
+  const settings = loadSoundSettings();
+  playSound("success", settings);
   return Swal.fire({
     title,
     text,
@@ -37,6 +40,8 @@ export function showSuccess(title: string, text: string) {
 }
 
 export function showError(title: string, text: string) {
+  const settings = loadSoundSettings();
+  playSound("fail", settings);
   return Swal.fire({
     title,
     text,

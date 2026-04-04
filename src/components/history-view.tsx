@@ -1,5 +1,6 @@
 import { formatWitaDateTime } from "../lib/time";
 import type { Report } from "../types/report";
+import { SearchFilterInput } from "./search-filter-input";
 
 const inputClassName = "field-input";
 const NEW_REPORT_WINDOW_MS = 5 * 60 * 1000;
@@ -49,7 +50,11 @@ export function HistoryView(props: {
     <section className="space-y-4">
       <div className="panel-glass rounded-[28px] p-5">
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
-          <input value={historyName} onChange={(event) => setHistoryName(event.target.value.toUpperCase())} placeholder="FILTER NAMA" className={inputClassName} />
+          <SearchFilterInput
+            value={historyName}
+            onChange={setHistoryName}
+            placeholder="FILTER NAMA"
+          />
           <input type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className={inputClassName} />
           <select
             value={paperFormat}

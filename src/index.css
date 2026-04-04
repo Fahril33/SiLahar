@@ -177,6 +177,17 @@ select:focus {
   }
 }
 
+@keyframes admin-stats-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .swal-confirm,
 .swal-cancel {
   border: 0;
@@ -220,6 +231,18 @@ select:focus {
   .surface-muted {
     background: var(--surface-muted);
     border: 1px solid var(--border-soft);
+  }
+
+  .admin-stats-enter {
+    animation: admin-stats-enter 0.4s ease-out both;
+  }
+
+  .preview-title-pill {
+    background: transparent;
+  }
+
+  :root[data-theme="dark"] .preview-title-pill {
+    background: var(--field-bg);
   }
 
   .field-label {

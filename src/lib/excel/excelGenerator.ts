@@ -5,6 +5,7 @@ import { supabase } from "../supabase";
 import { getExcelTemplateBuffer } from "./cacheManager";
 import {
   EXCEL_TEMPLATE_LAYOUT,
+  type ExcelImagePatch,
   mapReportToExcelTemplate,
 } from "./excelMapper";
 
@@ -13,6 +14,8 @@ const EXCEL_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const IMAGE_CELL_PADDING_X_PX = 6;
 const IMAGE_CELL_PADDING_Y_PX = 6;
+const EXCEL_IMAGE_MAX_EDGE_PX = 960;
+const EXCEL_IMAGE_JPEG_QUALITY = 0.76;
 const ACTIVITY_IMAGE_BORDER_STYLE: Partial<import("exceljs").Borders> = {
   top: { style: "thin" },
   bottom: { style: "thin" },
@@ -20,10 +23,9 @@ const ACTIVITY_IMAGE_BORDER_STYLE: Partial<import("exceljs").Borders> = {
   right: { style: "thin" },
 };
 
-type ExcelImageExtension = "png" | "jpeg";
 type ExcelPreparedImage = {
   buffer: ArrayBuffer;
-  extension: ExcelImageExtension;
+  extension: "jpeg";
   width: number;
   height: number;
 };
@@ -31,6 +33,7 @@ type ExcelPreparedImage = {
 export type GenerateReportExcelOptions = {
   report: Report;
   template: ExcelReportTemplate;
+  pendingPhotos?: Record<number, File[]>;
 };
 
 function sanitizeExcelFileSegment(value: string) {
@@ -153,6 +156,31 @@ function applyMergedImageCellBorder(
   };
 }
 
+function releaseTemplateFooterMerges(worksheet: import("exceljs").Worksheet) {
+  [
+    "B11:N11",
+    "B12:G12",
+    "I12:N12",
+    "B13:G13",
+    "I13:N13",
+    "B14:G14",
+    "I14:N14",
+    "B15:G15",
+    "I15:N15",
+    "B16:G16",
+    "I16:N16",
+    "B17:G17",
+    "I17:N17",
+    "B18:G18",
+    "I18:N18",
+    "I19:N19",
+    "C21:L21",
+    "C22:L22",
+  ].forEach((rangeAddress) => {
+    worksheet.unMergeCells(rangeAddress);
+  });
+}
+
 function ensureDynamicActivityRows(
   worksheet: import("exceljs").Worksheet,
   activityCount: number,
@@ -162,6 +190,8 @@ function ensureDynamicActivityRows(
   if (extraRowCount === 0) {
     return;
   }
+
+  releaseTemplateFooterMerges(worksheet);
 
   worksheet.duplicateRow(
     EXCEL_TEMPLATE_LAYOUT.activityTemplateRow,
@@ -203,6 +233,11 @@ function writeApprovalSection(
     `I${labelRow}:N${labelRow}`,
     "KEPALA BIDANG KEDARURATAN & LOGISTIK",
   );
+
+  for (let rowNumber = labelRow + 1; rowNumber < approvalRow; rowNumber += 1) {
+    mergeRangeAndSetValue(worksheet, `B${rowNumber}:G${rowNumber}`, "");
+    mergeRangeAndSetValue(worksheet, `I${rowNumber}:N${rowNumber}`, "");
+  }
 
   mergeRangeAndSetValue(
     worksheet,
@@ -288,52 +323,28 @@ function resolveOptimizedPhotoUrl(photo: ReportActivityPhoto) {
   return data.publicUrl || photo.publicUrl;
 }
 
-async function convertImageBlobToPngBuffer(
-  blob: Blob,
-): Promise<ExcelPreparedImage> {
-  if (blob.type === "image/png") {
-    const bitmap = await createImageBitmap(blob);
-    const buffer = await blob.arrayBuffer();
-    const payload = {
-      buffer,
-      extension: "png" as const,
-      width: bitmap.width,
-      height: bitmap.height,
-    };
-    bitmap.close();
-    return {
-      ...payload,
-    };
-  }
-
-  if (blob.type === "image/jpeg" || blob.type === "image/jpg") {
-    const bitmap = await createImageBitmap(blob);
-    const buffer = await blob.arrayBuffer();
-    const payload = {
-      buffer,
-      extension: "jpeg" as const,
-      width: bitmap.width,
-      height: bitmap.height,
-    };
-    bitmap.close();
-    return {
-      ...payload,
-    };
-  }
-
+async function compressImageBlobForExcel(blob: Blob): Promise<ExcelPreparedImage> {
   const bitmap = await createImageBitmap(blob);
+  const scale = Math.min(
+    1,
+    EXCEL_IMAGE_MAX_EDGE_PX / Math.max(bitmap.width, bitmap.height, 1),
+  );
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
   const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
 
   if (!context) {
     throw new Error("Canvas browser belum siap untuk konversi gambar.");
   }
 
-  context.drawImage(bitmap, 0, 0);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
 
-  const pngBlob = await new Promise<Blob>((resolve, reject) => {
+  const jpegBlob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (nextBlob) => {
         if (nextBlob) {
@@ -342,33 +353,45 @@ async function convertImageBlobToPngBuffer(
           reject(new Error("Konversi gambar ke PNG belum berhasil."));
         }
       },
-      "image/png",
-      0.92,
+      "image/jpeg",
+      EXCEL_IMAGE_JPEG_QUALITY,
     );
   });
 
   bitmap.close();
 
   return {
-    buffer: await pngBlob.arrayBuffer(),
-    extension: "png",
-    width: bitmap.width,
-    height: bitmap.height,
+    buffer: await jpegBlob.arrayBuffer(),
+    extension: "jpeg",
+    width,
+    height,
   };
 }
 
-async function fetchExcelImage(photo: ReportActivityPhoto) {
+async function fetchExcelImage(
+  imagePatch: ExcelImagePatch,
+  pendingPhotos?: Record<number, File[]>,
+) {
   try {
-    const response = await fetch(resolveOptimizedPhotoUrl(photo));
+    const localFile =
+      !imagePatch.photo.storagePath && imagePatch.photo.publicUrl.startsWith("blob:")
+        ? pendingPhotos?.[imagePatch.activityNo]?.[imagePatch.photoIndex] ?? null
+        : null;
+
+    if (localFile) {
+      return await compressImageBlobForExcel(localFile);
+    }
+
+    const response = await fetch(resolveOptimizedPhotoUrl(imagePatch.photo));
 
     if (!response.ok) {
       throw new Error(
-        `Foto ${photo.originalFileName} gagal dimuat (${response.status}).`,
+        `Foto ${imagePatch.photo.originalFileName} gagal dimuat (${response.status}).`,
       );
     }
 
     const blob = await response.blob();
-    return await convertImageBlobToPngBuffer(blob);
+    return await compressImageBlobForExcel(blob);
   } catch (error) {
     console.error("Gagal mengambil gambar Excel.", error);
     return null;
@@ -378,6 +401,7 @@ async function fetchExcelImage(photo: ReportActivityPhoto) {
 export async function generateDailyReportExcel({
   report,
   template,
+  pendingPhotos,
 }: GenerateReportExcelOptions) {
   const [{ Workbook }, templateBuffer] = await Promise.all([
     import("exceljs"),
@@ -401,7 +425,7 @@ export async function generateDailyReportExcel({
   writeNotesSection(worksheet, mappedReport.notes, dynamicRowOffset);
 
   for (const imagePatch of mappedReport.imageCells) {
-    const imagePayload = await fetchExcelImage(imagePatch.photo);
+    const imagePayload = await fetchExcelImage(imagePatch, pendingPhotos);
 
     if (!imagePayload) {
       continue;
