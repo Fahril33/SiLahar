@@ -312,6 +312,11 @@ export function subscribeReportData(onChange: () => void) {
       { event: "*", schema: "public", table: "app_settings" },
       () => onChange(),
     )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "excel_report_templates" },
+      () => onChange(),
+    )
     .subscribe();
 
   return () => {

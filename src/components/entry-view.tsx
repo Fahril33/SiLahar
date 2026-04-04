@@ -41,6 +41,7 @@ type EntryViewProps = {
   pendingPreviews: PendingPreviewMap;
   preview: Report;
   submitting: boolean;
+  excelExportingReportId: string | null;
   hasDraftContent: boolean;
   draftSavedAt: string | null;
   draftCacheStatus: "idle" | "saving" | "saved";
@@ -106,6 +107,24 @@ function PrintIcon(props: { className?: string }) {
       <polyline points="6 9 6 2 18 2 18 9" />
       <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
       <rect x="6" y="14" width="12" height="8" />
+    </svg>
+  );
+}
+
+function DownloadIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
     </svg>
   );
 }
@@ -830,6 +849,23 @@ export function EntryView(props: EntryViewProps) {
                   <option value="letter">Letter</option>
                 </select>
                 <div className="flex items-center gap-1.5 sm:gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void props.onHandleExport(props.preview)}
+                    disabled={props.excelExportingReportId === props.preview.id}
+                    className="btn-secondary px-3 py-2 text-xs disabled:opacity-60 sm:px-4 sm:text-sm 2xl:py-2.5"
+                  >
+                    {props.excelExportingReportId === props.preview.id ? (
+                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                    ) : (
+                      <DownloadIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {props.excelExportingReportId === props.preview.id
+                        ? "Excel..."
+                        : "Excel"}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => void props.onHandlePrint(props.preview)}

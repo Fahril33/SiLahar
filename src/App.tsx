@@ -335,6 +335,7 @@ export default function App() {
             pendingPreviews={dashboard.pendingPreviews}
             preview={dashboard.preview}
             submitting={dashboard.submitting}
+            excelExportingReportId={dashboard.excelExportingReportId}
             hasDraftContent={dashboard.hasDraftContent}
             draftSavedAt={dashboard.draftSavedAt}
             draftCacheStatus={dashboard.draftCacheStatus}
@@ -369,6 +370,7 @@ export default function App() {
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
             onHandleDeleteReport={dashboard.handleDeleteReport}
+            excelExportingReportId={dashboard.excelExportingReportId}
             today={today}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             canManageReports={dashboard.canManageReports}
@@ -396,15 +398,35 @@ export default function App() {
             adminAuthLoading={dashboard.adminAuthLoading}
             adminSubmitting={dashboard.adminSubmitting}
             adminRuleDraft={dashboard.adminRuleDraft}
+            excelTemplates={dashboard.excelTemplates}
+            activeExcelTemplate={dashboard.activeExcelTemplate}
+            excelTemplateDraft={dashboard.excelTemplateDraft}
+            adminExcelTemplateDrafts={dashboard.adminExcelTemplateDrafts}
+            selectedExcelTemplateFileName={
+              dashboard.selectedExcelTemplateFileName
+            }
+            excelTemplateUploading={dashboard.excelTemplateUploading}
             reporterProfiles={dashboard.reporterProfiles}
             adminReporterDraftNames={dashboard.adminReporterDraftNames}
             onChangeAdminRule={dashboard.changeAdminRule}
+            onChangeExcelTemplateDraft={dashboard.changeExcelTemplateDraft}
+            onClearExcelTemplateDraftName={
+              dashboard.clearExcelTemplateDraftName
+            }
+            onSelectExcelTemplateFile={dashboard.selectExcelTemplateFile}
+            onChangeAdminExcelTemplateDraft={
+              dashboard.changeAdminExcelTemplateDraft
+            }
             onChangeAdminReporterDraftName={
               dashboard.changeAdminReporterDraftName
             }
             onHandleAdminLogin={dashboard.handleAdminLogin}
             onHandleAdminLogout={dashboard.handleAdminLogout}
             onHandleSaveAdminRules={dashboard.handleSaveAdminRules}
+            onHandleUploadExcelTemplate={dashboard.handleUploadExcelTemplate}
+            onHandleActivateExcelTemplate={dashboard.handleActivateExcelTemplate}
+            onHandleRenameExcelTemplate={dashboard.handleRenameExcelTemplate}
+            onHandleDeleteExcelTemplate={dashboard.handleDeleteExcelTemplate}
             onHandleRenameReporterProfile={
               dashboard.handleRenameReporterProfile
             }

@@ -5,7 +5,18 @@ import {
   normalizeReportRules,
   type ReportRules,
 } from "../config/report-rules";
-import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
+import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
+import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
+import {
+  activateExcelReportTemplate,
+  buildAutoExcelTemplateName,
+  deleteExcelReportTemplate,
+  fetchExcelReportTemplates,
+  resolveNextExcelTemplateVersion,
+  updateExcelReportTemplateMetadata,
+  uploadExcelReportTemplate,
+} from "../lib/excel-template-service";
+import { printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
   createEmptyDraft,
@@ -48,6 +59,10 @@ import {
 import { isWitaFriday } from "../lib/time";
 import { optimizeReportImages } from "../lib/image-optimizer";
 import type { AdminSessionState } from "../types/admin";
+import type {
+  ExcelReportTemplate,
+  ExcelTemplateUploadDraft,
+} from "../types/excel-template";
 import type {
   DraftReport,
   Report,
@@ -101,6 +116,20 @@ export function useReportDashboard() {
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
   const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
   const [reporterProfiles, setReporterProfiles] = useState<ReporterDirectoryProfile[]>([]);
+  const [excelTemplates, setExcelTemplates] = useState<ExcelReportTemplate[]>([]);
+  const [excelTemplateDraft, setExcelTemplateDraft] =
+    useState<ExcelTemplateUploadDraft>({
+      templateName: buildAutoExcelTemplateName("v1", today),
+      templateDate: today,
+      cacheVersion: "v1",
+    });
+  const [selectedExcelTemplateFile, setSelectedExcelTemplateFile] =
+    useState<File | null>(null);
+  const [adminExcelTemplateDrafts, setAdminExcelTemplateDrafts] = useState<
+    Record<string, ExcelTemplateUploadDraft>
+  >({});
+  const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
+  const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
   const [historyName, setHistoryName] = useState("");
@@ -156,6 +185,12 @@ export function useReportDashboard() {
   useEffect(() => {
     void loadDashboardData();
   }, []);
+  useEffect(() => {
+    const activeTemplate = excelTemplates.find((template) => template.isActive) ?? null;
+    void warmUpExcelTemplateCache(activeTemplate).catch((error) => {
+      console.error("Pre-cache template Excel gagal.", error);
+    });
+  }, [excelTemplates]);
   useEffect(() => {
     const unsubscribe = subscribeReportData(() => {
       if (realtimeReloadTimeoutRef.current !== null) {
@@ -232,10 +267,16 @@ export function useReportDashboard() {
   async function loadDashboardData() {
     setLoading(true);
     try {
-      const [dbReports, dbReporterProfiles, dbReportRules] = await Promise.all([
+      const [
+        dbReports,
+        dbReporterProfiles,
+        dbReportRules,
+        dbExcelTemplates,
+      ] = await Promise.all([
         fetchReports(),
         fetchReporterDirectoryProfiles(),
         fetchReportRules(),
+        fetchExcelReportTemplates(),
       ]);
       const dbReporterNames = dbReporterProfiles
         .filter((reporter) => reporter.isActive)
@@ -243,6 +284,7 @@ export function useReportDashboard() {
 
       setReports(dbReports);
       setReporterProfiles(dbReporterProfiles);
+      setExcelTemplates(dbExcelTemplates);
       setReporterNames(dbReporterNames);
       setReportRules(dbReportRules);
       setAdminRuleDraft(dbReportRules);
@@ -254,6 +296,38 @@ export function useReportDashboard() {
           ]),
         ),
       );
+      setAdminExcelTemplateDrafts((current) =>
+        Object.fromEntries(
+          dbExcelTemplates.map((template) => [
+            template.id,
+            current[template.id] ?? {
+              templateName: template.templateName,
+              templateDate: template.createdAt.slice(0, 10),
+              cacheVersion: template.cacheVersion,
+            },
+          ]),
+        ),
+      );
+      const nextTemplateVersion = resolveNextExcelTemplateVersion(dbExcelTemplates);
+      setExcelTemplateDraft((current) => {
+        const currentAutoName = buildAutoExcelTemplateName(
+          current.cacheVersion,
+          current.templateDate,
+        );
+
+        return {
+          ...current,
+          cacheVersion: nextTemplateVersion,
+          templateName:
+            current.templateName.trim() === "" ||
+            current.templateName === currentAutoName
+              ? buildAutoExcelTemplateName(
+                  nextTemplateVersion,
+                  current.templateDate,
+                )
+              : current.templateName,
+        };
+      });
       saveCachedReports(dbReports);
       saveCachedReporterNames(dbReporterNames);
     } catch (error) {
@@ -326,6 +400,10 @@ export function useReportDashboard() {
         };
       }),
     [draft.activities],
+  );
+  const activeExcelTemplate = useMemo(
+    () => excelTemplates.find((template) => template.isActive) ?? null,
+    [excelTemplates],
   );
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
@@ -484,11 +562,28 @@ export function useReportDashboard() {
   }
 
   async function handleExport(report: Report) {
+    if (!activeExcelTemplate) {
+      await showError(
+        "Template Excel belum tersedia",
+        "Admin perlu mengupload dan mengaktifkan template Excel terlebih dahulu.",
+      );
+      return;
+    }
+
+    setExcelExportingReportId(report.id);
     try {
-      await exportReportAsPdf(report, paperFormat);
+      await generateDailyReportExcel({
+        report,
+        template: activeExcelTemplate,
+      });
     } catch (error) {
       console.error(error);
-      await showError("Export gagal", "PDF belum berhasil dibuat. Coba lagi setelah memastikan foto dan data laporan sudah lengkap.");
+      await showError(
+        "Export Excel gagal",
+        "File Excel belum berhasil dibuat. Coba lagi setelah memastikan template, data laporan, dan foto bukti sudah lengkap.",
+      );
+    } finally {
+      setExcelExportingReportId(null);
     }
   }
 
@@ -678,6 +773,231 @@ export function useReportDashboard() {
     }
   }
 
+  function changeExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(
+    key: K,
+    value: ExcelTemplateUploadDraft[K],
+  ) {
+    setExcelTemplateDraft((current) => ({
+      ...current,
+      [key]: value,
+      templateName:
+        key === "cacheVersion" || key === "templateDate"
+          ? current.templateName.trim() === "" ||
+            current.templateName ===
+              buildAutoExcelTemplateName(
+                current.cacheVersion,
+                current.templateDate,
+              )
+            ? buildAutoExcelTemplateName(
+                key === "cacheVersion" ? String(value) : current.cacheVersion,
+                key === "templateDate" ? String(value) : current.templateDate,
+              )
+            : current.templateName
+          : key === "templateName"
+            ? String(value)
+            : current.templateName,
+    }));
+  }
+
+  function clearExcelTemplateDraftName() {
+    setExcelTemplateDraft((current) => ({
+      ...current,
+      templateName: "",
+    }));
+  }
+
+  function selectExcelTemplateFile(file: File | null) {
+    setSelectedExcelTemplateFile(file);
+  }
+
+  function changeAdminExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(
+    templateId: string,
+    key: K,
+    value: ExcelTemplateUploadDraft[K],
+  ) {
+    setAdminExcelTemplateDrafts((current) => {
+      const draft = current[templateId];
+
+      if (!draft) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [templateId]: {
+          ...draft,
+          [key]: value,
+          templateName:
+            key === "templateName" ? String(value) : draft.templateName,
+          cacheVersion:
+            key === "cacheVersion" ? String(value) : draft.cacheVersion,
+          templateDate:
+            key === "templateDate" ? String(value) : draft.templateDate,
+        },
+      };
+    });
+  }
+
+  async function handleUploadExcelTemplate() {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    if (!selectedExcelTemplateFile) {
+      await showError("File template belum dipilih", "Pilih file .xlsx terlebih dahulu.");
+      return;
+    }
+
+    setExcelTemplateUploading(true);
+    try {
+      await uploadExcelReportTemplate(
+        selectedExcelTemplateFile,
+        excelTemplateDraft.templateName ||
+          buildAutoExcelTemplateName(
+            excelTemplateDraft.cacheVersion,
+            excelTemplateDraft.templateDate,
+          ),
+        excelTemplateDraft.cacheVersion,
+      );
+      setExcelTemplateDraft((current) => ({
+        ...current,
+        templateName: buildAutoExcelTemplateName(
+          current.cacheVersion,
+          current.templateDate,
+        ),
+      }));
+      setSelectedExcelTemplateFile(null);
+      await loadDashboardData();
+      await showSuccess(
+        "Template Excel tersimpan",
+        "Template berhasil diupload. Aktifkan template yang ingin dipakai untuk export.",
+      );
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Template Excel belum berhasil diupload.";
+      await showError("Upload template gagal", message);
+    } finally {
+      setExcelTemplateUploading(false);
+    }
+  }
+
+  async function handleActivateExcelTemplate(templateId: string) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      await activateExcelReportTemplate(templateId);
+      await loadDashboardData();
+      await showSuccess(
+        "Template Excel aktif",
+        "Template terpilih sekarang dipakai sebagai master export Excel.",
+      );
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Template Excel belum berhasil diaktifkan.";
+      await showError("Aktivasi template gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  async function handleRenameExcelTemplate(template: ExcelReportTemplate) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    const draft = adminExcelTemplateDrafts[template.id] ?? {
+      templateName: template.templateName,
+      templateDate: template.createdAt.slice(0, 10),
+      cacheVersion: template.cacheVersion,
+    };
+
+    const nextName = draft.templateName.trim();
+    const nextVersion = draft.cacheVersion.trim() || "v1";
+
+    if (
+      nextName === template.templateName &&
+      nextVersion === template.cacheVersion
+    ) {
+      await showInfo("Tidak ada perubahan", "Metadata template Excel belum berubah.");
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      await updateExcelReportTemplateMetadata(
+        template.id,
+        nextName,
+        nextVersion,
+      );
+      await loadDashboardData();
+      await showSuccess("Template diperbarui", "Metadata template Excel berhasil disimpan.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Metadata template Excel belum berhasil disimpan.";
+      await showError("Simpan template gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  async function handleDeleteExcelTemplate(template: ExcelReportTemplate) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
+      return;
+    }
+
+    const confirmed = await askConfirmation(
+      "Hapus template Excel?",
+      `Template ${template.templateName} akan dihapus dari database dan storage.`,
+      "Hapus template",
+    );
+
+    if (!confirmed) return;
+
+    setAdminSubmitting(true);
+    try {
+      await deleteExcelReportTemplate(template);
+      await loadDashboardData();
+      await showSuccess("Template dihapus", "Template Excel sudah dihapus.");
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Template Excel belum berhasil dihapus.";
+      await showError("Hapus template gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
   async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile) {
     if (!adminSession) {
       await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
@@ -773,6 +1093,13 @@ export function useReportDashboard() {
     draft,
     reports,
     reporterProfiles,
+    excelTemplates,
+    activeExcelTemplate,
+    excelTemplateDraft,
+    selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
+    adminExcelTemplateDrafts,
+    excelTemplateUploading,
+    excelExportingReportId,
     savedNames: deviceSubmittedNames,
     reporterNames,
     historyName,
@@ -828,10 +1155,18 @@ export function useReportDashboard() {
     saveReport,
     handleRemoveSavedName,
     changeAdminRule,
+    changeExcelTemplateDraft,
+    clearExcelTemplateDraftName,
+    selectExcelTemplateFile,
+    changeAdminExcelTemplateDraft,
     changeAdminReporterDraftName,
     handleAdminLogin,
     handleAdminLogout,
     handleDeleteReporterTrace,
+    handleUploadExcelTemplate,
+    handleActivateExcelTemplate,
+    handleRenameExcelTemplate,
+    handleDeleteExcelTemplate,
     handleRenameReporterProfile,
     handleSaveAdminRules,
   };

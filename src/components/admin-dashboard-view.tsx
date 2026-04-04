@@ -2,11 +2,16 @@ import { useState } from "react";
 import type { ReportRules } from "../config/report-rules";
 import { formatWitaDateTime } from "../lib/time";
 import type { AdminSessionState } from "../types/admin";
+import type {
+  ExcelReportTemplate,
+  ExcelTemplateUploadDraft,
+} from "../types/excel-template";
 import type { ReporterDirectoryProfile } from "../types/report";
+import { AdminEditableListCard } from "./admin-editable-list-card";
 
 const inputClassName = "field-input";
 
-type AdminSection = "rules" | "reporters";
+type AdminSection = "rules" | "reporters" | "templates";
 
 type AdminDashboardViewProps = {
   adminSession: AdminSessionState | null;
@@ -17,6 +22,12 @@ type AdminDashboardViewProps = {
   adminAuthLoading: boolean;
   adminSubmitting: boolean;
   adminRuleDraft: ReportRules;
+  excelTemplates: ExcelReportTemplate[];
+  activeExcelTemplate: ExcelReportTemplate | null;
+  excelTemplateDraft: ExcelTemplateUploadDraft;
+  adminExcelTemplateDrafts: Record<string, ExcelTemplateUploadDraft>;
+  selectedExcelTemplateFileName: string;
+  excelTemplateUploading: boolean;
   reporterProfiles: ReporterDirectoryProfile[];
   adminReporterDraftNames: Record<string, string>;
   onChangeAdminRule: <K extends keyof ReportRules>(
@@ -27,6 +38,21 @@ type AdminDashboardViewProps = {
   onHandleAdminLogin: () => Promise<void>;
   onHandleAdminLogout: () => Promise<void>;
   onHandleSaveAdminRules: () => Promise<void>;
+  onChangeExcelTemplateDraft: <K extends keyof ExcelTemplateUploadDraft>(
+    key: K,
+    value: ExcelTemplateUploadDraft[K],
+  ) => void;
+  onClearExcelTemplateDraftName: () => void;
+  onSelectExcelTemplateFile: (file: File | null) => void;
+  onChangeAdminExcelTemplateDraft: <K extends keyof ExcelTemplateUploadDraft>(
+    templateId: string,
+    key: K,
+    value: ExcelTemplateUploadDraft[K],
+  ) => void;
+  onHandleUploadExcelTemplate: () => Promise<void>;
+  onHandleActivateExcelTemplate: (templateId: string) => Promise<void>;
+  onHandleRenameExcelTemplate: (template: ExcelReportTemplate) => Promise<void>;
+  onHandleDeleteExcelTemplate: (template: ExcelReportTemplate) => Promise<void>;
   onHandleRenameReporterProfile: (
     reporter: ReporterDirectoryProfile,
   ) => Promise<void>;
@@ -47,6 +73,7 @@ function AdminSectionTabs({
       {[
         { key: "rules" as const, label: "Aturan laporan" },
         { key: "reporters" as const, label: "Kelola pengguna" },
+        { key: "templates" as const, label: "Template Excel" },
       ].map((section) => (
         <button
           key={section.key}
@@ -62,6 +89,40 @@ function AdminSectionTabs({
         </button>
       ))}
     </div>
+  );
+}
+
+function ClearableTextInput(props: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  readOnly?: boolean;
+  onChange?: (value: string) => void;
+  onClear?: () => void;
+}) {
+  return (
+    <label className="space-y-2">
+      <span className="text-sm font-medium">{props.label}</span>
+      <div className="relative">
+        <input
+          value={props.value}
+          readOnly={props.readOnly}
+          onChange={(event) => props.onChange?.(event.target.value)}
+          placeholder={props.placeholder}
+          className={`${inputClassName} ${props.onClear ? "pr-11" : ""}`}
+        />
+        {props.onClear ? (
+          <button
+            type="button"
+            onClick={props.onClear}
+            className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl text-sm font-bold text-[var(--text-muted)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            aria-label={`Kosongkan ${props.label.toLowerCase()}`}
+          >
+            x
+          </button>
+        ) : null}
+      </div>
+    </label>
   );
 }
 
@@ -193,6 +254,8 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
 }
 
 function ReporterManagementPanel(props: AdminDashboardViewProps) {
+  const [editingReporterId, setEditingReporterId] = useState<string | null>(null);
+
   return (
     <div className="grid gap-3">
       {props.reporterProfiles.length === 0 ? (
@@ -201,38 +264,28 @@ function ReporterManagementPanel(props: AdminDashboardViewProps) {
         </div>
       ) : null}
 
-      {props.reporterProfiles.map((reporter) => (
-        <article
-          key={reporter.id}
-          className="surface-card rounded-[24px] p-4 sm:p-5"
-        >
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto]">
-              <label className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                  Nama pengguna publik
-                </span>
-                <input
-                  value={
-                    props.adminReporterDraftNames[reporter.id] ??
-                    reporter.fullName
-                  }
-                  onChange={(event) =>
-                    props.onChangeAdminReporterDraftName(
-                      reporter.id,
-                      event.target.value,
-                    )
-                  }
-                  className={inputClassName}
-                />
-              </label>
+      {props.reporterProfiles.map((reporter) => {
+        const isEditing = editingReporterId === reporter.id;
 
-              <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)]">
+        return (
+          <AdminEditableListCard
+            key={reporter.id}
+            title={
+              isEditing ? (
+                <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                  Edit pengguna publik
+                </span>
+              ) : (
+                <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
+                  {reporter.fullName}
+                </h3>
+              )
+            }
+            meta={
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
                 <span>{reporter.totalReports} laporan</span>
                 {reporter.firstReportedAt ? (
-                  <span>
-                    Awal: {formatWitaDateTime(reporter.firstReportedAt)}
-                  </span>
+                  <span>Awal: {formatWitaDateTime(reporter.firstReportedAt)}</span>
                 ) : null}
                 {reporter.lastReportedAt ? (
                   <span>
@@ -240,29 +293,245 @@ function ReporterManagementPanel(props: AdminDashboardViewProps) {
                   </span>
                 ) : null}
               </div>
-            </div>
+            }
+            isEditing={isEditing}
+            editContent={
+              <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+                <ClearableTextInput
+                  label="Nama pengguna publik"
+                  value={
+                    props.adminReporterDraftNames[reporter.id] ??
+                    reporter.fullName
+                  }
+                  onChange={(value) =>
+                    props.onChangeAdminReporterDraftName(reporter.id, value)
+                  }
+                  onClear={() =>
+                    props.onChangeAdminReporterDraftName(reporter.id, "")
+                  }
+                />
+                <div className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)]">
+                  <p>Data relasional laporan ikut memakai nama terbaru saat disimpan.</p>
+                </div>
+              </div>
+            }
+            disableActions={props.adminSubmitting}
+            onStartEdit={() => setEditingReporterId(reporter.id)}
+            onCancelEdit={() => {
+              props.onChangeAdminReporterDraftName(
+                reporter.id,
+                reporter.fullName,
+              );
+              setEditingReporterId(null);
+            }}
+            onSaveEdit={() => {
+              void props
+                .onHandleRenameReporterProfile(reporter)
+                .then(() => setEditingReporterId(null));
+            }}
+            onDelete={() => void props.onHandleDeleteReporterTrace(reporter)}
+            deleteLabel="Hapus jejak"
+          />
+        );
+      })}
+    </div>
+  );
+}
 
-            <div className="flex flex-wrap gap-2 lg:justify-end">
-              <button
-                type="button"
-                onClick={() => void props.onHandleRenameReporterProfile(reporter)}
-                disabled={props.adminSubmitting}
-                className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
-              >
-                Simpan
-              </button>
-              <button
-                type="button"
-                onClick={() => void props.onHandleDeleteReporterTrace(reporter)}
-                disabled={props.adminSubmitting}
-                className="btn-danger px-4 py-2 text-sm disabled:opacity-60"
-              >
-                Hapus jejak
-              </button>
-            </div>
+function ExcelTemplatePanel(props: AdminDashboardViewProps) {
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-4">
+      <div className="surface-card rounded-[24px] p-4 sm:p-5">
+        <div className="grid items-end gap-3 lg:grid-cols-[minmax(220px,1.4fr)_150px_110px_minmax(180px,220px)_auto]">
+          <ClearableTextInput
+            label="Nama template"
+            value={props.excelTemplateDraft.templateName}
+            placeholder="Template-format-excel_YYYY-MM-DD_v1"
+            onChange={(value) =>
+              props.onChangeExcelTemplateDraft("templateName", value)
+            }
+            onClear={props.onClearExcelTemplateDraftName}
+          />
+
+          <ClearableTextInput
+            label="Tanggal dokumen"
+            value={props.excelTemplateDraft.templateDate}
+            readOnly
+          />
+
+          <ClearableTextInput
+            label="Versi cache"
+            value={props.excelTemplateDraft.cacheVersion}
+            placeholder="v1"
+            onChange={(value) =>
+              props.onChangeExcelTemplateDraft("cacheVersion", value)
+            }
+          />
+
+          <label className="space-y-2">
+            <span className="text-sm font-medium">Pilih file .xlsx</span>
+            <input
+              key={props.selectedExcelTemplateFileName || "empty-template-file"}
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              disabled={props.excelTemplateUploading}
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                props.onSelectExcelTemplateFile(file);
+              }}
+              className={inputClassName}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => void props.onHandleUploadExcelTemplate()}
+            disabled={
+              props.excelTemplateUploading ||
+              !props.selectedExcelTemplateFileName
+            }
+            className="btn-primary h-[52px] justify-center px-5 py-2 text-sm disabled:opacity-60"
+          >
+            {props.excelTemplateUploading ? "Mengupload..." : "Upload template"}
+          </button>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-muted)]">
+          <span>
+            File:{" "}
+            <span className="font-semibold text-[var(--text-primary)]">
+              {props.selectedExcelTemplateFileName || "Belum ada"}
+            </span>
+          </span>
+          <span>
+            Aktif:{" "}
+            <span className="font-semibold text-[var(--text-primary)]">
+              {props.activeExcelTemplate?.templateName ?? "Belum ada"}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <div className="grid gap-3">
+        {props.excelTemplates.length === 0 ? (
+          <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)]">
+            Belum ada template Excel yang diupload.
           </div>
-        </article>
-      ))}
+        ) : null}
+
+        {props.excelTemplates.map((template) => {
+          const isEditing = editingTemplateId === template.id;
+          const draft = props.adminExcelTemplateDrafts[template.id] ?? {
+            templateName: template.templateName,
+            templateDate: template.createdAt.slice(0, 10),
+            cacheVersion: template.cacheVersion,
+          };
+
+          return (
+            <AdminEditableListCard
+              key={template.id}
+              title={
+                isEditing ? (
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    Edit template Excel
+                  </span>
+                ) : (
+                  <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
+                    {template.templateName}
+                  </h3>
+                )
+              }
+              badges={
+                <>
+                  <span className="rounded-full bg-[var(--surface-panel-strong)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                    {template.cacheVersion}
+                  </span>
+                  {template.isActive ? (
+                    <span className="rounded-full bg-[var(--success-soft)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--success)]">
+                      Aktif
+                    </span>
+                  ) : null}
+                </>
+              }
+              meta={
+                <>
+                  <p className="break-all">{template.storagePath}</p>
+                  <p className="mt-1">Update: {formatWitaDateTime(template.updatedAt)}</p>
+                </>
+              }
+              isEditing={isEditing}
+              editContent={
+                <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_140px]">
+                  <ClearableTextInput
+                    label="Nama template"
+                    value={draft.templateName}
+                    onChange={(value) =>
+                      props.onChangeAdminExcelTemplateDraft(
+                        template.id,
+                        "templateName",
+                        value,
+                      )
+                    }
+                    onClear={() =>
+                      props.onChangeAdminExcelTemplateDraft(
+                        template.id,
+                        "templateName",
+                        "",
+                      )
+                    }
+                  />
+                  <ClearableTextInput
+                    label="Versi cache"
+                    value={draft.cacheVersion}
+                    onChange={(value) =>
+                      props.onChangeAdminExcelTemplateDraft(
+                        template.id,
+                        "cacheVersion",
+                        value,
+                      )
+                    }
+                  />
+                </div>
+              }
+              disableActions={props.adminSubmitting}
+              onStartEdit={() => setEditingTemplateId(template.id)}
+              onCancelEdit={() => {
+                props.onChangeAdminExcelTemplateDraft(
+                  template.id,
+                  "templateName",
+                  template.templateName,
+                );
+                props.onChangeAdminExcelTemplateDraft(
+                  template.id,
+                  "cacheVersion",
+                  template.cacheVersion,
+                );
+                setEditingTemplateId(null);
+              }}
+              onSaveEdit={() => {
+                void props
+                  .onHandleRenameExcelTemplate(template)
+                  .then(() => setEditingTemplateId(null));
+              }}
+              onPrimaryAction={
+                template.isActive
+                  ? undefined
+                  : () =>
+                      void props.onHandleActivateExcelTemplate(template.id)
+              }
+              primaryActionLabel={template.isActive ? "Sedang aktif" : "Jadikan utama"}
+              onDelete={
+                template.isActive
+                  ? undefined
+                  : () => void props.onHandleDeleteExcelTemplate(template)
+              }
+              deleteLabel="Delete"
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -303,6 +572,9 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
           {activeSection === "rules" ? <ReportRulesPanel {...props} /> : null}
           {activeSection === "reporters" ? (
             <ReporterManagementPanel {...props} />
+          ) : null}
+          {activeSection === "templates" ? (
+            <ExcelTemplatePanel {...props} />
           ) : null}
         </div>
       ) : null}

@@ -69,6 +69,18 @@ create table if not exists public.report_template_notes (
   unique (template_id, note_order)
 );
 
+create table if not exists public.excel_report_templates (
+  id uuid primary key default gen_random_uuid(),
+  template_name text not null,
+  cache_version text not null,
+  storage_path text not null unique,
+  public_url text not null,
+  is_active boolean not null default false,
+  uploaded_by_admin_id uuid references public.admin_profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.daily_reports (
   id uuid primary key default gen_random_uuid(),
   template_id uuid references public.report_templates(id) on delete set null,
@@ -139,6 +151,9 @@ create index if not exists idx_daily_reports_report_date on public.daily_reports
 create index if not exists idx_daily_reports_name_date on public.daily_reports(normalized_reporter_name, report_date desc);
 create index if not exists idx_daily_report_activities_report_order on public.daily_report_activities(report_id, activity_order);
 create index if not exists idx_daily_report_activity_photos_activity on public.daily_report_activity_photos(activity_id, sort_order);
+create unique index if not exists uq_excel_report_templates_single_active
+on public.excel_report_templates (is_active)
+where is_active = true;
 
 create or replace function public.wita_display_date(input_date date default public.wita_today())
 returns text
@@ -212,6 +227,12 @@ before update on public.report_templates
 for each row
 execute function public.set_updated_at();
 
+drop trigger if exists trg_excel_report_templates_updated_at on public.excel_report_templates;
+create trigger trg_excel_report_templates_updated_at
+before update on public.excel_report_templates
+for each row
+execute function public.set_updated_at();
+
 drop trigger if exists trg_daily_reports_updated_at on public.daily_reports;
 create trigger trg_daily_reports_updated_at
 before update on public.daily_reports
@@ -241,6 +262,7 @@ alter table public.admin_profiles enable row level security;
 alter table public.reporter_directory enable row level security;
 alter table public.report_templates enable row level security;
 alter table public.report_template_notes enable row level security;
+alter table public.excel_report_templates enable row level security;
 alter table public.daily_reports enable row level security;
 alter table public.daily_report_activities enable row level security;
 alter table public.daily_report_activity_photos enable row level security;
@@ -330,6 +352,21 @@ using (
 drop policy if exists "admin manage template notes" on public.report_template_notes;
 create policy "admin manage template notes"
 on public.report_template_notes
+for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "public read active excel_report_templates" on public.excel_report_templates;
+create policy "public read active excel_report_templates"
+on public.excel_report_templates
+for select
+to anon, authenticated
+using (is_active = true or public.is_admin());
+
+drop policy if exists "admin manage excel_report_templates" on public.excel_report_templates;
+create policy "admin manage excel_report_templates"
+on public.excel_report_templates
 for all
 to authenticated
 using (public.is_admin())
@@ -675,6 +712,45 @@ $$;
 
 grant execute on function public.rename_reporter_directory_profile(uuid, text) to authenticated;
 grant execute on function public.delete_reporter_directory_trace(uuid) to authenticated;
+
+create or replace function public.set_active_excel_report_template(
+  template_id_input uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Akses admin diperlukan.';
+  end if;
+
+  if template_id_input is null then
+    raise exception 'Template Excel belum valid.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.excel_report_templates
+    where id = template_id_input
+  ) then
+    raise exception 'Template Excel tidak ditemukan.';
+  end if;
+
+  update public.excel_report_templates
+  set is_active = false,
+      updated_at = now()
+  where is_active = true;
+
+  update public.excel_report_templates
+  set is_active = true,
+      updated_at = now()
+  where id = template_id_input;
+end;
+$$;
+
+grant execute on function public.set_active_excel_report_template(uuid) to authenticated;
 
 insert into public.report_templates (
   template_code,

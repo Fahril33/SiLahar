@@ -151,3 +151,27 @@ Setiap patch sebaiknya ditulis dengan pola:
 ### Notes
 - Jalankan migration `011` di Supabase sebelum memakai fitur kelola pengguna.
 - Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-04 - Kerangka Export Excel Client-Side dan Template Management
+
+### Added
+- Kerangka export Excel client-side berbasis `exceljs`, `file-saver`, dan template master dari Supabase Storage.
+- Util modular `src/lib/excel/cacheManager.ts`, `src/lib/excel/excelMapper.ts`, dan `src/lib/excel/excelGenerator.ts`.
+- Service `src/lib/excel-template-service.ts` untuk baca daftar template, upload template, dan aktivasi template utama.
+- Section Admin `Template Excel` untuk upload file `.xlsx`, set versi cache, dan memilih template aktif.
+- Migration `012_excel_template_management.sql`.
+
+### Changed
+- Tombol export kini mengarah ke pembuatan Excel dari template aktif dan menampilkan status loading per laporan.
+- Cache template Excel dipanaskan saat data dashboard dimuat agar download berikutnya lebih cepat.
+- Realtime subscription ikut memantau perubahan `excel_report_templates`.
+
+### Database
+- Menambahkan tabel `excel_report_templates`, RLS policy admin/public, dan RPC `set_active_excel_report_template`.
+- Menambahkan bucket Storage `report-excel-templates` beserta policy upload/read/delete yang dibatasi admin.
+- `schema.sql` disinkronkan dengan struktur template Excel.
+
+### Notes
+- Jalankan migration `012` di Supabase.
+- Mapping sel Excel di `excelMapper.ts` masih memakai layout awal dan bisa disesuaikan mengikuti struktur template master final.
+- Build frontend sudah diverifikasi dengan `npm run build`.

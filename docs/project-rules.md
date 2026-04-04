@@ -26,6 +26,8 @@
 - Preview dan hasil print harus menampilkan gambar bukti memenuhi kolom dengan tinggi otomatis.
 - Preview dokumen harus memiliki batas lebar yang jelas.
 - Kolom detail aktivitas pada preview harus mendukung word wrap.
+- Export Excel wajib diproses client-side di browser dari template master Supabase Storage, tanpa API Route/serverless.
+- Template Excel aktif dikelola admin dari halaman Admin, dan cache browser harus memakai versi template agar otomatis invalidate saat versi berubah.
 - Header halaman form dihilangkan.
 - Feedback dan konfirmasi aksi menggunakan SweetAlert.
 - Tidak menampilkan banner status di atas form setelah aksi dilakukan.

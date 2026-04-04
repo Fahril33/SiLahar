@@ -19,6 +19,7 @@ export function HistoryView(props: {
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (report: Report) => Promise<void>;
   onHandleDeleteReport: (report: Report) => Promise<void>;
+  excelExportingReportId: string | null;
   today: string;
   canUseAnyReportDate: boolean;
   canManageReports: boolean;
@@ -36,6 +37,7 @@ export function HistoryView(props: {
     onHandleExport,
     onHandlePrint,
     onHandleDeleteReport,
+    excelExportingReportId,
     today,
     canUseAnyReportDate,
     canManageReports,
@@ -87,7 +89,16 @@ export function HistoryView(props: {
                   Edit
                 </button>
               ) : null}
-              <button type="button" onClick={() => void onHandleExport(report)} className="btn-secondary hidden px-4 py-2 text-sm">Download PDF</button>
+              <button
+                type="button"
+                onClick={() => void onHandleExport(report)}
+                disabled={excelExportingReportId === report.id}
+                className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+              >
+                {excelExportingReportId === report.id
+                  ? "Menyiapkan Excel..."
+                  : "Download Excel"}
+              </button>
               <button type="button" onClick={() => void onHandlePrint(report)} className="btn-secondary px-4 py-2 text-sm">Print</button>
               {canManageReports ? (
                 <button
