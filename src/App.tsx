@@ -216,6 +216,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
+    document.body.dataset.theme = themeMode;
     window.localStorage.setItem("silahar:theme-mode", themeMode);
   }, [themeMode]);
 

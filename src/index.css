@@ -228,22 +228,45 @@ select:focus {
   }
 }
 
-.swal-modern-popup {
+.swal2-popup.swal-modern-popup,
+.swal2-popup.swal-modern-toast {
+  background: var(--surface-panel-strong) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-strong) !important;
+  backdrop-filter: blur(18px);
+}
+
+.swal2-popup.swal-modern-popup {
   width: min(28rem, calc(100vw - 2rem));
   border-radius: 24px;
   padding: 1.15rem 1.15rem 1rem;
-  background: var(--surface-panel-strong);
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 22px 60px rgba(17, 24, 39, 0.18);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.22) !important;
 }
 
-.swal-modern-toast {
+.swal2-popup.swal-modern-toast {
   width: min(22rem, calc(100vw - 1rem));
   border-radius: 18px;
   padding: 0.75rem 0.85rem;
-  background: color-mix(in srgb, var(--surface-panel-strong) 96%, white);
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 14px 34px rgba(17, 24, 39, 0.14);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16) !important;
+}
+
+/* SweetAlert2 Input & Select Theme Fixes */
+.swal2-input, .swal2-select, .swal2-textarea {
+  background-color: var(--field-bg) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--field-border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+
+.swal2-input:focus, .swal2-select:focus, .swal2-textarea:focus {
+  border-color: var(--field-border-focus) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--field-border-focus) 20%, transparent) !important;
+}
+
+.swal2-select option {
+  background-color: var(--surface-elevated);
+  color: var(--text-primary);
 }
 
 .swal-progress-toast {
