@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { ReportRules } from "../config/report-rules";
+import type { AdminActiveAction } from "../hooks/use-report-dashboard";
 import { formatWitaDateTime } from "../lib/time";
 import type { AdminSessionState } from "../types/admin";
 import type {
@@ -28,6 +29,22 @@ import {
 
 const inputClassName = "field-input";
 
+function SpinnerIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4 animate-spin"}
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
 type AdminSection = "rules" | "reporters" | "templates" | "sounds";
 
 type AdminDashboardViewProps = {
@@ -39,6 +56,7 @@ type AdminDashboardViewProps = {
   adminAuthLoading: boolean;
   loading: boolean;
   adminSubmitting: boolean;
+  adminActiveAction: AdminActiveAction;
   adminRuleDraft: ReportRules;
   activeReportTemplateConfig: ReportTemplateConfig | null;
   notificationSettings: NotificationSettings;
@@ -55,6 +73,7 @@ type AdminDashboardViewProps = {
   reports: Report[];
   reporterProfiles: ReporterDirectoryProfile[];
   adminReporterDraftNames: Record<string, string>;
+  adminActiveItemId: string | null;
   onChangeAdminRule: <K extends keyof ReportRules>(
     key: K,
     value: ReportRules[K],
@@ -172,6 +191,7 @@ function ClearableTextInput(props: {
 function AdminSessionCard(props: {
   adminSession: AdminSessionState;
   adminSubmitting: boolean;
+  adminActiveAction: AdminActiveAction;
   onHandleAdminLogout: () => Promise<void>;
 }) {
   return (
@@ -189,9 +209,9 @@ function AdminSessionCard(props: {
         type="button"
         onClick={() => void props.onHandleAdminLogout()}
         disabled={props.adminSubmitting}
-        className="btn-secondary ml-auto px-4 py-2 text-xs disabled:opacity-60"
+        className="btn-secondary ml-auto min-w-[88px] px-4 py-2 text-xs disabled:opacity-60"
       >
-        {props.adminSubmitting ? "Memproses..." : "Logout"}
+        {props.adminActiveAction === "logout" ? <SpinnerIcon /> : "Logout"}
       </button>
     </div>
   );
@@ -230,9 +250,11 @@ function AdminLoginCard(props: AdminDashboardViewProps) {
           disabled={props.adminAuthLoading || props.adminSubmitting}
           className="btn-primary w-full justify-center disabled:opacity-60"
         >
-          {props.adminAuthLoading || props.adminSubmitting
-            ? "Memproses login..."
-            : "Login admin"}
+          {props.adminAuthLoading || props.adminActiveAction === "login" ? (
+            <SpinnerIcon />
+          ) : (
+            "Login admin"
+          )}
         </button>
       </div>
     </div>
@@ -374,7 +396,11 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
             disabled={props.adminSubmitting}
             className="btn-primary w-full justify-center disabled:opacity-60"
           >
-            {props.adminSubmitting ? "Menyimpan rules..." : "Simpan rules"}
+            {props.adminActiveAction === "save-rules" ? (
+              <SpinnerIcon />
+            ) : (
+              "Simpan rules"
+            )}
           </button>
         </div>
       </div>
@@ -430,11 +456,13 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
             type="button"
             onClick={() => void props.onHandleSaveTemplateApproverDefaults()}
             disabled={props.adminSubmitting || !props.activeReportTemplateConfig}
-            className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+            className="btn-primary min-w-[176px] px-4 py-2 text-sm disabled:opacity-60"
           >
-            {props.adminSubmitting
-              ? "Menyimpan default..."
-              : "Simpan default pejabat"}
+            {props.adminActiveAction === "save-template-approvers" ? (
+              <SpinnerIcon />
+            ) : (
+              "Simpan default pejabat"
+            )}
           </button>
         </div>
       </div>
@@ -557,6 +585,16 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
               </div>
             }
             disableActions={props.adminSubmitting}
+            saveLoading={
+              props.adminActiveAction === "rename-reporter" &&
+              props.adminActiveItemId === reporter.id
+            }
+            deleteLoading={
+              props.adminActiveAction === "delete-reporter" &&
+              props.adminActiveItemId === reporter.id
+            }
+            saveLoadingLabel="mengubah profil"
+            deleteLoadingLabel="menghapus jejak pengguna"
             onStartEdit={() => setEditingReporterId(reporter.id)}
             onCancelEdit={() => {
               props.onChangeAdminReporterDraftName(
@@ -633,9 +671,9 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
               props.excelTemplateUploading ||
               !props.selectedExcelTemplateFileName
             }
-            className="btn-primary h-[52px] justify-center px-5 py-2 text-sm disabled:opacity-60"
+            className="btn-primary h-[52px] min-w-[144px] justify-center px-5 py-2 text-sm disabled:opacity-60"
           >
-            {props.excelTemplateUploading ? "Mengupload..." : "Upload template"}
+            {props.excelTemplateUploading ? <SpinnerIcon /> : "Upload template"}
           </button>
         </div>
 
@@ -737,6 +775,21 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
                 </div>
               }
               disableActions={props.adminSubmitting}
+              saveLoading={
+                props.adminActiveAction === "rename-excel-template" &&
+                props.adminActiveItemId === template.id
+              }
+              primaryActionLoading={
+                props.adminActiveAction === "activate-excel-template" &&
+                props.adminActiveItemId === template.id
+              }
+              deleteLoading={
+                props.adminActiveAction === "delete-excel-template" &&
+                props.adminActiveItemId === template.id
+              }
+              saveLoadingLabel="menyimpan metadata"
+              primaryActionLoadingLabel="pindah template aktif"
+              deleteLoadingLabel="menghapus berkas excel"
               onStartEdit={() => setEditingTemplateId(template.id)}
               onCancelEdit={() => {
                 props.onChangeAdminExcelTemplateDraft(
@@ -794,6 +847,7 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
 function SoundSettingsPanel(props: {
   notificationSettings: NotificationSettings;
   adminSubmitting: boolean;
+  adminActiveAction: AdminActiveAction;
   onChangeNotificationSettings: <K extends keyof NotificationSettings>(
     key: K,
     value: NotificationSettings[K],
@@ -890,9 +944,13 @@ function SoundSettingsPanel(props: {
               type="button"
               onClick={() => void props.onHandleSaveNotificationSettings()}
               disabled={props.adminSubmitting}
-              className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+              className="btn-primary min-w-[156px] px-4 py-2 text-sm disabled:opacity-60"
             >
-              {props.adminSubmitting ? "Menyimpan..." : "Simpan aturan suara"}
+              {props.adminActiveAction === "save-notification-settings" ? (
+                <SpinnerIcon />
+              ) : (
+                "Simpan aturan suara"
+              )}
             </button>
           </div>
         </div>
@@ -977,6 +1035,7 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
           <AdminSessionCard
             adminSession={props.adminSession}
             adminSubmitting={props.adminSubmitting}
+            adminActiveAction={props.adminActiveAction}
             onHandleAdminLogout={props.onHandleAdminLogout}
           />
         ) : null}
@@ -1032,6 +1091,7 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                 <SoundSettingsPanel
                   notificationSettings={props.notificationSettings}
                   adminSubmitting={props.adminSubmitting}
+                  adminActiveAction={props.adminActiveAction}
                   onChangeNotificationSettings={props.onChangeNotificationSettings}
                   onHandleSaveNotificationSettings={
                     props.onHandleSaveNotificationSettings

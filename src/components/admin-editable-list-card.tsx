@@ -9,12 +9,18 @@ type AdminEditableListCardProps = {
   editContent?: ReactNode;
   disableActions?: boolean;
   primaryActionLabel?: string;
+  saveLoading?: boolean;
+  primaryActionLoading?: boolean;
+  deleteLoading?: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: () => void;
   onPrimaryAction?: () => void;
   onDelete?: () => void;
   deleteLabel?: string;
+  saveLoadingLabel?: string;
+  primaryActionLoadingLabel?: string;
+  deleteLoadingLabel?: string;
   extraActions?: ReactNode;
 };
 
@@ -50,9 +56,30 @@ export function AdminEditableListCard(props: AdminEditableListCardProps) {
                 type="button"
                 onClick={props.onSaveEdit}
                 disabled={props.disableActions}
-                className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+                className="btn-secondary min-w-[88px] px-4 py-2 text-sm disabled:opacity-60"
               >
-                Simpan
+                {props.saveLoading ? (
+                  <div className="flex items-center gap-2">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3.5 w-3.5 animate-spin"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                    </svg>
+                    {props.saveLoadingLabel ? (
+                      <span className="text-[10px] font-medium leading-none opacity-80">
+                        {props.saveLoadingLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : (
+                  "Simpan"
+                )}
               </button>
               <button
                 type="button"
@@ -79,9 +106,30 @@ export function AdminEditableListCard(props: AdminEditableListCardProps) {
               type="button"
               onClick={props.onPrimaryAction}
               disabled={props.disableActions}
-              className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+              className="btn-secondary min-w-[116px] px-4 py-2 text-sm disabled:opacity-60"
             >
-              {props.primaryActionLabel ?? "Pilih"}
+              {props.primaryActionLoading ? (
+                <div className="flex items-center gap-2">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5 animate-spin"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  {props.primaryActionLoadingLabel ? (
+                    <span className="text-[10px] font-medium leading-none opacity-80">
+                      {props.primaryActionLoadingLabel}
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                props.primaryActionLabel ?? "Pilih"
+              )}
             </button>
           ) : null}
 
@@ -90,9 +138,30 @@ export function AdminEditableListCard(props: AdminEditableListCardProps) {
               type="button"
               onClick={props.onDelete}
               disabled={props.disableActions}
-              className="btn-danger px-4 py-2 text-sm disabled:opacity-60"
+              className="btn-danger min-w-[88px] px-4 py-2 text-sm disabled:opacity-60"
             >
-              {props.deleteLabel ?? "Hapus"}
+              {props.deleteLoading ? (
+                <div className="flex items-center gap-2">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5 animate-spin"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  {props.deleteLoadingLabel ? (
+                    <span className="text-[10px] font-medium leading-none opacity-80">
+                      {props.deleteLoadingLabel}
+                    </span>
+                  ) : null}
+                </div>
+              ) : (
+                props.deleteLabel ?? "Hapus"
+              )}
             </button>
           ) : null}
 

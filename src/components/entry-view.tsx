@@ -367,11 +367,15 @@ export function EntryView(props: EntryViewProps) {
                           }
                           className="btn-secondary px-3 py-2 text-sm disabled:opacity-60"
                         >
-                        {props.searchResultLoaded
-                          ? "Sudah dimuat"
-                          : props.searchResultNeedsReload
-                            ? "Muat ulang data asli"
-                            : "Buka untuk edit"}
+                          {props.isEditLoading ? (
+                            <SpinnerIcon className="h-4 w-4 animate-spin" />
+                          ) : props.searchResultLoaded ? (
+                            "Sudah dimuat"
+                          ) : props.searchResultNeedsReload ? (
+                            "Muat ulang data asli"
+                          ) : (
+                            "Buka untuk edit"
+                          )}
                       </button>
                     </div>
                   </div>
@@ -967,13 +971,11 @@ export function EntryView(props: EntryViewProps) {
                     {props.excelExportingReportId === props.preview.id ? (
                       <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
                     ) : (
-                      <DownloadIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      <>
+                        <DownloadIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span className="hidden sm:inline">Excel</span>
+                      </>
                     )}
-                    <span className="hidden sm:inline">
-                      {props.excelExportingReportId === props.preview.id
-                        ? "Excel..."
-                        : "Excel"}
-                    </span>
                   </button>
                   <button
                     type="button"
@@ -990,10 +992,16 @@ export function EntryView(props: EntryViewProps) {
                     disabled={props.submitting || props.isEditLoading}
                     className="btn-primary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
-                    <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />{" "}
-                    <span className="whitespace-nowrap lg:hidden xl:inline">
-                      {props.submitting ? "Menyimpan..." : "Simpan"}
-                    </span>
+                    {props.submitting ? (
+                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                    ) : (
+                      <>
+                        <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span className="whitespace-nowrap lg:hidden xl:inline">
+                          Simpan
+                        </span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

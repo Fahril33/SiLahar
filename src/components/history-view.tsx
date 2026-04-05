@@ -5,6 +5,42 @@ import { SearchFilterInput } from "./search-filter-input";
 const inputClassName = "field-input";
 const NEW_REPORT_WINDOW_MS = 5 * 60 * 1000;
 
+function ReloadIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="lucide lucide-rotate-cw-icon lucide-rotate-cw"
+    >
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
+
+function SpinnerIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4 animate-spin"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
+
 function isRecentlyCreated(createdAt: string) {
   return Date.now() - new Date(createdAt).getTime() <= NEW_REPORT_WINDOW_MS;
 }
@@ -27,6 +63,7 @@ export function HistoryView(props: {
   canManageReports: boolean;
   paperFormat: "a4" | "f4" | "legal" | "letter";
   setPaperFormat: (format: "a4" | "f4" | "legal" | "letter") => void;
+  onReload: () => Promise<void>;
 }) {
   const {
     loading,
@@ -46,28 +83,41 @@ export function HistoryView(props: {
     canManageReports,
     paperFormat,
     setPaperFormat,
+    onReload,
   } = props;
 
   return (
     <section className="space-y-4">
       <div className="panel-glass rounded-[28px] p-5">
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_auto]">
           <SearchFilterInput
             value={historyName}
             onChange={setHistoryName}
             placeholder="FILTER NAMA"
           />
           <input type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className={inputClassName} />
-          <select
-            value={paperFormat}
-            onChange={(e) => setPaperFormat(e.target.value as "a4" | "f4" | "legal" | "letter")}
-            className={inputClassName}
-          >
-            <option value="a4">PDF: A4</option>
-            <option value="f4">PDF: F4</option>
-            <option value="legal">PDF: Legal</option>
-            <option value="letter">PDF: Letter</option>
-          </select>
+          <div className="flex items-center gap-3">
+            <select
+              value={paperFormat}
+              onChange={(e) => setPaperFormat(e.target.value as "a4" | "f4" | "legal" | "letter")}
+              className={inputClassName}
+            >
+              <option value="a4">PDF: A4</option>
+              <option value="f4">PDF: F4</option>
+              <option value="legal">PDF: Legal</option>
+              <option value="letter">PDF: Letter</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => void onReload()}
+              disabled={loading}
+              className="btn-secondary h-[52px] w-[52px] shrink-0 p-0 disabled:opacity-60"
+              aria-label="Muat ulang data histori"
+              title="Muat ulang data histori"
+            >
+              {loading ? <SpinnerIcon /> : <ReloadIcon />}
+            </button>
+          </div>
           <div className="surface-muted rounded-2xl p-4 text-sm text-[var(--text-muted)]">{loading ? "Memuat..." : `Menampilkan ${historyResults.length} laporan.`}</div>
         </div>
       </div>
@@ -92,20 +142,22 @@ export function HistoryView(props: {
                   type="button"
                   onClick={() => void onHandleLoadEdit(report)}
                   disabled={editLoadingReportId === report.id}
-                  className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+                  className="btn-secondary min-w-[88px] px-4 py-2 text-sm disabled:opacity-60"
                 >
-                  {editLoadingReportId === report.id ? "Memuat..." : "Edit"}
+                  {editLoadingReportId === report.id ? <SpinnerIcon /> : "Edit"}
                 </button>
               ) : null}
               <button
                 type="button"
                 onClick={() => void onHandleExport(report)}
                 disabled={excelExportingReportId === report.id}
-                className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
+                className="btn-secondary min-w-[132px] px-4 py-2 text-sm disabled:opacity-60"
               >
-                {excelExportingReportId === report.id
-                  ? "Menyiapkan Excel..."
-                  : "Download Excel"}
+                {excelExportingReportId === report.id ? (
+                  <SpinnerIcon />
+                ) : (
+                  "Download Excel"
+                )}
               </button>
               <button type="button" onClick={() => void onHandlePrint(report)} className="btn-secondary px-4 py-2 text-sm">Print</button>
               {canManageReports ? (

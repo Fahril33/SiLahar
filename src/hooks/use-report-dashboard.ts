@@ -98,22 +98,28 @@ import type {
 
 export type View = "entry" | "history" | "status" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
+export type AdminActiveAction =
+  | null
+  | "login"
+  | "logout"
+  | "save-rules"
+  | "save-template-approvers"
+  | "activate-excel-template"
+  | "rename-excel-template"
+  | "delete-excel-template"
+  | "rename-reporter"
+  | "delete-reporter"
+  | "save-notification-settings";
 const ACTIVE_TEMPLATE_VERSION_KEY = "silahar:active-template-version";
 
 function buildTemplateVersionId(template: ReportTemplateConfig | null) {
-  if (!template) {
-    return null;
-  }
-
+  if (!template) return null;
   return `${template.id}-${template.updatedAt.replace(/[^0-9]/g, "")}`;
 }
 
 function createDefaultApproverDraftMap(template: ReportTemplateConfig | null) {
   return {
-    coordinator_team: createApproverDraftFromTemplate(
-      template,
-      "coordinator_team",
-    ),
+    coordinator_team: createApproverDraftFromTemplate(template, "coordinator_team"),
     division_head: createApproverDraftFromTemplate(template, "division_head"),
   } satisfies Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>;
 }
@@ -218,9 +224,7 @@ export function useReportDashboard() {
   >({});
   const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
   const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
-  const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(
-    null,
-  );
+  const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
   const [historyName, setHistoryName] = useState("");
@@ -242,6 +246,7 @@ export function useReportDashboard() {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminAuthLoading, setAdminAuthLoading] = useState(true);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
+  const [adminActiveAction, setAdminActiveAction] = useState<AdminActiveAction>(null);
   const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(DEFAULT_REPORT_RULES);
   const [adminTemplateApproverDrafts, setAdminTemplateApproverDrafts] =
     useState<Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>>(
@@ -252,30 +257,35 @@ export function useReportDashboard() {
   >({});
   const [loadedSearchReportId, setLoadedSearchReportId] = useState<string | null>(null);
   const [loadedSearchSnapshot, setLoadedSearchSnapshot] = useState<string | null>(null);
+  const [adminActiveItemId, setAdminActiveItemId] = useState<string | null>(null);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
   const [searchOpen, setSearchOpen] = useState(false);
+
   const realtimeReloadTimeoutRef = useRef<number | null>(null);
   const backgroundRefreshIntervalRef = useRef<number | null>(null);
   const templateVersionRef = useRef<string | null>(null);
   const templatePreviousConfigRef = useRef<ReportTemplateConfig | null>(null);
   const templateInitializedRef = useRef(false);
   const templateRefreshPromptOpenRef = useRef(false);
+  const previousViewRef = useRef<View>(view);
   const reportsRef = useRef(reports);
   const reporterNamesRef = useRef(reporterNames);
 
-  useEffect(() => {
-    reportsRef.current = reports;
-  }, [reports]);
-
-  useEffect(() => {
-    reporterNamesRef.current = reporterNames;
-  }, [reporterNames]);
+  useEffect(() => { reportsRef.current = reports; }, [reports]);
+  useEffect(() => { reporterNamesRef.current = reporterNames; }, [reporterNames]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("silahar:active-view", view);
     }
+  }, [view]);
+
+  useEffect(() => {
+    if (previousViewRef.current !== view && (view === "history" || view === "status")) {
+      void loadDashboardData();
+    }
+    previousViewRef.current = view;
   }, [view]);
 
   function handleRemoveSavedName(name: string) {
@@ -286,551 +296,267 @@ export function useReportDashboard() {
   useEffect(() => {
     setDraftCacheStatus("saving");
     persistDraft(draft);
-    
-    const timeoutId1 = window.setTimeout(() => {
+    const t1 = window.setTimeout(() => {
       setDraftSavedAt(new Date().toISOString());
       setDraftCacheStatus("saved");
     }, 500);
-
-    const timeoutId2 = window.setTimeout(() => {
+    const t2 = window.setTimeout(() => {
       setDraftCacheStatus("idle");
     }, 2000);
-
     return () => {
-      window.clearTimeout(timeoutId1);
-      window.clearTimeout(timeoutId2);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
     };
   }, [draft]);
+
+  useEffect(() => { void loadDashboardData(); }, []);
+
   useEffect(() => {
-    void loadDashboardData();
-  }, []);
-  useEffect(() => {
-    const activeTemplate = excelTemplates.find((template) => template.isActive) ?? null;
-    void warmUpExcelTemplateCache(activeTemplate).catch((error) => {
-      console.error("Pre-cache template Excel gagal.", error);
-    });
+    const activeTemplate = excelTemplates.find((t) => t.isActive) ?? null;
+    void warmUpExcelTemplateCache(activeTemplate).catch((err) => console.error(err));
   }, [excelTemplates]);
+
   useEffect(() => {
     const unsubscribe = subscribeReportData(() => {
-      if (realtimeReloadTimeoutRef.current !== null) {
-        window.clearTimeout(realtimeReloadTimeoutRef.current);
-      }
-
-      realtimeReloadTimeoutRef.current = window.setTimeout(() => {
-        void loadDashboardData();
-      }, 300);
+      if (realtimeReloadTimeoutRef.current !== null) window.clearTimeout(realtimeReloadTimeoutRef.current);
+      realtimeReloadTimeoutRef.current = window.setTimeout(() => { void loadDashboardData(); }, 300);
     });
-
     return () => {
-      if (realtimeReloadTimeoutRef.current !== null) {
-        window.clearTimeout(realtimeReloadTimeoutRef.current);
-      }
+      if (realtimeReloadTimeoutRef.current !== null) window.clearTimeout(realtimeReloadTimeoutRef.current);
       unsubscribe();
     };
   }, []);
 
   useEffect(() => {
-    const refreshIfVisible = () => {
-      if (document.visibilityState === "visible") {
-        void loadDashboardData();
-      }
-    };
-
-    backgroundRefreshIntervalRef.current = window.setInterval(() => {
-      refreshIfVisible();
-    }, 15000);
-
-    window.addEventListener("focus", refreshIfVisible);
-    document.addEventListener("visibilitychange", refreshIfVisible);
-
+    const refresh = () => { if (document.visibilityState === "visible") void loadDashboardData(); };
+    backgroundRefreshIntervalRef.current = window.setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
-      if (backgroundRefreshIntervalRef.current !== null) {
-        window.clearInterval(backgroundRefreshIntervalRef.current);
-      }
-      window.removeEventListener("focus", refreshIfVisible);
-      document.removeEventListener("visibilitychange", refreshIfVisible);
+      if (backgroundRefreshIntervalRef.current !== null) window.clearInterval(backgroundRefreshIntervalRef.current);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, []);
+
   useEffect(() => {
     let alive = true;
-
-    void getActiveAdminSession()
-      .then((session) => {
-        if (!alive) return;
-        setAdminSession(session);
-      })
-      .catch((error) => {
-        console.error(error);
-        if (alive) setAdminSession(null);
-      })
-      .finally(() => {
-        if (alive) setAdminAuthLoading(false);
-      });
+    void getActiveAdminSession().then((session) => {
+      if (!alive) return;
+      setAdminSession(session);
+    }).catch(err => {
+      console.error(err);
+      if (alive) setAdminSession(null);
+    }).finally(() => { if (alive) setAdminAuthLoading(false); });
 
     const unsubscribe = subscribeAdminSession((session) => {
       setAdminSession(session);
       setAdminAuthLoading(false);
     });
-
-    return () => {
-      alive = false;
-      unsubscribe();
-    };
+    return () => { alive = false; unsubscribe(); };
   }, []);
-  useEffect(() => {
-    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === today) {
-      return;
-    }
 
+  useEffect(() => {
+    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === today) return;
     setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
   }, [adminSession, draft.reportDate, reportRules.allowAnyReportDate]);
+
   useEffect(() => {
-    const nextVersionId = buildTemplateVersionId(activeReportTemplateConfig);
-
-    if (!nextVersionId) {
-      return;
-    }
-
+    const nextId = buildTemplateVersionId(activeReportTemplateConfig);
+    if (!nextId) return;
     if (!templateInitializedRef.current) {
       templateInitializedRef.current = true;
-      templateVersionRef.current = nextVersionId;
+      templateVersionRef.current = nextId;
       templatePreviousConfigRef.current = activeReportTemplateConfig;
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextVersionId);
-      }
+      if (typeof window !== "undefined") window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextId);
       return;
     }
-
-    if (nextVersionId === templateVersionRef.current) {
+    if (nextId === templateVersionRef.current) {
       templatePreviousConfigRef.current = activeReportTemplateConfig;
       return;
     }
-
-    const previousTemplate = templatePreviousConfigRef.current;
-    templateVersionRef.current = nextVersionId;
+    const previous = templatePreviousConfigRef.current;
+    templateVersionRef.current = nextId;
     templatePreviousConfigRef.current = activeReportTemplateConfig;
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextVersionId);
-    }
+    if (typeof window !== "undefined") window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextId);
 
     if (view === "entry") {
-      if (templateRefreshPromptOpenRef.current) {
-        return;
-      }
-
+      if (templateRefreshPromptOpenRef.current) return;
       templateRefreshPromptOpenRef.current = true;
-      void askAcknowledge(
-        "Template form diperbarui",
-        "Admin baru saja mengubah data template. Klik OK untuk menyegarkan draft tanpa menghapus progres Anda.",
-        "OK",
-      )
-        .then(() => {
-          setDraft((current) =>
-            applyTemplateDefaultsToDraft(
-              current,
-              previousTemplate,
-              activeReportTemplateConfig,
-            ),
-          );
-        })
-        .finally(() => {
-          templateRefreshPromptOpenRef.current = false;
-        });
+      void askAcknowledge("Template form diperbarui", "Admin baru saja mengubah data template. Klik OK untuk menyegarkan draft.", "OK")
+        .then(() => setDraft(c => applyTemplateDefaultsToDraft(c, previous, activeReportTemplateConfig)))
+        .finally(() => { templateRefreshPromptOpenRef.current = false; });
       return;
     }
-
-    setDraft((current) =>
-      applyTemplateDefaultsToDraft(
-        current,
-        previousTemplate,
-        activeReportTemplateConfig,
-      ),
-    );
+    setDraft(c => applyTemplateDefaultsToDraft(c, previous, activeReportTemplateConfig));
   }, [activeReportTemplateConfig, view]);
+
   useEffect(() => () => revokePreviews(pendingPreviews), [pendingPreviews]);
+
   useEffect(() => {
     if (!draft.nama.trim()) {
       setNameExistsInDirectory(null);
       setNameCheckLoading(false);
       return;
     }
-
     setNameCheckLoading(true);
-    const timeoutId = window.setTimeout(() => {
+    const t = window.setTimeout(() => {
       void checkReporterNameExists(draft.nama)
-        .then((exists) => setNameExistsInDirectory(exists))
-        .catch((error) => {
-          console.error(error);
-          setNameExistsInDirectory(null);
-        })
+        .then(exists => setNameExistsInDirectory(exists))
+        .catch(err => { console.error(err); setNameExistsInDirectory(null); })
         .finally(() => setNameCheckLoading(false));
     }, 350);
-
-    return () => window.clearTimeout(timeoutId);
+    return () => window.clearTimeout(t);
   }, [draft.nama]);
 
   async function loadDashboardData() {
     setLoading(true);
     try {
-      const [
-        dbReports,
-        dbReporterProfiles,
-        dbReportRules,
-        dbExcelTemplates,
-        dbActiveReportTemplateConfig,
-        dbNotificationSettings,
-      ] = await Promise.all([
-        fetchReports(),
-        fetchReporterDirectoryProfiles(),
-        fetchReportRules(),
-        fetchExcelReportTemplates(),
-        fetchActiveReportTemplateConfig(),
-        fetchNotificationSettings(),
+      const [dbR, dbRP, dbRules, dbET, dbATC, dbNS] = await Promise.all([
+        fetchReports(), fetchReporterDirectoryProfiles(), fetchReportRules(),
+        fetchExcelReportTemplates(), fetchActiveReportTemplateConfig(), fetchNotificationSettings()
       ]);
-      const dbReporterNames = dbReporterProfiles
-        .filter((reporter) => reporter.isActive)
-        .map((reporter) => reporter.fullName);
-
-      setReports(dbReports);
-      setReporterProfiles(dbReporterProfiles);
-      setActiveReportTemplateConfig(dbActiveReportTemplateConfig);
-      setNotificationSettings(dbNotificationSettings);
-      setRuntimeNotificationSettings(dbNotificationSettings);
-      persistNotificationSettings(dbNotificationSettings);
-      setExcelTemplates(dbExcelTemplates);
-      setReporterNames(dbReporterNames);
-      setReportRules(dbReportRules);
-      setAdminRuleDraft(dbReportRules);
-      setAdminTemplateApproverDrafts(
-        createDefaultApproverDraftMap(dbActiveReportTemplateConfig),
-      );
-      setAdminReporterDraftNames((current) =>
-        Object.fromEntries(
-          dbReporterProfiles.map((reporter) => [
-            reporter.id,
-            current[reporter.id] ?? reporter.fullName,
-          ]),
-        ),
-      );
-      setAdminExcelTemplateDrafts((current) =>
-        Object.fromEntries(
-          dbExcelTemplates.map((template) => [
-            template.id,
-            current[template.id] ?? {
-              templateName: template.templateName,
-              templateDate: template.createdAt.slice(0, 10),
-              cacheVersion: template.cacheVersion,
-            },
-          ]),
-        ),
-      );
-      const nextTemplateVersion = resolveNextExcelTemplateVersion(dbExcelTemplates);
-      setExcelTemplateDraft((current) => {
-        const currentAutoName = buildAutoExcelTemplateName(
-          current.cacheVersion,
-          current.templateDate,
-        );
-
-        return {
-          ...current,
-          cacheVersion: nextTemplateVersion,
-          templateName:
-            current.templateName.trim() === "" ||
-            current.templateName === currentAutoName
-              ? buildAutoExcelTemplateName(
-                  nextTemplateVersion,
-                  current.templateDate,
-                )
-              : current.templateName,
-        };
-      });
-      saveCachedReports(dbReports);
-      saveCachedReporterNames(dbReporterNames);
-      setDraft((current) => {
-        if (hasMeaningfulDraft(current) || current.nama.trim()) {
-          return current;
-        }
-
-        return createEmptyDraft(dbActiveReportTemplateConfig);
-      });
-    } catch (error) {
-      console.error(error);
+      const dbRN = dbRP.filter(r => r.isActive).map(r => r.fullName);
+      setReports(dbR);
+      setReporterProfiles(dbRP);
+      setActiveReportTemplateConfig(dbATC);
+      setNotificationSettings(dbNS);
+      setRuntimeNotificationSettings(dbNS);
+      persistNotificationSettings(dbNS);
+      setExcelTemplates(dbET);
+      setReporterNames(dbRN);
+      setReportRules(dbRules);
+      setAdminRuleDraft(dbRules);
+      setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(dbATC));
+      setAdminReporterDraftNames(c => Object.fromEntries(dbRP.map(r => [r.id, c[r.id] ?? r.fullName])));
+      setAdminExcelTemplateDrafts(c => Object.fromEntries(dbET.map(t => [t.id, c[t.id] ?? {
+        templateName: t.templateName,
+        templateDate: t.createdAt.slice(0, 10),
+        cacheVersion: t.cacheVersion
+      }])));
+      const nextVersion = resolveNextExcelTemplateVersion(dbET);
+      setExcelTemplateDraft(c => ({
+        ...c,
+        cacheVersion: nextVersion,
+        templateName: c.templateName.trim() === "" || c.templateName === buildAutoExcelTemplateName(c.cacheVersion, c.templateDate)
+          ? buildAutoExcelTemplateName(nextVersion, c.templateDate)
+          : c.templateName
+      }));
+      saveCachedReports(dbR);
+      saveCachedReporterNames(dbRN);
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(dbATC));
+    } catch (err) {
+      console.error(err);
       setReportRules(DEFAULT_REPORT_RULES);
-      if (
-        reportsRef.current.length === 0 &&
-        reporterNamesRef.current.length === 0
-      ) {
-        await showError("Database belum tersedia", "Data database belum bisa dimuat dan cache belum tersedia.");
+      if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
+        await showError("Database belum tersedia", "Data database belum bisa dimuat.");
       }
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   const currentDraftSnapshot = useMemo(() => createDraftSnapshot(draft, pendingPhotos), [draft, pendingPhotos]);
   const hasDraftContent = useMemo(() => hasMeaningfulDraft(draft), [draft]);
   const similarName = useMemo(() => getSimilarName(draft.nama, reporterNames), [draft.nama, reporterNames]);
-  const duplicateReport = useMemo(
-    () =>
-      reports.find(
-        (report) =>
-          report.reportDate === draft.reportDate &&
-          report.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase(),
-      ) ?? null,
-    [draft.nama, draft.reportDate, reports],
-  );
+  const duplicateReport = useMemo(() => reports.find(r => r.reportDate === draft.reportDate && r.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase()) ?? null, [draft.nama, draft.reportDate, reports]);
   const preview = useMemo(() => createPreviewReport(draft, pendingPreviews), [draft, pendingPreviews]);
-  const historyResults = useMemo(
-    () => reports.filter((report) => (!historyName || report.nama.toLowerCase().includes(historyName.toLowerCase())) && (!historyDate || report.reportDate === historyDate)),
-    [historyDate, historyName, reports],
-  );
-  const searchResult = useMemo(
-    () => reports.find((report) => report.reportDate === searchDate && report.nama.toLowerCase() === searchName.trim().toLowerCase()) ?? null,
-    [reports, searchDate, searchName],
-  );
-  const searchResultLoaded = useMemo(
-    () => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot === currentDraftSnapshot),
-    [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult],
-  );
-  const searchResultCanReload = useMemo(
-    () => Boolean(searchResult && (loadedSearchReportId !== searchResult.id || loadedSearchSnapshot !== currentDraftSnapshot)),
-    [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult],
-  );
-  const searchResultNeedsReload = useMemo(
-    () => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot !== currentDraftSnapshot),
-    [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult],
-  );
-  const statusRows = useMemo(
-    () =>
-      reporterNames
-        .map((name) => ({
-          name,
-          done: reports.some((report) => report.reportDate === historyDate && report.nama.toLowerCase() === name.toLowerCase()),
-          report: reports.find((report) => report.reportDate === historyDate && report.nama.toLowerCase() === name.toLowerCase()) ?? null,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [historyDate, reporterNames, reports],
-  );
-  const activityTimeIssues = useMemo(
-    () =>
-      draft.activities.map((activity, index) => {
-        const startMinutes = timeToMinutes(activity.startTime);
-        const endMinutes = timeToMinutes(activity.endTime);
-        const previousEndMinutes = index > 0 ? timeToMinutes(draft.activities[index - 1].endTime) : null;
+  const historyResults = useMemo(() => reports.filter(r => (!historyName || r.nama.toLowerCase().includes(historyName.toLowerCase())) && (!historyDate || r.reportDate === historyDate)), [historyDate, historyName, reports]);
+  const searchResult = useMemo(() => reports.find(r => r.reportDate === searchDate && r.nama.toLowerCase() === searchName.trim().toLowerCase()) ?? null, [reports, searchDate, searchName]);
+  const searchResultLoaded = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot === currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
+  const searchResultCanReload = useMemo(() => Boolean(searchResult && (loadedSearchReportId !== searchResult.id || loadedSearchSnapshot !== currentDraftSnapshot)), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
+  const searchResultNeedsReload = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot !== currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
+  const statusRows = useMemo(() => reporterNames.map(name => ({
+    name,
+    done: reports.some(r => r.reportDate === historyDate && r.nama.toLowerCase() === name.toLowerCase()),
+    report: reports.find(r => r.reportDate === historyDate && r.nama.toLowerCase() === name.toLowerCase()) ?? null,
+  })).sort((a, b) => a.name.localeCompare(b.name)), [historyDate, reporterNames, reports]);
 
-        return {
-          startAfterMorning: index === 0 && startMinutes > timeToMinutes("09:00"),
-          endBeforeStart: endMinutes < startMinutes,
-          startsBeforePreviousEnd: previousEndMinutes !== null && startMinutes < previousEndMinutes,
-          overtime: endMinutes > timeToMinutes("16:00"),
-        };
-      }),
-    [draft.activities],
-  );
-  const activityCompletionStates = useMemo(
-    () =>
-      draft.activities.map((activity, index) =>
-        isActivityComplete(
-          activity,
-          pendingPhotos,
-          activityTimeIssues[index] ?? {
-            endBeforeStart: false,
-            startsBeforePreviousEnd: false,
-          },
-        ),
-      ),
-    [activityTimeIssues, draft.activities, pendingPhotos],
-  );
-  const activeExcelTemplate = useMemo(
-    () => excelTemplates.find((template) => template.isActive) ?? null,
-    [excelTemplates],
-  );
+  const activityTimeIssues = useMemo(() => draft.activities.map((act, i) => {
+    const s = timeToMinutes(act.startTime);
+    const e = timeToMinutes(act.endTime);
+    const pE = i > 0 ? timeToMinutes(draft.activities[i - 1].endTime) : null;
+    return {
+      startAfterMorning: i === 0 && s > timeToMinutes("09:00"),
+      endBeforeStart: e < s,
+      startsBeforePreviousEnd: pE !== null && s < pE,
+      overtime: e > timeToMinutes("16:00"),
+    };
+  }), [draft.activities]);
+
+  const activityCompletionStates = useMemo(() => draft.activities.map((act, i) => isActivityComplete(act, pendingPhotos, activityTimeIssues[i] ?? { endBeforeStart: false, startsBeforePreviousEnd: false })), [activityTimeIssues, draft.activities, pendingPhotos]);
+  const activeExcelTemplate = useMemo(() => excelTemplates.find(t => t.isActive) ?? null, [excelTemplates]);
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
     if (key === "reportDate" && !adminSession && !reportRules.allowAnyReportDate) {
-      setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
+      setDraft(c => normalizeDraft({ ...c, reportDate: today }));
       return;
     }
-
-    setDraft((current) => normalizeDraft({ ...current, [key]: value }));
+    setDraft(c => normalizeDraft({ ...c, [key]: value }));
   }
 
   function changeActivity(index: number, key: "description" | "startTime" | "endTime", value: string) {
-    setDraft((current) =>
-      normalizeDraft({
-        ...current,
-        activities: current.activities.map((activity, activityIndex) => (activityIndex === index ? { ...activity, [key]: value } : activity)),
-      }),
-    );
+    setDraft(c => normalizeDraft({ ...c, activities: c.activities.map((a, i) => i === index ? { ...a, [key]: value } : a) }));
   }
 
   function addActivity() {
-    setDraft((current) =>
-      normalizeDraft({
-        ...current,
-        activities: [
-          ...current.activities,
-          {
-            no: current.activities.length + 1,
-            description: "",
-            startTime: current.activities[current.activities.length - 1]?.endTime ?? "09:00",
-            endTime: current.activities[current.activities.length - 1]?.endTime ?? "09:00",
-            photos: [],
-          },
-        ],
-      }),
-    );
+    setDraft(c => normalizeDraft({
+      ...c,
+      activities: [...c.activities, {
+        no: c.activities.length + 1,
+        description: "",
+        startTime: c.activities[c.activities.length - 1]?.endTime ?? "09:00",
+        endTime: c.activities[c.activities.length - 1]?.endTime ?? "09:00",
+        photos: [],
+      }]
+    }));
   }
 
   function removeActivity(index: number) {
-    setDraft((current) =>
-      normalizeDraft({
-        ...current,
-        activities: current.activities.filter((_, i) => i !== index).map((activity, i) => ({ ...activity, no: i + 1 })),
-      }),
-    );
-
-    setPendingPhotos((current) => {
-      const entries = Object.entries(current)
-        .filter(([key]) => Number(key) !== index + 1)
-        .map(([key, files]) => [Number(key) > index + 1 ? Number(key) - 1 : Number(key), files] as const);
+    setDraft(c => normalizeDraft({ ...c, activities: c.activities.filter((_, i) => i !== index).map((a, i) => ({ ...a, no: i + 1 })) }));
+    setPendingPhotos(c => {
+      const entries = Object.entries(c).filter(([k]) => Number(k) !== index + 1).map(([k, f]) => [Number(k) > index + 1 ? Number(k) - 1 : Number(k), f] as const);
       return Object.fromEntries(entries);
     });
-
-    setPendingPreviews((current) => {
-      const removed = current[index + 1] ?? [];
-      removed.forEach((photo) => URL.revokeObjectURL(photo.url));
-      const nextEntries = Object.entries(current)
-        .filter(([key]) => Number(key) !== index + 1)
-        .map(([key, previews]) => [Number(key) > index + 1 ? Number(key) - 1 : Number(key), previews] as const);
-      return Object.fromEntries(nextEntries);
-      });
-    }
+    setPendingPreviews(c => {
+      (c[index + 1] ?? []).forEach(p => URL.revokeObjectURL(p.url));
+      const entries = Object.entries(c).filter(([k]) => Number(k) !== index + 1).map(([k, p]) => [Number(k) > index + 1 ? Number(k) - 1 : Number(k), p] as const);
+      return Object.fromEntries(entries);
+    });
+  }
 
   function clearActivityFiles(activityNo: number) {
-    setDraft((current) =>
-      normalizeDraft({
-        ...current,
-        activities: current.activities.map((activity) =>
-          activity.no === activityNo ? { ...activity, photos: [] } : activity,
-        ),
-      }),
-    );
-
-    setPendingPhotos((current) => {
-      if (!(activityNo in current)) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[activityNo];
-      return next;
-    });
-
-    setPendingPreviews((current) => {
-      (current[activityNo] ?? []).forEach((photo) => URL.revokeObjectURL(photo.url));
-
-      if (!(activityNo in current)) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[activityNo];
-      return next;
-    });
+    setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
+    setPendingPhotos(c => { const n = { ...c }; delete n[activityNo]; return n; });
+    setPendingPreviews(c => { (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url)); const n = { ...c }; delete n[activityNo]; return n; });
   }
 
   function restoreActivityFiles(activityNo: number) {
-    const originalPhotos = editableOriginalPhotos[activityNo] ?? [];
-
-    if (originalPhotos.length === 0) {
-      return;
-    }
-
-    setDraft((current) =>
-      normalizeDraft({
-        ...current,
-        activities: current.activities.map((activity) =>
-          activity.no === activityNo
-            ? { ...activity, photos: originalPhotos }
-            : activity,
-        ),
-      }),
-    );
-
-    setPendingPhotos((current) => {
-      if (!(activityNo in current)) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[activityNo];
-      return next;
-    });
-
-    setPendingPreviews((current) => {
-      (current[activityNo] ?? []).forEach((photo) => URL.revokeObjectURL(photo.url));
-
-      if (!(activityNo in current)) {
-        return current;
-      }
-
-      const next = { ...current };
-      delete next[activityNo];
-      return next;
-    });
+    const orig = editableOriginalPhotos[activityNo] ?? [];
+    if (orig.length === 0) return;
+    setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: orig } : a) }));
+    setPendingPhotos(c => { const n = { ...c }; delete n[activityNo]; return n; });
+    setPendingPreviews(c => { (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url)); const n = { ...c }; delete n[activityNo]; return n; });
   }
 
   async function setActivityFiles(activityNo: number, files: FileList | null) {
-    const selectedFiles = files ? Array.from(files) : [];
-    const targetActivity = draft.activities.find((activity) => activity.no === activityNo);
-    const existingPhotos = targetActivity?.photos ?? [];
-    const maxPhotosPerActivity = reportRules.maxPhotosPerActivity;
-    const remainingSlots = Math.max(0, maxPhotosPerActivity - existingPhotos.length);
-    const shouldReplaceExisting =
-      existingPhotos.length > 0 && selectedFiles.length > remainingSlots;
-    const allowedSelectionCount = shouldReplaceExisting
-      ? maxPhotosPerActivity
-      : remainingSlots;
-    const limitedFiles = selectedFiles.slice(0, allowedSelectionCount);
+    const sel = files ? Array.from(files) : [];
+    const target = draft.activities.find(a => a.no === activityNo);
+    const existing = target?.photos ?? [];
+    const max = reportRules.maxPhotosPerActivity;
+    const slots = Math.max(0, max - existing.length);
+    const replace = existing.length > 0 && sel.length > slots;
+    const allowed = replace ? max : slots;
+    const limited = sel.slice(0, allowed);
 
-    if (selectedFiles.length > allowedSelectionCount) {
-      void showInfo(
-        "Batas foto aktivitas",
-        shouldReplaceExisting
-          ? maxPhotosPerActivity === 1
-            ? "Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan 1 foto."
-            : `Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan ${maxPhotosPerActivity} foto.`
-          : maxPhotosPerActivity === 1
-            ? "Saat ini setiap baris aktivitas hanya dapat menyimpan 1 foto. Sistem hanya mengambil file pertama."
-            : `Saat ini setiap baris aktivitas hanya dapat menyimpan ${maxPhotosPerActivity} foto. Sistem hanya mengambil file sesuai sisa kapasitas yang tersedia.`,
-      );
+    if (sel.length > allowed) {
+      void showInfo("Batas foto aktivitas", replace ? `Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan ${max} foto.` : `Sistem hanya mengambil file sesuai sisa kapasitas (${slots}).`);
     }
-
-    if (selectedFiles.length === 0 || limitedFiles.length === 0) {
-      return;
-    }
-
-    const nextFiles = await optimizeReportImages(limitedFiles);
-
-    if (shouldReplaceExisting) {
-      setDraft((current) =>
-        normalizeDraft({
-          ...current,
-          activities: current.activities.map((activity) =>
-            activity.no === activityNo ? { ...activity, photos: [] } : activity,
-          ),
-        }),
-      );
-    }
-
-    setPendingPhotos((current) => ({ ...current, [activityNo]: nextFiles }));
-    setPendingPreviews((current) => {
-      (current[activityNo] ?? []).forEach((photo) => URL.revokeObjectURL(photo.url));
-      return {
-        ...current,
-        [activityNo]: nextFiles.map((file) => ({ name: file.name, url: URL.createObjectURL(file) })),
-      };
+    if (limited.length === 0) return;
+    const next = await optimizeReportImages(limited);
+    if (replace) setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
+    setPendingPhotos(c => ({ ...c, [activityNo]: next }));
+    setPendingPreviews(c => {
+      (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url));
+      return { ...c, [activityNo]: next.map(f => ({ name: f.name, url: URL.createObjectURL(f) })) };
     });
   }
 
@@ -848,19 +574,12 @@ export function useReportDashboard() {
   }
 
   function loadReportIntoDraft(report: Report) {
-    const nextDraft = normalizeDraft({
+    const d = normalizeDraft({
       templateId: report.templateId,
       nama: report.nama,
       tanggal: report.tanggal,
       reportDate: report.reportDate,
-      activities: report.activities.map((activity) => ({
-        id: activity.id,
-        no: activity.no,
-        description: activity.description,
-        startTime: activity.startTime,
-        endTime: activity.endTime,
-        photos: activity.photos ?? [],
-      })),
+      activities: report.activities.map(a => ({ id: a.id, no: a.no, description: a.description, startTime: a.startTime, endTime: a.endTime, photos: a.photos ?? [] })),
       approverCoordinatorTemplateId: report.approverCoordinatorTemplateId,
       approverCoordinator: report.approverCoordinator,
       approverCoordinatorNip: report.approverCoordinatorNip,
@@ -870,826 +589,301 @@ export function useReportDashboard() {
       approverDivisionHeadNip: report.approverDivisionHeadNip,
       notes: report.notes,
     });
-
     revokePreviews(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
     setEditableOriginalPhotos(mapOriginalActivityPhotos(report));
-    setDraft(nextDraft);
+    setDraft(d);
     setLoadedSearchReportId(report.id);
-    setLoadedSearchSnapshot(createDraftSnapshot(nextDraft, {}));
+    setLoadedSearchSnapshot(createDraftSnapshot(d, {}));
   }
 
   async function handleLoadEdit(report: Report) {
     if (!adminSession && !reportRules.allowAnyReportDate && report.reportDate !== today) {
-      await showError(
-        "Edit laporan belum diizinkan",
-        "Saat ini laporan publik di luar hari berjalan hanya bisa dibaca, belum bisa diedit.",
-      );
+      await showError("Edit belum diizinkan", "Hanya laporan hari berjalan yang bisa diedit publik.");
       return;
     }
-
-    const isReloadingOriginal = loadedSearchReportId === report.id && loadedSearchSnapshot !== currentDraftSnapshot;
-    const confirmed = await askConfirmation(
-      isReloadingOriginal ? "Muat ulang data asli?" : "Buka mode edit?",
-      isReloadingOriginal
-        ? `Perubahan yang belum disimpan akan diganti dengan data asli ${report.nama} dari database.`
-        : `Data ${report.nama} untuk ${report.tanggal} akan dimuat ke form dan perubahan berikutnya akan menggantikan laporan pada tanggal tersebut.`,
-      isReloadingOriginal ? "Muat ulang" : "Lanjut edit",
-    );
+    const reloading = loadedSearchReportId === report.id && loadedSearchSnapshot !== currentDraftSnapshot;
+    const confirmed = await askConfirmation(reloading ? "Muat ulang data asli?" : "Buka mode edit?", reloading ? "Perubahan yang belum disimpan akan diganti data asli." : `Data ${report.nama} akan dimuat ke form.`, reloading ? "Muat ulang" : "Lanjut edit");
     if (!confirmed) return;
     setEditLoadingReportId(report.id);
-    try {
-      await Promise.resolve();
-      loadReportIntoDraft(report);
-      setView("entry");
-    } finally {
-      setEditLoadingReportId(null);
-    }
+    try { loadReportIntoDraft(report); setView("entry"); } finally { setEditLoadingReportId(null); }
   }
 
   async function handleResetDraft() {
-    const confirmed = await askConfirmation("Reset draft?", "Semua isian yang belum disimpan akan dibersihkan dari form.", "Reset draft");
-    if (!confirmed) return;
-    resetDraftState();
+    if (await askConfirmation("Reset draft?", "Semua isian akan dibersihkan.", "Reset draft")) resetDraftState();
   }
 
   async function handleExport(report: Report) {
-    if (!activeExcelTemplate) {
-      await showError(
-        "Template Excel belum tersedia",
-        "Admin perlu mengupload dan mengaktifkan template Excel terlebih dahulu.",
-      );
-      return;
-    }
-
+    if (!activeExcelTemplate) { await showError("Template Excel belum tersedia", "Admin perlu menyiapkan template Excel."); return; }
     setExcelExportingReportId(report.id);
-      const progressToast = openProgressToast("Menyiapkan export Excel", [
-        { id: "prepare", label: "Menyiapkan template" },
-        { id: "mapping", label: "Memetakan data laporan" },
-        { id: "images", label: "Memproses dokumentasi" },
-        { id: "build", label: "Menyusun file Excel" },
-        { id: "download", label: "Memulai unduhan" },
-      ]);
-      try {
-        await generateDailyReportExcel({
-          report,
-          template: activeExcelTemplate,
-          pendingPhotos: report.id === "preview" ? pendingPhotos : undefined,
-          onStage: (stageId, detail) => progressToast.update(stageId, detail),
-        });
-      progressToast.close();
-    } catch (error) {
-      console.error(error);
-      await showError(
-        "Export Excel gagal",
-        "File Excel belum berhasil dibuat. Coba lagi setelah memastikan template, data laporan, dan foto bukti sudah lengkap.",
-      );
-    } finally {
-      setExcelExportingReportId(null);
-    }
+    const toast = openProgressToast("Menyiapkan export Excel", [{ id: "prepare", label: "Menyiapkan" }, { id: "mapping", label: "Memetakan" }, { id: "images", label: "Memproses" }, { id: "build", label: "Menyusun" }, { id: "download", label: "Unduh" }]);
+    try {
+      await generateDailyReportExcel({ report, template: activeExcelTemplate, pendingPhotos: report.id === "preview" ? pendingPhotos : undefined, onStage: (s, d) => toast.update(s, d) });
+      toast.close();
+    } catch (err) { console.error(err); await showError("Export Excel gagal", "Terjadi masalah saat membuat file Excel."); }
+    finally { setExcelExportingReportId(null); }
   }
 
   async function handlePrint(report: Report) {
-    try {
-      await printReportDocument(report, paperFormat);
-    } catch (error) {
-      console.error(error);
-      await showError("Print gagal", "Dokumen belum berhasil dibuka untuk print. Coba lagi setelah memastikan data dan foto sudah termuat.");
-    }
+    try { await printReportDocument(report, paperFormat); } catch (err) { console.error(err); await showError("Print gagal", "Dokumen belum berhasil dibuka."); }
   }
 
   async function saveReport() {
-    if (!draft.nama.trim()) {
-      await showError(
-        "Data belum lengkap",
-        "Nama petugas wajib diisi sebelum laporan disimpan.",
-      );
-      return;
-    }
+    if (!draft.nama.trim()) { await showError("Nama belum diisi", "Nama petugas wajib diisi."); return; }
+    const fatalIdx = activityCompletionStates.findIndex(c => !c);
+    if (fatalIdx !== -1) { await showError("Data belum lengkap", `Lengkapi Aktivitas ke-${draft.activities[fatalIdx].no}.`); return; }
+    if (!adminSession && !reportRules.allowAnyReportDate && draft.reportDate !== today) { await showError("Tanggal belum diizinkan", "Hanya laporan hari berjalan yang diizinkan."); return; }
+    if (activityTimeIssues.some(i => i.endBeforeStart || i.startsBeforePreviousEnd)) { await showError("Jam belum valid", "Periksa kembali urutan jam aktivitas."); return; }
 
-    const incompleteActivityIndex = activityCompletionStates.findIndex(
-      (isComplete) => !isComplete,
-    );
-
-    if (incompleteActivityIndex !== -1) {
-      const activityNo =
-        draft.activities[incompleteActivityIndex]?.no ??
-        incompleteActivityIndex + 1;
-      await showError(
-        "Data aktivitas belum lengkap",
-        `Lengkapi detail aktivitas, jam pelaksanaan, dan minimal 1 foto bukti pada Aktivitas ke-${activityNo}.`,
-      );
-      return;
-    }
-
-    if (!adminSession && !reportRules.allowAnyReportDate && draft.reportDate !== today) {
-      await showError(
-        "Tanggal laporan belum diizinkan",
-        "Saat ini admin membatasi pengisian laporan hanya untuk hari berjalan.",
-      );
-      return;
-    }
-
-    if (activityTimeIssues.some((issue) => issue.endBeforeStart || issue.startsBeforePreviousEnd)) {
-      await showError("Jam aktivitas belum valid", "Pastikan jam selesai tidak kurang dari jam mulai, dan jam mulai aktivitas berikutnya tidak lebih kecil dari jam selesai aktivitas sebelumnya.");
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      duplicateReport ? "Perbarui laporan tanggal ini?" : "Simpan laporan ke database?",
-      duplicateReport
-        ? `Laporan ${draft.nama} untuk ${draft.tanggal} sudah ada dan akan diperbarui.`
-        : `Laporan ${draft.nama} untuk ${draft.tanggal} akan disimpan ke database beserta foto bukti yang diunggah.`,
-      duplicateReport ? "Perbarui" : "Simpan",
-    );
-
-    if (!confirmed) return;
-
-    setSubmitting(true);
-      const progressToast = openProgressToast("Menyimpan laporan", [
-        { id: "prepare", label: "Menyiapkan laporan" },
-        { id: "activities", label: "Menyimpan aktivitas" },
-        { id: "photos", label: "Memproses dokumentasi" },
-        { id: "finalize", label: "Finalisasi laporan" },
-      ]);
+    if (await askConfirmation(duplicateReport ? "Perbarui laporan?" : "Simpan laporan?", duplicateReport ? "Laporan sudah ada dan akan diperbarui." : "Laporan akan disimpan ke database.", duplicateReport ? "Perbarui" : "Simpan")) {
+      setSubmitting(true);
+      const toast = openProgressToast("Menyimpan laporan", [{ id: "prepare", label: "Menyiapkan" }, { id: "activities", label: "Menyimpan" }, { id: "photos", label: "Memproses" }, { id: "finalize", label: "Finalisasi" }]);
       try {
-        await saveReportToDatabase(
-          draft,
-          pendingPhotos,
-          duplicateReport,
-          reportRules,
-          (stageId, detail) => progressToast.update(stageId, detail),
-        );
-      progressToast.close();
-      await loadDashboardData();
-      setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
-      resetDraftState();
-      await showSuccess(
-        "Laporan tersimpan",
-        isWitaFriday(draft.reportDate)
-          ? "terimakasih atas kerja keras anda. sampai jumpa hari senin."
-          : "terimakasih atas kerja keras anda. sampai jumpa besok",
-      );
-    } catch (error) {
-      console.error(error);
-      const errorMessage =
-        typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
-          ? error.message
-          : "";
-      const message =
-        errorMessage.toLowerCase().includes("batas foto")
-          ? errorMessage
-          : "Terjadi masalah saat menyimpan laporan atau mengunggah foto bukti.";
-      await showError("Simpan gagal", message);
-    } finally {
-      setSubmitting(false);
+        await saveReportToDatabase(draft, pendingPhotos, duplicateReport, reportRules, (s, d) => toast.update(s, d));
+        toast.close();
+        await loadDashboardData();
+        setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
+        resetDraftState();
+        await showSuccess("Laporan tersimpan", isWitaFriday(draft.reportDate) ? "terimakasih atas kerja keras anda. sampai jumpa hari senin." : "terimakasih atas kerja keras anda. sampai jumpa besok");
+      } catch (err) {
+        console.error(err);
+        const msg = (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") ? err.message : "Gagal menyimpan laporan.";
+        await showError("Simpan gagal", msg);
+      } finally { setSubmitting(false); }
     }
   }
 
   async function handleDeleteReport(report: Report) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      "Hapus laporan ini?",
-      `Laporan ${report.nama} untuk ${report.tanggal} akan dihapus permanen beserta foto buktinya.`,
-      "Hapus laporan",
-    );
-
-    if (!confirmed) return;
-
-    setSubmitting(true);
-    try {
-      await deleteReportFromDatabase(report);
-      if (loadedSearchReportId === report.id) {
-        resetDraftState();
-      }
-      await loadDashboardData();
-      await showSuccess("Laporan dihapus", "Data laporan dan foto bukti sudah dihapus.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Laporan belum berhasil dihapus.";
-      await showError("Hapus gagal", message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleAdminLogin() {
-    if (!adminEmail.trim() || !adminPassword) {
-      await showError("Login admin belum lengkap", "Email dan password admin wajib diisi.");
-      return;
-    }
-
-    setAdminSubmitting(true);
-    try {
-      const session = await signInAdminAccount(adminEmail, adminPassword);
-      setAdminSession(session);
-      setAdminEmail("");
-      setAdminPassword("");
-      await showSuccess("Login berhasil", `Selamat datang, ${session.profile.fullName}.`);
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Login admin belum berhasil. Periksa email dan password.";
-      await showError("Login gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
-  }
-
-  async function handleAdminLogout() {
-    setAdminSubmitting(true);
-    try {
-      await signOutAdminAccount();
-      setAdminSession(null);
-      await showSuccess("Logout berhasil", "Sesi admin sudah ditutup.");
-    } catch (error) {
-      console.error(error);
-      await showError("Logout gagal", "Sesi admin belum berhasil ditutup.");
-    } finally {
-      setAdminSubmitting(false);
-    }
-  }
-
-  function changeAdminRule<K extends keyof ReportRules>(
-    key: K,
-    value: ReportRules[K],
-  ) {
-    setAdminRuleDraft((current) => normalizeReportRules({ ...current, [key]: value }));
-  }
-
-  function changeAdminReporterDraftName(reporterId: string, value: string) {
-    setAdminReporterDraftNames((current) => ({
-      ...current,
-      [reporterId]: value.toUpperCase(),
-    }));
-  }
-
-  async function handleSaveAdminRules() {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    setAdminSubmitting(true);
-    try {
-      const savedRules = await saveReportRulesToDatabase(adminRuleDraft);
-      setReportRules(savedRules);
-      setAdminRuleDraft(savedRules);
-      await showSuccess("Rules tersimpan", "Pengaturan laporan publik berhasil diperbarui.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Pengaturan rules belum berhasil disimpan.";
-      await showError("Simpan rules gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
-  }
-
-  function changeExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(
-    key: K,
-    value: ExcelTemplateUploadDraft[K],
-  ) {
-    setExcelTemplateDraft((current) => ({
-      ...current,
-      [key]: value,
-      templateName:
-        key === "cacheVersion" || key === "templateDate"
-          ? current.templateName.trim() === "" ||
-            current.templateName ===
-              buildAutoExcelTemplateName(
-                current.cacheVersion,
-                current.templateDate,
-              )
-            ? buildAutoExcelTemplateName(
-                key === "cacheVersion" ? String(value) : current.cacheVersion,
-                key === "templateDate" ? String(value) : current.templateDate,
-              )
-            : current.templateName
-          : key === "templateName"
-            ? String(value)
-            : current.templateName,
-    }));
-  }
-
-  function clearExcelTemplateDraftName() {
-    setExcelTemplateDraft((current) => ({
-      ...current,
-      templateName: "",
-    }));
-  }
-
-  function selectExcelTemplateFile(file: File | null) {
-    setSelectedExcelTemplateFile(file);
-  }
-
-  function changeAdminExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(
-    templateId: string,
-    key: K,
-    value: ExcelTemplateUploadDraft[K],
-  ) {
-    setAdminExcelTemplateDrafts((current) => {
-      const draft = current[templateId];
-
-      if (!draft) {
-        return current;
-      }
-
-      return {
-        ...current,
-        [templateId]: {
-          ...draft,
-          [key]: value,
-          templateName:
-            key === "templateName" ? String(value) : draft.templateName,
-          cacheVersion:
-            key === "cacheVersion" ? String(value) : draft.cacheVersion,
-          templateDate:
-            key === "templateDate" ? String(value) : draft.templateDate,
-        },
-      };
-    });
-  }
-
-  async function handleUploadExcelTemplate() {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    if (!selectedExcelTemplateFile) {
-      await showError("File template belum dipilih", "Pilih file .xlsx terlebih dahulu.");
-      return;
-    }
-
-    setExcelTemplateUploading(true);
-    try {
-      await uploadExcelReportTemplate(
-        selectedExcelTemplateFile,
-        excelTemplateDraft.templateName ||
-          buildAutoExcelTemplateName(
-            excelTemplateDraft.cacheVersion,
-            excelTemplateDraft.templateDate,
-          ),
-        excelTemplateDraft.cacheVersion,
-      );
-      setExcelTemplateDraft((current) => ({
-        ...current,
-        templateName: buildAutoExcelTemplateName(
-          current.cacheVersion,
-          current.templateDate,
-        ),
-      }));
-      setSelectedExcelTemplateFile(null);
-      await loadDashboardData();
-      await showSuccess(
-        "Template Excel tersimpan",
-        "Template berhasil diupload. Aktifkan template yang ingin dipakai untuk export.",
-      );
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Template Excel belum berhasil diupload.";
-      await showError("Upload template gagal", message);
-    } finally {
-      setExcelTemplateUploading(false);
-    }
-  }
-
-  async function handleActivateExcelTemplate(templateId: string) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    setAdminSubmitting(true);
-    try {
-      await activateExcelReportTemplate(templateId);
-      await loadDashboardData();
-      await showSuccess(
-        "Template Excel aktif",
-        "Template terpilih sekarang dipakai sebagai master export Excel.",
-      );
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Template Excel belum berhasil diaktifkan.";
-      await showError("Aktivasi template gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
-  }
-
-  async function handleRenameExcelTemplate(template: ExcelReportTemplate) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    const draft = adminExcelTemplateDrafts[template.id] ?? {
-      templateName: template.templateName,
-      templateDate: template.createdAt.slice(0, 10),
-      cacheVersion: template.cacheVersion,
-    };
-
-    const nextName = draft.templateName.trim();
-    const nextVersion = draft.cacheVersion.trim() || "v1";
-
-    if (
-      nextName === template.templateName &&
-      nextVersion === template.cacheVersion
-    ) {
-      await showInfo("Tidak ada perubahan", "Metadata template Excel belum berubah.");
-      return;
-    }
-
-    setAdminSubmitting(true);
-    try {
-      await updateExcelReportTemplateMetadata(
-        template.id,
-        nextName,
-        nextVersion,
-      );
-      await loadDashboardData();
-      await showSuccess("Template diperbarui", "Metadata template Excel berhasil disimpan.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Metadata template Excel belum berhasil disimpan.";
-      await showError("Simpan template gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
-  }
-
-  async function handleDeleteExcelTemplate(template: ExcelReportTemplate) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      "Hapus template Excel?",
-      `Template ${template.templateName} akan dihapus dari database dan storage.`,
-      "Hapus template",
-    );
-
-    if (!confirmed) return;
-
-    setAdminSubmitting(true);
-    try {
-      await deleteExcelReportTemplate(template);
-      await loadDashboardData();
-      await showSuccess("Template dihapus", "Template Excel sudah dihapus.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Template Excel belum berhasil dihapus.";
-      await showError("Hapus template gagal", message);
-    } finally {
-      setAdminSubmitting(false);
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    if (await askConfirmation("Hapus laporan?", `Laporan ${report.nama} akan dihapus permanen.`, "Hapus laporan")) {
+      setSubmitting(true);
+      try {
+        await deleteReportFromDatabase(report);
+        if (loadedSearchReportId === report.id) resetDraftState();
+        await loadDashboardData();
+        await showSuccess("Laporan dihapus", "Data sudah dihapus.");
+      } catch (err) { console.error(err); await showError("Hapus gagal", "Laporan belum berhasil dihapus."); }
+      finally { setSubmitting(false); }
     }
   }
 
   async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    const nextName = adminReporterDraftNames[reporter.id]?.trim().toUpperCase() ?? reporter.fullName;
+    if (!nextName) { await showError("Nama belum valid", "Nama tidak boleh kosong."); return; }
+    if (nextName === reporter.fullName) { await showInfo("Tidak ada perubahan", "Nama belum berubah."); return; }
 
-    const nextName =
-      adminReporterDraftNames[reporter.id]?.trim().toUpperCase() ?? reporter.fullName;
-
-    if (!nextName) {
-      await showError("Nama belum valid", "Nama pengguna publik wajib diisi.");
-      return;
-    }
-
-    if (nextName === reporter.fullName) {
-      await showInfo("Tidak ada perubahan", "Nama pengguna publik belum berubah.");
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      "Ubah data pengguna publik?",
-      `Semua laporan atas nama ${reporter.fullName} akan disesuaikan menjadi ${nextName}.`,
-      "Simpan perubahan",
-    );
-
-    if (!confirmed) return;
-
-    setAdminSubmitting(true);
-    try {
-      await renameReporterDirectoryProfile(reporter.id, nextName);
-      if (draft.nama.trim().toUpperCase() === reporter.fullName) {
-        setDraft((current) => normalizeDraft({ ...current, nama: nextName }));
-      }
-      await loadDashboardData();
-      await showSuccess("Data pengguna diperbarui", "Nama pengguna publik dan laporan terkait sudah disesuaikan.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Data pengguna publik belum berhasil diperbarui.";
-      await showError("Simpan gagal", message);
-    } finally {
-      setAdminSubmitting(false);
+    if (await askConfirmation("Ubah data pengguna?", `Laporan ${reporter.fullName} akan diubah menjadi ${nextName}.`, "Simpan perubahan")) {
+      setAdminSubmitting(true);
+      setAdminActiveAction("rename-reporter");
+      setAdminActiveItemId(reporter.id);
+      try {
+        await renameReporterDirectoryProfile(reporter.id, nextName);
+        await loadDashboardData();
+        await showSuccess("Profil diperbarui", "Nama dan laporannya sudah disesuaikan.");
+      } catch (err) { console.error(err); await showError("Rename gagal", "Gagal mengubah profil."); }
+      finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
     }
   }
 
   async function handleDeleteReporterTrace(reporter: ReporterDirectoryProfile) {
-    if (!adminSession) {
-      await showError("Akses admin diperlukan", "Silakan login admin terlebih dahulu.");
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      "Hapus jejak pengguna publik?",
-      `Nama ${reporter.fullName}, status, laporan, dan foto bukti terkait akan dihapus permanen.`,
-      "Hapus permanen",
-    );
-
-    if (!confirmed) return;
-
-    setAdminSubmitting(true);
-    try {
-      await deleteReporterDirectoryTrace(reporter.id);
-      if (draft.nama.trim().toUpperCase() === reporter.fullName) {
-        resetDraftState();
-      }
-      await loadDashboardData();
-      await showSuccess("Jejak pengguna dihapus", "Data pengguna publik dan laporan terkait sudah dihapus.");
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Jejak pengguna publik belum berhasil dihapus.";
-      await showError("Hapus gagal", message);
-    } finally {
-      setAdminSubmitting(false);
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    if (await askConfirmation("Hapus jejak pengguna?", `Data ${reporter.fullName} akan dihapus permanen.`, "Hapus permanen")) {
+      setAdminSubmitting(true);
+      setAdminActiveAction("delete-reporter");
+      setAdminActiveItemId(reporter.id);
+      try {
+        await deleteReporterDirectoryTrace(reporter.id);
+        if (draft.nama.trim().toUpperCase() === reporter.fullName) resetDraftState();
+        await loadDashboardData();
+        await showSuccess("Jejak dihapus", "Data sudah dihapus.");
+      } catch (err) { console.error(err); await showError("Hapus gagal", "Gagal menghapus jejak."); }
+      finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
     }
   }
 
-  function changeAdminTemplateApproverDraft<
-    K extends keyof ReportTemplateApproverDraft,
-  >(
-    role: ReportTemplateApproverRole,
-    key: K,
-    value: ReportTemplateApproverDraft[K],
-  ) {
-    setAdminTemplateApproverDrafts((current) => ({
-      ...current,
-      [role]: {
-        ...current[role],
-        [key]:
-          typeof value === "string" ? value.toUpperCase() : (value as string),
-      },
-    }));
+  async function handleAdminLogin() {
+    if (!adminEmail.trim() || !adminPassword) { await showError("Data tidak lengkap", "Email and password wajib diisi."); return; }
+    setAdminSubmitting(true);
+    setAdminActiveAction("login");
+    try {
+      const sess = await signInAdminAccount(adminEmail, adminPassword);
+      setAdminSession(sess);
+      setAdminEmail(""); 
+      setAdminPassword("");
+      await showSuccess("Login berhasil", `Selamat datang, ${sess.profile.fullName}.`);
+    } catch (err) { console.error(err); await showError("Login gagal", "Periksa email and password."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); }
+  }
+
+  async function handleAdminLogout() {
+    setAdminSubmitting(true);
+    setAdminActiveAction("logout");
+    try { await signOutAdminAccount(); setAdminSession(null); await showSuccess("Logout berhasil", "Sesi ditutup."); }
+    catch (err) { console.error(err); await showError("Logout gagal", "Sesi belum ditutup."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); }
+  }
+
+  function changeAdminRule<K extends keyof ReportRules>(key: K, value: ReportRules[K]) {
+    setAdminRuleDraft(c => normalizeReportRules({ ...c, [key]: value }));
+  }
+
+  function changeAdminReporterDraftName(reporterId: string, value: string) {
+    setAdminReporterDraftNames(c => ({ ...c, [reporterId]: value.toUpperCase() }));
+  }
+
+  async function handleSaveAdminRules() {
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    setAdminSubmitting(true);
+    setAdminActiveAction("save-rules");
+    try {
+      const saved = await saveReportRulesToDatabase(adminRuleDraft);
+      setReportRules(saved);
+      setAdminRuleDraft(saved);
+      await showSuccess("Rules tersimpan", "Pengaturan diperbarui.");
+    } catch (err) { console.error(err); await showError("Simpan rules gagal", "Gagal menyimpan rules."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); }
+  }
+
+  function changeExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(key: K, value: ExcelTemplateUploadDraft[K]) {
+    setExcelTemplateDraft(c => {
+      const n = { ...c, [key]: value };
+      if (key === "cacheVersion" || key === "templateDate") {
+        const auto = buildAutoExcelTemplateName(c.cacheVersion, c.templateDate);
+        if (c.templateName.trim() === "" || c.templateName === auto) {
+          n.templateName = buildAutoExcelTemplateName(key === "cacheVersion" ? String(value) : c.cacheVersion, key === "templateDate" ? String(value) : c.templateDate);
+        }
+      }
+      return n;
+    });
+  }
+
+  function clearExcelTemplateDraftName() { setExcelTemplateDraft(c => ({ ...c, templateName: "" })); }
+  function selectExcelTemplateFile(f: File | null) { setSelectedExcelTemplateFile(f); }
+
+  function changeAdminExcelTemplateDraft<K extends keyof ExcelTemplateUploadDraft>(id: string, key: K, value: ExcelTemplateUploadDraft[K]) {
+    setAdminExcelTemplateDrafts(c => {
+      const d = c[id];
+      if (!d) return c;
+      return { ...c, [id]: { ...d, [key]: value }};
+    });
+  }
+
+  async function handleUploadExcelTemplate() {
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    if (!selectedExcelTemplateFile) { await showError("File belum dipilih", "Pilih file .xlsx."); return; }
+    setExcelTemplateUploading(true);
+    try {
+      await uploadExcelReportTemplate(selectedExcelTemplateFile, excelTemplateDraft.templateName || buildAutoExcelTemplateName(excelTemplateDraft.cacheVersion, excelTemplateDraft.templateDate), excelTemplateDraft.cacheVersion);
+      setExcelTemplateDraft(c => ({ ...c, templateName: buildAutoExcelTemplateName(c.cacheVersion, c.templateDate) }));
+      setSelectedExcelTemplateFile(null);
+      await loadDashboardData();
+      await showSuccess("Template tersimpan", "Berhasil diupload.");
+    } catch (err) { console.error(err); await showError("Upload gagal", "Gagal mengupload template."); }
+    finally { setExcelTemplateUploading(false); }
+  }
+
+  async function handleActivateExcelTemplate(id: string) {
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    setAdminSubmitting(true);
+    setAdminActiveAction("activate-excel-template");
+    setAdminActiveItemId(id);
+    try { await activateExcelReportTemplate(id); await loadDashboardData(); await showSuccess("Template aktif", "Berhasil diaktifkan."); }
+    catch (err) { console.error(err); await showError("Aktivasi gagal", "Gagal mengaktifkan template."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
+  }
+
+  async function handleRenameExcelTemplate(template: ExcelReportTemplate) {
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    const d = adminExcelTemplateDrafts[template.id] ?? { templateName: template.templateName, templateDate: template.createdAt.slice(0, 10), cacheVersion: template.cacheVersion };
+    const name = d.templateName.trim();
+    const ver = d.cacheVersion.trim() || "v1";
+    if (name === template.templateName && ver === template.cacheVersion) { await showInfo("Tidak ada perubahan", "Metadata belum berubah."); return; }
+    setAdminSubmitting(true);
+    setAdminActiveAction("rename-excel-template");
+    setAdminActiveItemId(template.id);
+    try { await updateExcelReportTemplateMetadata(template.id, name, ver); await loadDashboardData(); await showSuccess("Template diperbarui", "Berhasil disimpan."); }
+    catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan metadata."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
+  }
+
+  async function handleDeleteExcelTemplate(template: ExcelReportTemplate) {
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
+    if (await askConfirmation("Hapus template?", `Template ${template.templateName} akan dihapus permanently.`, "Hapus template")) {
+      setAdminSubmitting(true);
+      setAdminActiveAction("delete-excel-template");
+      setAdminActiveItemId(template.id);
+      try { await deleteExcelReportTemplate(template); await loadDashboardData(); await showSuccess("Template dihapus", "Berhasil dihapus."); }
+      catch (err) { console.error(err); await showError("Hapus gagal", "Gagal menghapus template."); }
+      finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
+    }
+  }
+
+  function changeAdminTemplateApproverDraft<K extends keyof ReportTemplateApproverDraft>(role: ReportTemplateApproverRole, key: K, value: ReportTemplateApproverDraft[K]) {
+    setAdminTemplateApproverDrafts(c => ({ ...c, [role]: { ...c[role], [key]: typeof value === "string" ? value.toUpperCase() : value }}));
   }
 
   async function handleSaveTemplateApproverDefaults() {
-    if (!adminSession) {
-      await showError(
-        "Akses admin diperlukan",
-        "Silakan login admin terlebih dahulu.",
-      );
-      return;
-    }
-
-    if (!activeReportTemplateConfig) {
-      await showError(
-        "Template laporan belum tersedia",
-        "Template laporan aktif belum ditemukan di database.",
-      );
-      return;
-    }
-
+    if (!adminSession || !activeReportTemplateConfig) { await showError("Error", "Missing session or config."); return; }
     setAdminSubmitting(true);
+    setAdminActiveAction("save-template-approvers");
     try {
-      const nextTemplate = await saveTemplateApproverDefaults(
-        activeReportTemplateConfig.id,
-        adminTemplateApproverDrafts,
-      );
-
-      setActiveReportTemplateConfig(nextTemplate);
-      setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(nextTemplate));
-      setDraft((current) => {
-        if (hasMeaningfulDraft(current) || current.nama.trim()) {
-          return current;
-        }
-
-        return createEmptyDraft(nextTemplate);
-      });
+      const next = await saveTemplateApproverDefaults(activeReportTemplateConfig.id, adminTemplateApproverDrafts);
+      setActiveReportTemplateConfig(next);
+      setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(next));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(next));
       await loadDashboardData();
-      await showSuccess(
-        "Default pejabat diperbarui",
-        "Form laporan sekarang mengikuti template pejabat terbaru.",
-      );
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Default pejabat template belum berhasil disimpan.";
-      await showError("Simpan default pejabat gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
+      await showSuccess("Pejabat diperbarui", "Berhasil disimpan.");
+    } catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
-  function changeNotificationSettings<K extends keyof NotificationSettings>(
-    key: K,
-    value: NotificationSettings[K],
-  ) {
-    setNotificationSettings((current) => ({
-      ...current,
-      [key]: value,
-    }));
+  function changeNotificationSettings<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
+    setNotificationSettings(c => ({ ...c, [key]: value }));
   }
 
   async function handleSaveNotificationSettings() {
-    if (!adminSession) {
-      await showError(
-        "Akses admin diperlukan",
-        "Silakan login admin terlebih dahulu.",
-      );
-      return;
-    }
-
+    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
     setAdminSubmitting(true);
+    setAdminActiveAction("save-notification-settings");
     try {
-      const nextSettings =
-        await saveNotificationSettingsToDatabase(notificationSettings);
-      setNotificationSettings(nextSettings);
-      setRuntimeNotificationSettings(nextSettings);
-      persistNotificationSettings(nextSettings);
-      await showSuccess(
-        "Pengaturan notifikasi diperbarui",
-        "Aturan suara alert global sudah disimpan ke database.",
-      );
-    } catch (error) {
-      console.error(error);
-      const message =
-        typeof error === "object" &&
-        error !== null &&
-        "message" in error &&
-        typeof error.message === "string"
-          ? error.message
-          : "Pengaturan notifikasi belum berhasil disimpan.";
-      await showError("Simpan notifikasi gagal", message);
-    } finally {
-      setAdminSubmitting(false);
-    }
+      const next = await saveNotificationSettingsToDatabase(notificationSettings);
+      setNotificationSettings(next);
+      setRuntimeNotificationSettings(next);
+      persistNotificationSettings(next);
+      await showSuccess("Notifikasi diperbarui", "Berhasil disimpan.");
+    } catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan notifikasi."); }
+    finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
+  async function handleReloadDashboardData() { await loadDashboardData(); }
+
   return {
-    view,
-    setView,
-    paperFormat,
-    setPaperFormat,
-    draft,
-    reports,
-    reporterProfiles,
-    activeReportTemplateConfig,
-    notificationSettings,
-    excelTemplates,
-    activeExcelTemplate,
-    excelTemplateDraft,
-    selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
-    adminExcelTemplateDrafts,
-    excelTemplateUploading,
-    excelExportingReportId,
-    editLoadingReportId,
-    savedNames: deviceSubmittedNames,
-    reporterNames,
-    historyName,
-    setHistoryName,
-    historyDate,
-    setHistoryDate,
-    searchName,
-    setSearchName,
-    searchDate,
-    setSearchDate,
-    loading,
-    submitting,
-    pendingPreviews,
-    similarName,
-    nameCheckLoading,
-    nameExistsInDirectory,
-    reportRules,
-    adminSession,
-    adminEmail,
-    setAdminEmail,
-    adminPassword,
-    setAdminPassword,
-    adminAuthLoading,
-    adminSubmitting,
-    adminRuleDraft,
-    adminTemplateApproverDrafts,
-    adminReporterDraftNames,
+    view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
+    activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
+    excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
+    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, editLoadingReportId,
+    savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
+    historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
+    loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
+    reportRules, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
+    adminAuthLoading, adminSubmitting, adminActiveAction, adminActiveItemId, adminRuleDraft,
+    adminTemplateApproverDrafts, adminReporterDraftNames,
     canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
     canManageReports: Boolean(adminSession),
-    duplicateReport,
-    activityTimeIssues,
-    activityCompletionStates,
-    preview,
-    historyResults,
-    searchResult,
-    searchResultLoaded,
-    searchResultCanReload,
-    searchResultNeedsReload,
-    statusRows,
-    hasDraftContent,
-    draftSavedAt,
-    draftCacheStatus,
-    searchOpen,
-    setSearchOpen,
-    change,
-    changeActivity,
-    addActivity,
-    removeActivity,
-    setActivityFiles,
-    clearActivityFiles,
-    restoreActivityFiles,
-    editableOriginalPhotos,
-    handleDeleteReport,
-    handleLoadEdit,
-    handleResetDraft,
-    handleExport,
-    handlePrint,
-    saveReport,
-    handleRemoveSavedName,
-    changeAdminRule,
-    changeNotificationSettings,
-    changeAdminTemplateApproverDraft,
-    changeExcelTemplateDraft,
-    clearExcelTemplateDraftName,
-    selectExcelTemplateFile,
-    changeAdminExcelTemplateDraft,
-    changeAdminReporterDraftName,
-    handleAdminLogin,
-    handleAdminLogout,
-    handleDeleteReporterTrace,
-    handleUploadExcelTemplate,
-    handleActivateExcelTemplate,
-    handleRenameExcelTemplate,
-    handleDeleteExcelTemplate,
-    handleRenameReporterProfile,
-    handleSaveAdminRules,
-    handleSaveTemplateApproverDefaults,
-    handleSaveNotificationSettings,
-    isEditLoading: editLoadingReportId !== null,
+    duplicateReport, activityTimeIssues, activityCompletionStates, preview, historyResults,
+    searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,
+    hasDraftContent, draftSavedAt, draftCacheStatus, searchOpen, setSearchOpen,
+    change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
+    restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
+    handleResetDraft, handleReloadDashboardData, handleExport, handlePrint, saveReport,
+    handleRemoveSavedName, changeAdminRule, changeNotificationSettings,
+    changeAdminTemplateApproverDraft, changeExcelTemplateDraft, clearExcelTemplateDraftName,
+    selectExcelTemplateFile, changeAdminExcelTemplateDraft, changeAdminReporterDraftName,
+    handleAdminLogin, handleAdminLogout, handleDeleteReporterTrace, handleUploadExcelTemplate,
+    handleActivateExcelTemplate, handleRenameExcelTemplate, handleDeleteExcelTemplate,
+    handleRenameReporterProfile, handleSaveAdminRules, handleSaveTemplateApproverDefaults,
+    handleSaveNotificationSettings, isEditLoading: editLoadingReportId !== null,
   };
 }
