@@ -1,5 +1,6 @@
 import type { ExcelReportTemplate } from "../types/excel-template";
 import { supabase } from "./supabase";
+import { logSafeError, logSafeWarn } from "./logger";
 import { getWitaToday } from "./time";
 
 const EXCEL_TEMPLATE_BUCKET = "report-excel-templates";
@@ -70,7 +71,7 @@ export async function fetchExcelReportTemplates() {
 
   if (error) {
     if (error.code === "42P01") {
-      console.warn(
+      logSafeWarn(
         "Tabel excel_report_templates belum tersedia, lewati fitur template Excel.",
         error,
       );
@@ -205,6 +206,6 @@ export async function deleteExcelReportTemplate(template: ExcelReportTemplate) {
     .remove([template.storagePath]);
 
   if (removeStorageError) {
-    console.error("Metadata template terhapus, tetapi file storage belum terhapus.", removeStorageError);
+    logSafeError(removeStorageError, "Library/DeleteExcelStorage");
   }
 }

@@ -64,6 +64,7 @@ import {
   setRuntimeNotificationSettings,
   saveNotificationSettings as persistNotificationSettings,
 } from "../lib/sound-utils";
+import { logSafeError } from "../lib/logger";
 import {
   clearDraft,
   loadCachedReporterNames,
@@ -313,7 +314,7 @@ export function useReportDashboard() {
 
   useEffect(() => {
     const activeTemplate = excelTemplates.find((t) => t.isActive) ?? null;
-    void warmUpExcelTemplateCache(activeTemplate).catch((err) => console.error(err));
+    void warmUpExcelTemplateCache(activeTemplate).catch((err) => logSafeError(err, "Dashboard/Cache"));
   }, [excelTemplates]);
 
   useEffect(() => {
@@ -345,7 +346,7 @@ export function useReportDashboard() {
       if (!alive) return;
       setAdminSession(session);
     }).catch(err => {
-      console.error(err);
+      logSafeError(err, "Dashboard/AdminAuth");
       if (alive) setAdminSession(null);
     }).finally(() => { if (alive) setAdminAuthLoading(false); });
 
@@ -403,7 +404,7 @@ export function useReportDashboard() {
     const t = window.setTimeout(() => {
       void checkReporterNameExists(draft.nama)
         .then(exists => setNameExistsInDirectory(exists))
-        .catch(err => { console.error(err); setNameExistsInDirectory(null); })
+        .catch(err => { logSafeError(err, "Dashboard/NameCheck"); setNameExistsInDirectory(null); })
         .finally(() => setNameCheckLoading(false));
     }, 350);
     return () => window.clearTimeout(t);
@@ -446,7 +447,7 @@ export function useReportDashboard() {
       saveCachedReporterNames(dbRN);
       setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(dbATC));
     } catch (err) {
-      console.error(err);
+      logSafeError(err, "Dashboard/LoadData");
       setReportRules(DEFAULT_REPORT_RULES);
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
         await showError("Database belum tersedia", "Data database belum bisa dimuat.");
@@ -621,12 +622,12 @@ export function useReportDashboard() {
     try {
       await generateDailyReportExcel({ report, template: activeExcelTemplate, pendingPhotos: report.id === "preview" ? pendingPhotos : undefined, onStage: (s, d) => toast.update(s, d) });
       toast.close();
-    } catch (err) { console.error(err); await showError("Export Excel gagal", "Terjadi masalah saat membuat file Excel."); }
+    } catch (err) { logSafeError(err, "Dashboard/Export"); await showError("Export Excel gagal", "Terjadi masalah saat membuat file Excel."); }
     finally { setExcelExportingReportId(null); }
   }
 
   async function handlePrint(report: Report) {
-    try { await printReportDocument(report, paperFormat); } catch (err) { console.error(err); await showError("Print gagal", "Dokumen belum berhasil dibuka."); }
+    try { await printReportDocument(report, paperFormat); } catch (err) { logSafeError(err, "Dashboard/Print"); await showError("Print gagal", "Dokumen belum berhasil dibuka."); }
   }
 
   async function saveReport() {
@@ -647,7 +648,7 @@ export function useReportDashboard() {
         resetDraftState();
         await showSuccess("Laporan tersimpan", isWitaFriday(draft.reportDate) ? "terimakasih atas kerja keras anda. sampai jumpa hari senin." : "terimakasih atas kerja keras anda. sampai jumpa besok");
       } catch (err) {
-        console.error(err);
+        logSafeError(err, "Dashboard/SaveReport");
         const msg = (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") ? err.message : "Gagal menyimpan laporan.";
         await showError("Simpan gagal", msg);
       } finally { setSubmitting(false); }
@@ -663,7 +664,7 @@ export function useReportDashboard() {
         if (loadedSearchReportId === report.id) resetDraftState();
         await loadDashboardData();
         await showSuccess("Laporan dihapus", "Data sudah dihapus.");
-      } catch (err) { console.error(err); await showError("Hapus gagal", "Laporan belum berhasil dihapus."); }
+      } catch (err) { logSafeError(err, "Dashboard/DeleteReport"); await showError("Hapus gagal", "Laporan belum berhasil dihapus."); }
       finally { setSubmitting(false); }
     }
   }
@@ -713,7 +714,7 @@ export function useReportDashboard() {
       setAdminEmail(""); 
       setAdminPassword("");
       await showSuccess("Login berhasil", `Selamat datang, ${sess.profile.fullName}.`);
-    } catch (err) { console.error(err); await showError("Login gagal", "Periksa email and password."); }
+    } catch (err) { logSafeError(err, "Dashboard/AdminLogin"); await showError("Login gagal", "Periksa email and password."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
@@ -721,7 +722,7 @@ export function useReportDashboard() {
     setAdminSubmitting(true);
     setAdminActiveAction("logout");
     try { await signOutAdminAccount(); setAdminSession(null); await showSuccess("Logout berhasil", "Sesi ditutup."); }
-    catch (err) { console.error(err); await showError("Logout gagal", "Sesi belum ditutup."); }
+    catch (err) { logSafeError(err, "Dashboard/AdminLogout"); await showError("Logout gagal", "Sesi belum ditutup."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
@@ -742,7 +743,7 @@ export function useReportDashboard() {
       setReportRules(saved);
       setAdminRuleDraft(saved);
       await showSuccess("Rules tersimpan", "Pengaturan diperbarui.");
-    } catch (err) { console.error(err); await showError("Simpan rules gagal", "Gagal menyimpan rules."); }
+    } catch (err) { logSafeError(err, "Dashboard/SaveRules"); await showError("Simpan rules gagal", "Gagal menyimpan rules."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
@@ -780,7 +781,7 @@ export function useReportDashboard() {
       setSelectedExcelTemplateFile(null);
       await loadDashboardData();
       await showSuccess("Template tersimpan", "Berhasil diupload.");
-    } catch (err) { console.error(err); await showError("Upload gagal", "Gagal mengupload template."); }
+    } catch (err) { logSafeError(err, "Dashboard/UploadExcel"); await showError("Upload gagal", "Gagal mengupload template."); }
     finally { setExcelTemplateUploading(false); }
   }
 
@@ -790,7 +791,7 @@ export function useReportDashboard() {
     setAdminActiveAction("activate-excel-template");
     setAdminActiveItemId(id);
     try { await activateExcelReportTemplate(id); await loadDashboardData(); await showSuccess("Template aktif", "Berhasil diaktifkan."); }
-    catch (err) { console.error(err); await showError("Aktivasi gagal", "Gagal mengaktifkan template."); }
+    catch (err) { logSafeError(err, "Dashboard/ActivateExcel"); await showError("Aktivasi gagal", "Gagal mengaktifkan template."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
   }
 
@@ -804,7 +805,7 @@ export function useReportDashboard() {
     setAdminActiveAction("rename-excel-template");
     setAdminActiveItemId(template.id);
     try { await updateExcelReportTemplateMetadata(template.id, name, ver); await loadDashboardData(); await showSuccess("Template diperbarui", "Berhasil disimpan."); }
-    catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan metadata."); }
+    catch (err) { logSafeError(err, "Dashboard/RenameExcel"); await showError("Simpan gagal", "Gagal menyimpan metadata."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
   }
 
@@ -815,7 +816,7 @@ export function useReportDashboard() {
       setAdminActiveAction("delete-excel-template");
       setAdminActiveItemId(template.id);
       try { await deleteExcelReportTemplate(template); await loadDashboardData(); await showSuccess("Template dihapus", "Berhasil dihapus."); }
-      catch (err) { console.error(err); await showError("Hapus gagal", "Gagal menghapus template."); }
+      catch (err) { logSafeError(err, "Dashboard/DeleteExcel"); await showError("Hapus gagal", "Gagal menghapus template."); }
       finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
     }
   }
@@ -835,7 +836,7 @@ export function useReportDashboard() {
       setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(next));
       await loadDashboardData();
       await showSuccess("Pejabat diperbarui", "Berhasil disimpan.");
-    } catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }
+    } catch (err) { logSafeError(err, "Dashboard/SaveApprovers"); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
@@ -853,7 +854,7 @@ export function useReportDashboard() {
       setRuntimeNotificationSettings(next);
       persistNotificationSettings(next);
       await showSuccess("Notifikasi diperbarui", "Berhasil disimpan.");
-    } catch (err) { console.error(err); await showError("Simpan gagal", "Gagal menyimpan notifikasi."); }
+    } catch (err) { logSafeError(err, "Dashboard/SaveNotification"); await showError("Simpan gagal", "Gagal menyimpan notifikasi."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 

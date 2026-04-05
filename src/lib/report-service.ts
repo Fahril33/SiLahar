@@ -3,6 +3,7 @@ import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
 import { supabase } from "./supabase";
+import { logSafeError, logSafeWarn } from "./logger";
 import { mapReportRow } from "./report-mappers";
 import type {
   DraftReport,
@@ -225,7 +226,7 @@ export async function fetchReportRules() {
   const { data, error } = await supabase.rpc("get_report_rules");
 
   if (error) {
-    console.warn("Gagal memuat report_rules dari database, memakai fallback lokal.", error);
+    logSafeWarn("Gagal memuat report_rules dari database, memakai fallback lokal.", error);
     return DEFAULT_REPORT_RULES;
   }
 
@@ -259,7 +260,7 @@ export async function fetchNotificationSettings() {
   const { data, error } = await supabase.rpc("get_notification_settings");
 
   if (error) {
-    console.warn(
+    logSafeWarn(
       "Gagal memuat notification_settings dari database, memakai fallback lokal.",
       error,
     );
@@ -389,7 +390,7 @@ export function subscribeAdminSession(
     void fetchAdminProfile(session.user.id)
       .then((profile) => onChange({ session, user: session.user, profile }))
       .catch((error) => {
-        console.error(error);
+        logSafeError(error, "Auth/ProfileSubscription");
         onChange(null);
       });
   });
