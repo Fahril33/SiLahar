@@ -321,8 +321,8 @@ export function EntryView(props: EntryViewProps) {
 
   const hClass =
     props.navbarPosition === "top" || !props.navbarPosition
-      ? "lg:h-[calc(100vh-9.25rem)]"
-      : "lg:h-[calc(100vh-4rem)]";
+      ? "lg:h-[calc(100vh-8rem)]"
+      : "lg:h-[calc(100vh-2.2rem)]";
 
   return (
     <section
