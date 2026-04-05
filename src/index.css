@@ -188,12 +188,160 @@ select:focus {
   }
 }
 
+.swal-modern-popup {
+  width: min(28rem, calc(100vw - 2rem));
+  border-radius: 24px;
+  padding: 1.15rem 1.15rem 1rem;
+  background: var(--surface-panel-strong);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 22px 60px rgba(17, 24, 39, 0.18);
+}
+
+.swal-modern-toast {
+  width: min(22rem, calc(100vw - 1rem));
+  border-radius: 18px;
+  padding: 0.75rem 0.85rem;
+  background: color-mix(in srgb, var(--surface-panel-strong) 96%, white);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 14px 34px rgba(17, 24, 39, 0.14);
+}
+
+.swal-progress-toast {
+  padding-right: 1rem;
+}
+
+.swal-progress-toast .swal2-icon {
+  transform: scale(0.98);
+  margin: 0.4rem 0.55rem 0.4rem 0.2rem !important;
+}
+
+.swal-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-top: 0.1rem;
+}
+
+.swal-progress-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  opacity: 0.72;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.swal-progress-row.is-active,
+.swal-progress-row.is-done {
+  opacity: 1;
+}
+
+.swal-progress-row.is-active {
+  transform: translateX(1px);
+}
+
+.swal-progress-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  margin-top: 0.1rem;
+  border-radius: 999px;
+}
+
+.swal-progress-indicator-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 80%, transparent);
+}
+
+.swal-progress-indicator-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--primary) 18%, transparent);
+  border-top-color: var(--primary);
+  animation: swal-progress-spin 0.78s linear infinite;
+}
+
+.swal-progress-indicator-icon {
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--success);
+}
+
+.swal-progress-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.swal-progress-label {
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.swal-progress-detail {
+  margin-top: 0.12rem;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+@keyframes swal-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.swal-dialog-title {
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.swal-dialog-text {
+  color: var(--text-muted);
+  font-size: 0.93rem;
+  line-height: 1.6;
+}
+
+.swal-dialog-icon {
+  transform: scale(0.88);
+  margin-top: 0.1rem;
+  margin-bottom: 0.35rem;
+}
+
+.swal-toast-title {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.swal-toast-text {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.swal-toast-icon {
+  transform: scale(0.78);
+  margin: 0.15rem 0.35rem 0.15rem 0.1rem !important;
+}
+
 .swal-confirm,
 .swal-cancel {
   border: 0;
   border-radius: 999px;
-  padding: 0.85rem 1.25rem;
+  padding: 0.72rem 1.15rem;
   font-weight: 600;
+  font-size: 0.9rem;
 }
 
 .swal-confirm {

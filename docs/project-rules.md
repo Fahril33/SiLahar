@@ -10,6 +10,10 @@
 - Setiap perubahan database ditambahkan pada file SQL baru dengan nomor urut di depan nama file.
 - Struktur data harus relasional, modular, rapi, dan menghindari duplikasi.
 - Data tertentu harus dipertimbangkan sejak awal agar nantinya mudah diubah oleh admin.
+- Default pejabat penandatangan form tidak boleh hard-coded di client; sumber utamanya harus dari template aktif di database.
+- Snapshot pejabat yang dipakai saat submit tetap harus tersimpan di setiap laporan, sekaligus menyimpan referensi ke default template pejabat yang menjadi sumbernya.
+- Perubahan template aktif tidak boleh menghapus progres form user yang sedang terbuka; refresh template harus menjaga draft tetap aman.
+- Aturan notifikasi / suara global yang mempengaruhi semua user harus bersumber dari database, bukan hanya local storage browser.
 - Pengaturan admin dilakukan dari halaman Admin setelah login Supabase Auth dan tetap divalidasi oleh RLS.
 - Zona waktu aplikasi adalah WITA / `Asia/Makassar`.
 - Laporan default-nya mengikuti hari berjalan, tetapi admin bisa membuka sementara CRUD semua tanggal lewat `report_rules.allow_any_report_date` di database.

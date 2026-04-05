@@ -6,6 +6,12 @@ import type {
   ExcelReportTemplate,
   ExcelTemplateUploadDraft,
 } from "../types/excel-template";
+import type {
+  ReportTemplateApproverDraft,
+  ReportTemplateApproverRole,
+  ReportTemplateConfig,
+} from "../types/report-template";
+import type { NotificationSettings } from "../types/notification-settings";
 import type { Report, ReporterDirectoryProfile } from "../types/report";
 import { AdminEditableListCard } from "./admin-editable-list-card";
 import { AdminReporterStatsView } from "./admin-reporter-stats-view";
@@ -15,13 +21,9 @@ import {
 } from "./admin-reporter-toolbar";
 import { FileUploadInput } from "./file-upload-input";
 import {
-  loadSoundSettings,
-  saveSoundSettings,
   SUCCESS_SOUNDS,
   FAIL_SOUNDS,
   playSound,
-  type AppSoundSettings,
-  type SoundMode,
 } from "../lib/sound-utils";
 
 const inputClassName = "field-input";
@@ -38,6 +40,12 @@ type AdminDashboardViewProps = {
   loading: boolean;
   adminSubmitting: boolean;
   adminRuleDraft: ReportRules;
+  activeReportTemplateConfig: ReportTemplateConfig | null;
+  notificationSettings: NotificationSettings;
+  adminTemplateApproverDrafts: Record<
+    ReportTemplateApproverRole,
+    ReportTemplateApproverDraft
+  >;
   excelTemplates: ExcelReportTemplate[];
   activeExcelTemplate: ExcelReportTemplate | null;
   excelTemplateDraft: ExcelTemplateUploadDraft;
@@ -55,6 +63,19 @@ type AdminDashboardViewProps = {
   onHandleAdminLogin: () => Promise<void>;
   onHandleAdminLogout: () => Promise<void>;
   onHandleSaveAdminRules: () => Promise<void>;
+  onChangeNotificationSettings: <K extends keyof NotificationSettings>(
+    key: K,
+    value: NotificationSettings[K],
+  ) => void;
+  onHandleSaveNotificationSettings: () => Promise<void>;
+  onChangeAdminTemplateApproverDraft: <
+    K extends keyof ReportTemplateApproverDraft,
+  >(
+    role: ReportTemplateApproverRole,
+    key: K,
+    value: ReportTemplateApproverDraft[K],
+  ) => void;
+  onHandleSaveTemplateApproverDefaults: () => Promise<void>;
   onChangeExcelTemplateDraft: <K extends keyof ExcelTemplateUploadDraft>(
     key: K,
     value: ExcelTemplateUploadDraft[K],
@@ -81,9 +102,11 @@ type AdminDashboardViewProps = {
 function AdminSectionTabs({
   activeSection,
   onChange,
+  includeSoundSettings,
 }: {
   activeSection: AdminSection;
   onChange: (section: AdminSection) => void;
+  includeSoundSettings: boolean;
 }) {
   return (
     <div className="inline-flex max-w-full overflow-x-auto whitespace-nowrap rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-1 scrollbar-hide">
@@ -91,7 +114,9 @@ function AdminSectionTabs({
         { key: "rules" as const, label: "Aturan laporan" },
         { key: "reporters" as const, label: "Kelola pengguna" },
         { key: "templates" as const, label: "Template Excel" },
-        { key: "sounds" as const, label: "Suara Alert" },
+        ...(includeSoundSettings
+          ? [{ key: "sounds" as const, label: "Suara Alert" }]
+          : []),
       ].map((section) => (
         <button
           key={section.key}
@@ -214,58 +239,204 @@ function AdminLoginCard(props: AdminDashboardViewProps) {
   );
 }
 
-function ReportRulesPanel(props: AdminDashboardViewProps) {
+function TemplateApproverCard(props: {
+  roleLabel: string;
+  accentClassName: string;
+  draft: ReportTemplateApproverDraft;
+  hideOfficialTitle?: boolean;
+  onChange: <K extends keyof ReportTemplateApproverDraft>(
+    key: K,
+    value: ReportTemplateApproverDraft[K],
+  ) => void;
+}) {
   return (
-    <div className="surface-card rounded-[24px] p-5">
-      <div className="space-y-4">
-        <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
-          <input
-            type="checkbox"
-            checked={props.adminRuleDraft.allowAnyReportDate}
-            onChange={(event) =>
-              props.onChangeAdminRule(
-                "allowAnyReportDate",
-                event.target.checked,
-              )
-            }
-            className="mt-1 h-5 w-5 accent-[var(--primary)]"
-          />
-          <div>
-            <p className="font-semibold text-[var(--text-primary)]">
-              Izinkan input laporan untuk tanggal mana pun
-            </p>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Jika dimatikan, publik hanya bisa mengisi hari berjalan.
-            </p>
-          </div>
-        </label>
+    <div className="surface-muted rounded-[24px] p-4">
+      <div className="mb-4 flex items-center gap-3">
+        <div
+          className={`flex h-11 w-11 items-center justify-center rounded-2xl text-sm font-bold ${props.accentClassName}`}
+        >
+          {props.roleLabel
+            .split(" ")
+            .map((part) => part[0] ?? "")
+            .join("")
+            .slice(0, 2)}
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+            Default form
+          </p>
+          <h4 className="text-base font-semibold text-[var(--text-primary)]">
+            {props.roleLabel}
+          </h4>
+        </div>
+      </div>
 
-        <label className="block space-y-2">
-          <span className="text-sm font-medium">
-            Maksimal foto per aktivitas
-          </span>
+      <div className="grid gap-3">
+        <label className="space-y-2">
+          <span className="text-sm font-medium">Label dokumen</span>
           <input
-            type="number"
-            min="1"
-            value={props.adminRuleDraft.maxPhotosPerActivity}
+            value={props.draft.scopeLabel}
             onChange={(event) =>
-              props.onChangeAdminRule(
-                "maxPhotosPerActivity",
-                Number(event.target.value),
-              )
+              props.onChange("scopeLabel", event.target.value)
             }
+            placeholder="Label pejabat"
             className={inputClassName}
           />
         </label>
+        <label className="space-y-2">
+          <span className="text-sm font-medium">Nama pejabat</span>
+          <input
+            value={props.draft.officialName}
+            onChange={(event) =>
+              props.onChange("officialName", event.target.value)
+            }
+            placeholder="Nama pejabat"
+            className={inputClassName}
+          />
+        </label>
+        {!props.hideOfficialTitle ? (
+          <label className="space-y-2">
+            <span className="text-sm font-medium">Jabatan / Pangkat</span>
+            <input
+              value={props.draft.officialTitle}
+              onChange={(event) =>
+                props.onChange("officialTitle", event.target.value)
+              }
+              placeholder="Opsional"
+              className={inputClassName}
+            />
+          </label>
+        ) : null}
+        <label className="space-y-2">
+          <span className="text-sm font-medium">NIP</span>
+          <input
+            value={props.draft.officialNip}
+            onChange={(event) =>
+              props.onChange("officialNip", event.target.value)
+            }
+            placeholder="Nomor induk pegawai"
+            className={inputClassName}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
 
-        <button
-          type="button"
-          onClick={() => void props.onHandleSaveAdminRules()}
-          disabled={props.adminSubmitting}
-          className="btn-primary w-full justify-center disabled:opacity-60"
-        >
-          {props.adminSubmitting ? "Menyimpan rules..." : "Simpan rules"}
-        </button>
+function ReportRulesPanel(props: AdminDashboardViewProps) {
+  return (
+    <div className="grid gap-4">
+      <div className="surface-card rounded-[24px] p-5">
+        <div className="space-y-4">
+          <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
+            <input
+              type="checkbox"
+              checked={props.adminRuleDraft.allowAnyReportDate}
+              onChange={(event) =>
+                props.onChangeAdminRule(
+                  "allowAnyReportDate",
+                  event.target.checked,
+                )
+              }
+              className="mt-1 h-5 w-5 accent-[var(--primary)]"
+            />
+            <div>
+              <p className="font-semibold text-[var(--text-primary)]">
+                Izinkan input laporan untuk tanggal mana pun
+              </p>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                Jika dimatikan, publik hanya bisa mengisi hari berjalan.
+              </p>
+            </div>
+          </label>
+
+          <label className="block space-y-2">
+            <span className="text-sm font-medium">
+              Maksimal foto per aktivitas
+            </span>
+            <input
+              type="number"
+              min="1"
+              value={props.adminRuleDraft.maxPhotosPerActivity}
+              onChange={(event) =>
+                props.onChangeAdminRule(
+                  "maxPhotosPerActivity",
+                  Number(event.target.value),
+                )
+              }
+              className={inputClassName}
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => void props.onHandleSaveAdminRules()}
+            disabled={props.adminSubmitting}
+            className="btn-primary w-full justify-center disabled:opacity-60"
+          >
+            {props.adminSubmitting ? "Menyimpan rules..." : "Simpan rules"}
+          </button>
+        </div>
+      </div>
+
+      <div className="surface-card rounded-[24px] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--text-primary)]">
+              Default pejabat form
+            </h3>
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              Nilai ini akan dipakai sebagai default form laporan dan direkam
+              sebagai snapshot saat laporan dibuat.
+            </p>
+          </div>
+          {props.activeReportTemplateConfig ? (
+            <div className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">
+              Template aktif: {props.activeReportTemplateConfig.templateName}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <TemplateApproverCard
+            roleLabel="Koordinator Tim"
+            accentClassName="bg-[var(--info-soft)] text-[var(--info)]"
+            draft={props.adminTemplateApproverDrafts.coordinator_team}
+            hideOfficialTitle
+            onChange={(key, value) =>
+              props.onChangeAdminTemplateApproverDraft(
+                "coordinator_team",
+                key,
+                value,
+              )
+            }
+          />
+          <TemplateApproverCard
+            roleLabel="Kepala Bidang"
+            accentClassName="bg-[var(--warning-soft)] text-[var(--warning)]"
+            draft={props.adminTemplateApproverDrafts.division_head}
+            onChange={(key, value) =>
+              props.onChangeAdminTemplateApproverDraft(
+                "division_head",
+                key,
+                value,
+              )
+            }
+          />
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => void props.onHandleSaveTemplateApproverDefaults()}
+            disabled={props.adminSubmitting || !props.activeReportTemplateConfig}
+            className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+          >
+            {props.adminSubmitting
+              ? "Menyimpan default..."
+              : "Simpan default pejabat"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -620,23 +791,28 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
   );
 }
 
-function SoundSettingsPanel() {
-  const [settings, setSettings] = useState<AppSoundSettings>(() => loadSoundSettings());
-
-  const handleUpdate = (type: "success" | "fail", key: "mode" | "specificFile", value: any) => {
-    const next = {
-      ...settings,
-      [type]: {
-        ...settings[type],
+function SoundSettingsPanel(props: {
+  notificationSettings: NotificationSettings;
+  adminSubmitting: boolean;
+  onChangeNotificationSettings: <K extends keyof NotificationSettings>(
+    key: K,
+    value: NotificationSettings[K],
+  ) => void;
+  onHandleSaveNotificationSettings: () => Promise<void>;
+}) {
+  const handleUpdate = (
+    type: "success" | "fail",
+    key: "mode" | "specificFile",
+    value: string,
+  ) => {
+    props.onChangeNotificationSettings(type, {
+      ...props.notificationSettings[type],
         [key]: value,
-      },
-    };
-    setSettings(next);
-    saveSoundSettings(next);
+    });
   };
 
   const renderSection = (type: "success" | "fail", title: string, list: Record<string, string>) => {
-    const config = settings[type];
+    const config = props.notificationSettings[type];
     return (
       <div className="surface-card rounded-[24px] p-5">
         <h4 className="text-base font-semibold text-[var(--text-primary)] mb-4">{title}</h4>
@@ -646,7 +822,7 @@ function SoundSettingsPanel() {
             <select
               className={inputClassName}
               value={config.mode}
-              onChange={(e) => handleUpdate(type, "mode", e.target.value as SoundMode)}
+              onChange={(e) => handleUpdate(type, "mode", e.target.value)}
             >
               <option value="random">Acak (Random Pick)</option>
               <option value="specific">Pilih Spesifik</option>
@@ -671,7 +847,7 @@ function SoundSettingsPanel() {
 
           <button
             type="button"
-            onClick={() => playSound(type, settings)}
+            onClick={() => playSound(type, props.notificationSettings)}
             className="btn-secondary w-full justify-center text-xs py-2 mt-2"
           >
             🔊 Test Suara
@@ -683,10 +859,74 @@ function SoundSettingsPanel() {
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      <div className="surface-card rounded-[24px] p-5 md:col-span-2">
+        <div className="space-y-4">
+          <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
+            <input
+              type="checkbox"
+              checked={
+                !props.notificationSettings.disableSoundResponsesForAllUsers
+              }
+              onChange={(event) =>
+                props.onChangeNotificationSettings(
+                  "disableSoundResponsesForAllUsers",
+                  !event.target.checked,
+                )
+              }
+              className="mt-1 h-5 w-5 accent-[var(--primary)]"
+            />
+            <div>
+              <p className="font-semibold text-[var(--text-primary)]">
+                Aktifkan respond suara untuk semua user
+              </p>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                Jika dimatikan, seluruh alert tetap tampil tetapi tanpa suara.
+              </p>
+            </div>
+          </label>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => void props.onHandleSaveNotificationSettings()}
+              disabled={props.adminSubmitting}
+              className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+            >
+              {props.adminSubmitting ? "Menyimpan..." : "Simpan aturan suara"}
+            </button>
+          </div>
+        </div>
+      </div>
       {renderSection("success", "Suara Berhasil (Success)", SUCCESS_SOUNDS)}
       {renderSection("fail", "Suara Gagal (Error)", FAIL_SOUNDS)}
-      <div className="md:col-span-2 surface-card rounded-[24px] p-4 bg-[var(--surface-muted)]/30 border border-dashed border-[var(--border-soft)] text-xs text-[var(--text-muted)]">
+      <div className="md:col-span-2 surface-card rounded-[24px] border border-dashed border-[var(--border-soft)] bg-[var(--surface-muted)]/30 p-4 text-xs text-[var(--text-muted)]">
         <p>💡 Fitur iseng: Suara hanya tersimpan di browser ini saja (Local Storage). Admin lain mungkin punya selera audio yang berbeda!</p>
+      </div>
+    </div>
+  );
+}
+
+function AdminLoadingOverlay() {
+  return (
+    <div className="flex min-h-[300px] flex-col items-center justify-center space-y-4">
+      <div className="relative flex h-16 w-16 items-center justify-center">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--primary)] opacity-20" />
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--primary)] text-[var(--primary-contrast)] shadow-lg shadow-[var(--primary)]/30">
+          <svg
+            className="h-6 w-6 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+          >
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          </svg>
+        </div>
+      </div>
+      <div className="text-center">
+        <p className="text-sm font-bold tracking-widest uppercase text-[var(--text-primary)]">Verifikasi Akses</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)] animate-pulse">Memuat kredensial admin...</p>
       </div>
     </div>
   );
@@ -712,6 +952,15 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
     }
   }, [activeSection]);
 
+  useEffect(() => {
+    if (
+      activeSection === "sounds" &&
+      !props.notificationSettings.showAdminSoundSettings
+    ) {
+      setActiveSection("rules");
+    }
+  }, [activeSection, props.notificationSettings.showAdminSoundSettings]);
+
   return (
     <section className="panel-glass rounded-[32px] p-4 sm:p-6">
       <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -733,47 +982,66 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
         ) : null}
       </div>
 
-      {!props.adminSession ? <AdminLoginCard {...props} /> : null}
+      {props.adminAuthLoading ? (
+        <AdminLoadingOverlay />
+      ) : (
+        <>
+          {!props.adminSession ? <AdminLoginCard {...props} /> : null}
 
-      {props.adminSession ? (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2 md:gap-3">
-            <div className="flex min-w-0 shrink basis-auto items-center">
-              <AdminSectionTabs
-                activeSection={activeSection}
-                onChange={setActiveSection}
-              />
-            </div>
+          {props.adminSession ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-2 md:gap-3">
+                <div className="flex min-w-0 shrink basis-auto items-center">
+                  <AdminSectionTabs
+                    activeSection={activeSection}
+                    onChange={setActiveSection}
+                    includeSoundSettings={
+                      props.notificationSettings.showAdminSoundSettings
+                    }
+                  />
+                </div>
 
-            {activeSection === "reporters" ? (
-              <div className="flex-1 shrink-0 md:min-w-[320px]">
-                <AdminReporterToolbar
-                  searchValue={reporterSearch}
-                  onSearchChange={setReporterSearch}
-                  sortMode={reporterSortMode}
-                  onSortModeChange={setReporterSortMode}
-                  disabled={props.adminSubmitting}
-                />
+                {activeSection === "reporters" ? (
+                  <div className="flex-1 shrink-0 md:min-w-[320px]">
+                    <AdminReporterToolbar
+                      searchValue={reporterSearch}
+                      onSearchChange={setReporterSearch}
+                      sortMode={reporterSortMode}
+                      onSortModeChange={setReporterSortMode}
+                      disabled={props.adminSubmitting}
+                    />
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
 
-          {activeSection === "rules" ? <ReportRulesPanel {...props} /> : null}
-          {activeSection === "reporters" ? (
-            <ReporterManagementPanel
-              {...props}
-              reporterSearch={reporterSearch}
-              reporterSortMode={reporterSortMode}
-              onReporterSearchChange={setReporterSearch}
-              onReporterSortModeChange={setReporterSortMode}
-            />
+              {activeSection === "rules" ? <ReportRulesPanel {...props} /> : null}
+              {activeSection === "reporters" ? (
+                <ReporterManagementPanel
+                  {...props}
+                  reporterSearch={reporterSearch}
+                  reporterSortMode={reporterSortMode}
+                  onReporterSearchChange={setReporterSearch}
+                  onReporterSortModeChange={setReporterSortMode}
+                />
+              ) : null}
+              {activeSection === "templates" ? (
+                <ExcelTemplatePanel {...props} />
+              ) : null}
+              {activeSection === "sounds" &&
+              props.notificationSettings.showAdminSoundSettings ? (
+                <SoundSettingsPanel
+                  notificationSettings={props.notificationSettings}
+                  adminSubmitting={props.adminSubmitting}
+                  onChangeNotificationSettings={props.onChangeNotificationSettings}
+                  onHandleSaveNotificationSettings={
+                    props.onHandleSaveNotificationSettings
+                  }
+                />
+              ) : null}
+            </div>
           ) : null}
-          {activeSection === "templates" ? (
-            <ExcelTemplatePanel {...props} />
-          ) : null}
-          {activeSection === "sounds" ? <SoundSettingsPanel /> : null}
-        </div>
-      ) : null}
+        </>
+      )}
     </section>
   );
 }

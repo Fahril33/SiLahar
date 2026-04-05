@@ -21,6 +21,7 @@ export function HistoryView(props: {
   onHandlePrint: (report: Report) => Promise<void>;
   onHandleDeleteReport: (report: Report) => Promise<void>;
   excelExportingReportId: string | null;
+  editLoadingReportId: string | null;
   today: string;
   canUseAnyReportDate: boolean;
   canManageReports: boolean;
@@ -39,6 +40,7 @@ export function HistoryView(props: {
     onHandlePrint,
     onHandleDeleteReport,
     excelExportingReportId,
+    editLoadingReportId,
     today,
     canUseAnyReportDate,
     canManageReports,
@@ -89,9 +91,10 @@ export function HistoryView(props: {
                 <button
                   type="button"
                   onClick={() => void onHandleLoadEdit(report)}
-                  className="btn-secondary px-4 py-2 text-sm"
+                  disabled={editLoadingReportId === report.id}
+                  className="btn-secondary px-4 py-2 text-sm disabled:opacity-60"
                 >
-                  Edit
+                  {editLoadingReportId === report.id ? "Memuat..." : "Edit"}
                 </button>
               ) : null}
               <button

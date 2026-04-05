@@ -34,6 +34,7 @@ export type GenerateReportExcelOptions = {
   report: Report;
   template: ExcelReportTemplate;
   pendingPhotos?: Record<number, File[]>;
+  onStage?: (stageId: string, detail?: string) => void;
 };
 
 function sanitizeExcelFileSegment(value: string) {
@@ -402,7 +403,9 @@ export async function generateDailyReportExcel({
   report,
   template,
   pendingPhotos,
+  onStage,
 }: GenerateReportExcelOptions) {
+  onStage?.("prepare", "Memuat template dan workbook laporan.");
   const [{ Workbook }, templateBuffer] = await Promise.all([
     import("exceljs"),
     getExcelTemplateBuffer(template),
@@ -411,6 +414,7 @@ export async function generateDailyReportExcel({
   const workbook = new Workbook();
   await workbook.xlsx.load(templateBuffer);
 
+  onStage?.("mapping", "Menyusun teks, persetujuan, dan catatan ke template.");
   const mappedReport = mapReportToExcelTemplate(report);
   const worksheet = workbook.worksheets[mappedReport.worksheetIndex] ?? workbook.worksheets[0];
   const dynamicRowOffset = Math.max(0, report.activities.length - 1);
@@ -423,6 +427,10 @@ export async function generateDailyReportExcel({
 
   writeApprovalSection(worksheet, report, dynamicRowOffset);
   writeNotesSection(worksheet, mappedReport.notes, dynamicRowOffset);
+
+  if (mappedReport.imageCells.length > 0) {
+    onStage?.("images", "Mengambil dan mengompres gambar untuk file Excel.");
+  }
 
   for (const imagePatch of mappedReport.imageCells) {
     const imagePayload = await fetchExcelImage(imagePatch, pendingPhotos);
@@ -459,7 +467,9 @@ export async function generateDailyReportExcel({
     });
   }
 
+  onStage?.("build", "Menyelesaikan workbook dan menyiapkan unduhan.");
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: EXCEL_MIME_TYPE });
+  onStage?.("download", "Browser sedang memulai download Excel.");
   saveAs(blob, buildExcelFileName(report));
 }

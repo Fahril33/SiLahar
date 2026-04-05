@@ -21,12 +21,15 @@ export type ReportActivity = {
 
 export type Report = {
   id: string;
+  templateId: string | null;
   nama: string;
   tanggal: string;
   reportDate: string;
   activities: ReportActivity[];
+  approverCoordinatorTemplateId: string | null;
   approverCoordinator: string;
   approverCoordinatorNip: string;
+  approverDivisionHeadTemplateId: string | null;
   approverDivisionHead: string;
   approverDivisionHeadTitle: string;
   approverDivisionHeadNip: string;

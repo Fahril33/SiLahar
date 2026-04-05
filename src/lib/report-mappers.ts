@@ -21,11 +21,14 @@ type ActivityRow = {
 
 type ReportRow = {
   id: string;
+  template_id: string | null;
   reporter_name: string;
   display_date_text: string;
   report_date: string;
+  template_approver_coordinator_id: string | null;
   approver_coordinator_name: string | null;
   approver_coordinator_nip: string | null;
+  template_approver_division_head_id: string | null;
   approver_division_head_name: string | null;
   approver_division_head_title: string | null;
   approver_division_head_nip: string | null;
@@ -65,12 +68,15 @@ function mapActivity(row: ActivityRow): ReportActivity {
 export function mapReportRow(row: ReportRow): Report {
   return {
     id: row.id,
+    templateId: row.template_id,
     nama: row.reporter_name.toUpperCase(),
     tanggal: row.display_date_text.toUpperCase(),
     reportDate: row.report_date,
     activities: (row.daily_report_activities ?? []).sort((a, b) => a.activity_order - b.activity_order).map(mapActivity),
+    approverCoordinatorTemplateId: row.template_approver_coordinator_id,
     approverCoordinator: row.approver_coordinator_name ?? "",
     approverCoordinatorNip: row.approver_coordinator_nip ?? "",
+    approverDivisionHeadTemplateId: row.template_approver_division_head_id,
     approverDivisionHead: row.approver_division_head_name ?? "",
     approverDivisionHeadTitle: row.approver_division_head_title ?? "",
     approverDivisionHeadNip: row.approver_division_head_nip ?? "",

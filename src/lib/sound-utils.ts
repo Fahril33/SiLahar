@@ -7,18 +7,10 @@ import faaah from "../assets/sounds/fail/faaah.mp3";
 import movie1 from "../assets/sounds/fail/movie_1.mp3";
 import spongebobFail from "../assets/sounds/fail/spongebob-fail.mp3";
 import vineBoom from "../assets/sounds/fail/vine-boom.mp3";
-
-export type SoundMode = "random" | "specific";
-
-export type SoundConfig = {
-  mode: SoundMode;
-  specificFile: string | null;
-};
-
-export type AppSoundSettings = {
-  success: SoundConfig;
-  fail: SoundConfig;
-};
+import type {
+  NotificationSettings,
+  NotificationSoundConfig,
+} from "../types/notification-settings";
 
 export const SUCCESS_SOUNDS: Record<string, string> = {
   "anime-wow-sound-effect.mp3": animeWow,
@@ -33,9 +25,13 @@ export const FAIL_SOUNDS: Record<string, string> = {
   "vine-boom.mp3": vineBoom,
 };
 
-const STORAGE_KEY = "silahar:sound-settings";
+const GLOBAL_RULES_STORAGE_KEY = "silahar:notification-settings";
 
-export const DEFAULT_SOUND_SETTINGS: AppSoundSettings = {
+let runtimeNotificationSettings: NotificationSettings | null = null;
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  showAdminSoundSettings: false,
+  disableSoundResponsesForAllUsers: false,
   success: {
     mode: "random",
     specificFile: null,
@@ -46,24 +42,85 @@ export const DEFAULT_SOUND_SETTINGS: AppSoundSettings = {
   },
 };
 
-export function loadSoundSettings(): AppSoundSettings {
-  if (typeof window === "undefined") return DEFAULT_SOUND_SETTINGS;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (!stored) return DEFAULT_SOUND_SETTINGS;
+export function loadNotificationSettings(): NotificationSettings {
+  if (runtimeNotificationSettings) {
+    return runtimeNotificationSettings;
+  }
+
+  if (typeof window === "undefined") return DEFAULT_NOTIFICATION_SETTINGS;
+  const stored = window.localStorage.getItem(GLOBAL_RULES_STORAGE_KEY);
+  if (!stored) return DEFAULT_NOTIFICATION_SETTINGS;
   try {
-    return JSON.parse(stored);
-  } catch (e) {
-    return DEFAULT_SOUND_SETTINGS;
+    const parsedRaw = JSON.parse(stored) as Partial<NotificationSettings>;
+    const parsed = {
+      ...DEFAULT_NOTIFICATION_SETTINGS,
+      ...parsedRaw,
+      success: {
+        ...DEFAULT_NOTIFICATION_SETTINGS.success,
+        ...(parsedRaw.success ?? {}),
+      },
+      fail: {
+        ...DEFAULT_NOTIFICATION_SETTINGS.fail,
+        ...(parsedRaw.fail ?? {}),
+      },
+    };
+    runtimeNotificationSettings = parsed;
+    return parsed;
+  } catch {
+    return DEFAULT_NOTIFICATION_SETTINGS;
   }
 }
 
-export function saveSoundSettings(settings: AppSoundSettings) {
+export function saveNotificationSettings(settings: NotificationSettings) {
+  runtimeNotificationSettings = settings;
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  window.localStorage.setItem(
+    GLOBAL_RULES_STORAGE_KEY,
+    JSON.stringify(settings),
+  );
 }
 
-export function playSound(type: "success" | "fail", settings: AppSoundSettings) {
-  const config = settings[type];
+export function setRuntimeNotificationSettings(settings: NotificationSettings) {
+  runtimeNotificationSettings = settings;
+}
+
+const audioCache = new Map<string, HTMLAudioElement>();
+
+export function preloadSounds() {
+  if (typeof window === "undefined") return;
+
+  const allSounds = { ...SUCCESS_SOUNDS, ...FAIL_SOUNDS };
+  Object.values(allSounds).forEach((url) => {
+    if (!audioCache.has(url)) {
+      const audio = new Audio(url);
+      audio.preload = "auto";
+      audio.load();
+      audioCache.set(url, audio);
+    }
+  });
+}
+
+export function playSound(
+  type: "success" | "fail",
+  settingsOverride?: Partial<NotificationSettings>,
+) {
+  const notificationSettings = {
+    ...loadNotificationSettings(),
+    ...settingsOverride,
+    success: {
+      ...loadNotificationSettings().success,
+      ...(settingsOverride?.success ?? {}),
+    },
+    fail: {
+      ...loadNotificationSettings().fail,
+      ...(settingsOverride?.fail ?? {}),
+    },
+  };
+  if (notificationSettings.disableSoundResponsesForAllUsers) {
+    return;
+  }
+
+  const config = notificationSettings[type] as NotificationSoundConfig;
   const list = type === "success" ? SUCCESS_SOUNDS : FAIL_SOUNDS;
   const filenames = Object.keys(list);
 
@@ -78,7 +135,15 @@ export function playSound(type: "success" | "fail", settings: AppSoundSettings) 
   }
 
   if (targetUrl) {
-    const audio = new Audio(targetUrl);
+    let audio = audioCache.get(targetUrl);
+    
+    if (!audio) {
+      audio = new Audio(targetUrl);
+      audioCache.set(targetUrl, audio);
+    }
+
+    // Reset current time to allow overlapping or rapid fire play
+    audio.currentTime = 0;
     audio.play().catch((err) => console.warn("Gagal memutar suara:", err));
   }
 }

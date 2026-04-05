@@ -336,6 +336,7 @@ export default function App() {
             pendingPreviews={dashboard.pendingPreviews}
             preview={dashboard.preview}
             submitting={dashboard.submitting}
+            isEditLoading={dashboard.isEditLoading}
             excelExportingReportId={dashboard.excelExportingReportId}
             hasDraftContent={dashboard.hasDraftContent}
             draftSavedAt={dashboard.draftSavedAt}
@@ -346,6 +347,9 @@ export default function App() {
             onAddActivity={dashboard.addActivity}
             onRemoveActivity={dashboard.removeActivity}
             onSetActivityFiles={dashboard.setActivityFiles}
+            onClearActivityFiles={dashboard.clearActivityFiles}
+            onRestoreActivityFiles={dashboard.restoreActivityFiles}
+            editableOriginalPhotos={dashboard.editableOriginalPhotos}
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
@@ -372,6 +376,7 @@ export default function App() {
             onHandlePrint={dashboard.handlePrint}
             onHandleDeleteReport={dashboard.handleDeleteReport}
             excelExportingReportId={dashboard.excelExportingReportId}
+            editLoadingReportId={dashboard.editLoadingReportId}
             today={today}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             canManageReports={dashboard.canManageReports}
@@ -400,6 +405,11 @@ export default function App() {
             loading={dashboard.loading}
             adminSubmitting={dashboard.adminSubmitting}
             adminRuleDraft={dashboard.adminRuleDraft}
+            activeReportTemplateConfig={dashboard.activeReportTemplateConfig}
+            notificationSettings={dashboard.notificationSettings}
+            adminTemplateApproverDrafts={
+              dashboard.adminTemplateApproverDrafts
+            }
             excelTemplates={dashboard.excelTemplates}
             activeExcelTemplate={dashboard.activeExcelTemplate}
             excelTemplateDraft={dashboard.excelTemplateDraft}
@@ -426,6 +436,18 @@ export default function App() {
             onHandleAdminLogin={dashboard.handleAdminLogin}
             onHandleAdminLogout={dashboard.handleAdminLogout}
             onHandleSaveAdminRules={dashboard.handleSaveAdminRules}
+            onChangeNotificationSettings={
+              dashboard.changeNotificationSettings
+            }
+            onHandleSaveNotificationSettings={
+              dashboard.handleSaveNotificationSettings
+            }
+            onChangeAdminTemplateApproverDraft={
+              dashboard.changeAdminTemplateApproverDraft
+            }
+            onHandleSaveTemplateApproverDefaults={
+              dashboard.handleSaveTemplateApproverDefaults
+            }
             onHandleUploadExcelTemplate={dashboard.handleUploadExcelTemplate}
             onHandleActivateExcelTemplate={dashboard.handleActivateExcelTemplate}
             onHandleRenameExcelTemplate={dashboard.handleRenameExcelTemplate}

@@ -1,7 +1,91 @@
 import Swal from "sweetalert2";
-import { loadSoundSettings, playSound } from "./sound-utils";
+import { playSound } from "./sound-utils";
 
-const popupClass = "rounded-[28px]";
+const confirmPopupClass = "swal-modern-popup";
+const toastPopupClass = "swal-modern-toast";
+const progressToastPopupClass = "swal-progress-toast";
+
+export type ProgressToastStage = {
+  id: string;
+  label: string;
+};
+
+type ProgressToastStageState = "pending" | "active" | "done";
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderProgressToastHtml(
+  stages: ProgressToastStage[],
+  stageStates: Record<string, ProgressToastStageState>,
+  stageTexts: Record<string, string>,
+) {
+  return `
+    <div class="swal-progress-list" role="list">
+      ${stages
+        .map((stage) => {
+          const state = stageStates[stage.id] ?? "pending";
+          const detail = stageTexts[stage.id];
+          const indicator =
+            state === "done"
+              ? '<span class="swal-progress-indicator-icon">✓</span>'
+              : state === "active"
+                ? '<span class="swal-progress-indicator-spinner"></span>'
+                : '<span class="swal-progress-indicator-dot"></span>';
+
+          return `
+            <div class="swal-progress-row is-${state}" role="listitem">
+              <span class="swal-progress-indicator" aria-hidden="true">${indicator}</span>
+              <div class="swal-progress-content">
+                <div class="swal-progress-label">${escapeHtml(stage.label)}</div>
+                ${
+                  detail
+                    ? `<div class="swal-progress-detail">${escapeHtml(detail)}</div>`
+                    : ""
+                }
+              </div>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function fireToast(icon: "success" | "error" | "info", title: string, text: string) {
+  void Swal.fire({
+    toast: true,
+    position: "top",
+    icon,
+    title,
+    text,
+    timer: icon === "error" ? 5200 : 3400,
+    timerProgressBar: true,
+    showConfirmButton: false,
+    showCloseButton: false,
+    
+    didOpen: (toast) => {
+      toast.onmouseenter = () => Swal.stopTimer();
+      toast.onmouseleave = () => Swal.resumeTimer();
+      toast.onclick = () => Swal.close();
+    },
+    customClass: {
+      popup: toastPopupClass,
+      title: "swal-toast-title",
+      htmlContainer: "swal-toast-text",
+      icon: "swal-toast-icon",
+    },
+    buttonsStyling: false,
+  });
+
+  return Promise.resolve();
+}
 
 export async function askConfirmation(title: string, text: string, confirmText: string) {
   const result = await Swal.fire({
@@ -13,7 +97,10 @@ export async function askConfirmation(title: string, text: string, confirmText: 
     cancelButtonText: "Batal",
     reverseButtons: true,
     customClass: {
-      popup: popupClass,
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
       confirmButton: "swal-confirm",
       cancelButton: "swal-cancel",
     },
@@ -23,50 +110,108 @@ export async function askConfirmation(title: string, text: string, confirmText: 
   return result.isConfirmed;
 }
 
-export function showSuccess(title: string, text: string) {
-  const settings = loadSoundSettings();
-  playSound("success", settings);
-  return Swal.fire({
-    title,
-    text,
-    icon: "success",
-    confirmButtonText: "Tutup",
-    customClass: {
-      popup: popupClass,
-      confirmButton: "swal-confirm",
-    },
-    buttonsStyling: false,
-  });
-}
-
-export function showError(title: string, text: string) {
-  const settings = loadSoundSettings();
-  playSound("fail", settings);
-  return Swal.fire({
-    title,
-    text,
-    icon: "error",
-    confirmButtonText: "Tutup",
-    customClass: {
-      popup: popupClass,
-      confirmButton: "swal-confirm",
-    },
-    buttonsStyling: false,
-  });
-}
-
-export function showInfo(title: string, text: string) {
-  return Swal.fire({
+export async function askAcknowledge(
+  title: string,
+  text: string,
+  confirmText = "OK",
+) {
+  await Swal.fire({
     title,
     text,
     icon: "info",
-    confirmButtonText: "Mengerti",
+    confirmButtonText: confirmText,
     customClass: {
-      popup: popupClass,
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
       confirmButton: "swal-confirm",
     },
     buttonsStyling: false,
   });
+}
+
+export function showSuccess(title: string, text: string) {
+  playSound("success");
+  return fireToast("success", title, text);
+}
+
+export function showError(title: string, text: string) {
+  playSound("fail");
+  return fireToast("error", title, text);
+}
+
+export function showInfo(title: string, text: string) {
+  return fireToast("info", title, text);
+}
+
+export function openProgressToast(title: string, stages: ProgressToastStage[]) {
+  const stageStates = Object.fromEntries(
+    stages.map((stage) => [stage.id, "pending" as ProgressToastStageState]),
+  );
+  const stageTexts = Object.fromEntries(stages.map((stage) => [stage.id, ""]));
+
+  void Swal.fire({
+    toast: true,
+    position: "top",
+    icon: "info",
+    title,
+    html: renderProgressToastHtml(stages, stageStates, stageTexts),
+    showConfirmButton: false,
+    showCloseButton: false,
+    timer: undefined,
+    timerProgressBar: false,
+    customClass: {
+      popup: `${toastPopupClass} ${progressToastPopupClass}`,
+      title: "swal-toast-title",
+      htmlContainer: "swal-toast-text",
+      icon: "swal-toast-icon",
+    },
+    buttonsStyling: false,
+  });
+
+  return {
+    update(stageId: string, detail?: string) {
+      const popup = Swal.getPopup();
+      if (!popup?.classList.contains("swal-progress-toast")) {
+        return;
+      }
+
+      const activeIndex = stages.findIndex((stage) => stage.id === stageId);
+      if (activeIndex === -1) {
+        return;
+      }
+
+      stages.forEach((stage, index) => {
+        stageStates[stage.id] =
+          index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
+      });
+
+      if (detail !== undefined) {
+        stageTexts[stageId] = detail;
+      }
+
+      const titleElement = popup.querySelector(".swal-toast-title");
+      if (titleElement) {
+        titleElement.textContent = title;
+      }
+
+      const htmlContainer = popup.querySelector(".swal2-html-container");
+      if (htmlContainer) {
+        htmlContainer.innerHTML = renderProgressToastHtml(
+          stages,
+          stageStates,
+          stageTexts,
+        );
+      }
+    },
+    close() {
+      const popup = Swal.getPopup();
+      if (popup?.classList.contains("swal-progress-toast")) {
+        Swal.close();
+      }
+    },
+  };
 }
 
 export async function askPdfPaperSize(): Promise<"a4" | "f4" | "legal" | "letter" | null> {
@@ -86,7 +231,10 @@ export async function askPdfPaperSize(): Promise<"a4" | "f4" | "legal" | "letter
     cancelButtonText: "Batal",
     reverseButtons: true,
     customClass: {
-      popup: popupClass,
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
       confirmButton: "swal-confirm",
       cancelButton: "swal-cancel",
     },

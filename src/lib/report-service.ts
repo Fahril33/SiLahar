@@ -1,6 +1,7 @@
-import { defaultDraft } from "../data/mock";
 import { DEFAULT_REPORT_RULES, normalizeReportRules, type ReportRules } from "../config/report-rules";
+import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
+import type { NotificationSettings } from "../types/notification-settings";
 import { supabase } from "./supabase";
 import { mapReportRow } from "./report-mappers";
 import type {
@@ -16,6 +17,24 @@ type PendingPhotoMap = Record<number, File[]>;
 type ReportRulesRow = {
   allow_any_report_date?: boolean;
   max_photos_per_activity?: number;
+};
+
+type NotificationSettingsRow = {
+  show_admin_sound_settings?: boolean;
+  disable_sound_responses_for_all_users?: boolean;
+  success?: {
+    mode?: "random" | "specific";
+    specific_file?: string | null;
+  };
+  fail?: {
+    mode?: "random" | "specific";
+    specific_file?: string | null;
+  };
+};
+
+type ReportTemplateNoteRow = {
+  note_order: number;
+  note_text: string;
 };
 
 type AdminProfileRow = {
@@ -41,6 +60,10 @@ type ReporterTraceReportRow = {
       storage_path: string;
     }>;
   }>;
+};
+
+type ReportTemplateRow = {
+  report_template_notes?: ReportTemplateNoteRow[];
 };
 
 function sanitizeFileName(name: string) {
@@ -89,15 +112,19 @@ export async function fetchReports() {
     return [];
   }
 
+  const templateFallback = fallbackReportTemplateConfig.notes;
   const { data, error } = await supabase
     .from("daily_reports")
     .select(`
       id,
+      template_id,
       reporter_name,
       display_date_text,
       report_date,
+      template_approver_coordinator_id,
       approver_coordinator_name,
       approver_coordinator_nip,
+      template_approver_division_head_id,
       approver_division_head_name,
       approver_division_head_title,
       approver_division_head_nip,
@@ -107,6 +134,12 @@ export async function fetchReports() {
       created_by_label,
       updated_by_role,
       updated_by_label,
+      report_template:report_templates (
+        report_template_notes (
+          note_order,
+          note_text
+        )
+      ),
       daily_report_activities (
         id,
         activity_order,
@@ -131,15 +164,16 @@ export async function fetchReports() {
     throw error;
   }
 
-  const templateNotes = defaultDraft.notes;
-
   return (data ?? []).map((row) =>
     mapReportRow({
       ...row,
-      report_template_notes: templateNotes.map((note, index) => ({
-        note_order: index + 1,
-        note_text: note,
-      })),
+      report_template_notes:
+        (row.report_template as ReportTemplateRow | null)?.report_template_notes?.length
+          ? (row.report_template as ReportTemplateRow).report_template_notes
+          : templateFallback.map((note, index) => ({
+              note_order: index + 1,
+              note_text: note,
+            })),
     }),
   );
 }
@@ -202,6 +236,94 @@ export async function fetchReportRules() {
     allowAnyReportDate: rules?.allow_any_report_date,
     maxPhotosPerActivity: rules?.max_photos_per_activity,
   });
+}
+
+export async function fetchNotificationSettings() {
+  const fallback: NotificationSettings = {
+    showAdminSoundSettings: false,
+    disableSoundResponsesForAllUsers: false,
+    success: {
+      mode: "random",
+      specificFile: null,
+    },
+    fail: {
+      mode: "random",
+      specificFile: null,
+    },
+  };
+
+  if (!supabase) {
+    return fallback;
+  }
+
+  const { data, error } = await supabase.rpc("get_notification_settings");
+
+  if (error) {
+    console.warn(
+      "Gagal memuat notification_settings dari database, memakai fallback lokal.",
+      error,
+    );
+    return fallback;
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | NotificationSettingsRow
+    | undefined;
+  return {
+    showAdminSoundSettings: Boolean(row?.show_admin_sound_settings),
+    disableSoundResponsesForAllUsers: Boolean(
+      row?.disable_sound_responses_for_all_users,
+    ),
+    success: {
+      mode:
+        row?.success?.mode === "specific"
+          ? ("specific" as const)
+          : ("random" as const),
+      specificFile: row?.success?.specific_file ?? null,
+    },
+    fail: {
+      mode:
+        row?.fail?.mode === "specific"
+          ? ("specific" as const)
+          : ("random" as const),
+      specificFile: row?.fail?.specific_file ?? null,
+    },
+  };
+}
+
+export async function saveNotificationSettingsToDatabase(
+  settings: NotificationSettings,
+) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key: "notification_settings",
+      value: {
+        show_admin_sound_settings: settings.showAdminSoundSettings,
+        disable_sound_responses_for_all_users:
+          settings.disableSoundResponsesForAllUsers,
+        success: {
+          mode: settings.success.mode,
+          specific_file: settings.success.specificFile,
+        },
+        fail: {
+          mode: settings.fail.mode,
+          specific_file: settings.fail.specificFile,
+        },
+      },
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "key" },
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  return fetchNotificationSettings();
 }
 
 async function fetchAdminProfile(userId: string) {
@@ -315,6 +437,21 @@ export function subscribeReportData(onChange: () => void) {
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "excel_report_templates" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "report_templates" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "report_template_notes" },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "report_template_approvers" },
       () => onChange(),
     )
     .subscribe();
@@ -538,11 +675,17 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
   const reporterDirectoryId = await upsertReporterDirectory(draft.nama);
 
   const payload = {
+    template_id:
+      draft.templateId && draft.templateId !== fallbackReportTemplateConfig.id
+        ? draft.templateId
+        : existingReport?.templateId ?? null,
     reporter_directory_id: reporterDirectoryId,
     reporter_name: draft.nama,
     report_date: draft.reportDate,
+    template_approver_coordinator_id: draft.approverCoordinatorTemplateId,
     approver_coordinator_name: draft.approverCoordinator,
     approver_coordinator_nip: draft.approverCoordinatorNip,
+    template_approver_division_head_id: draft.approverDivisionHeadTemplateId,
     approver_division_head_name: draft.approverDivisionHead,
     approver_division_head_title: draft.approverDivisionHeadTitle,
     approver_division_head_nip: draft.approverDivisionHeadNip,
@@ -585,10 +728,13 @@ export async function saveReportToDatabase(
   pendingPhotos: PendingPhotoMap,
   existingReport: Report | null,
   reportRules: ReportRules = DEFAULT_REPORT_RULES,
+  onStage?: (stageId: string, detail?: string) => void,
 ) {
   if (!supabase) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
+
+  onStage?.("prepare", "Memeriksa draft dan sinkronisasi data pelapor.");
 
   if (existingReport) {
     const keptStoragePaths = new Set(
@@ -613,6 +759,7 @@ export async function saveReportToDatabase(
 
   const reportId = await upsertReportRow(draft, existingReport);
 
+  onStage?.("activities", "Mencatat detail aktivitas ke database.");
   const activityPayload = draft.activities.map((activity) => ({
     report_id: reportId,
     activity_order: activity.no,
@@ -631,12 +778,12 @@ export async function saveReportToDatabase(
   }
 
   for (const activity of insertedActivities ?? []) {
-    const files = (pendingPhotos[activity.activity_order] ?? []).slice(0, reportRules.maxPhotosPerActivity);
-
-    if (files.length === 0) {
-      continue;
-    }
-
+    const sourceActivity = draft.activities.find((item) => item.no === activity.activity_order);
+    const keptExistingPhotos = (sourceActivity?.photos ?? []).slice(0, reportRules.maxPhotosPerActivity);
+    const files = (pendingPhotos[activity.activity_order] ?? []).slice(
+      0,
+      reportRules.maxPhotosPerActivity,
+    );
     const photoRows: Array<{
       activity_id: string;
       storage_path: string;
@@ -645,8 +792,14 @@ export async function saveReportToDatabase(
       sort_order: number;
     }> = [];
 
-    const sourceActivity = draft.activities.find((item) => item.no === activity.activity_order);
-    const keptExistingPhotos = (sourceActivity?.photos ?? []).slice(0, reportRules.maxPhotosPerActivity);
+    if (files.length > 0) {
+      onStage?.("photos", `Mengunggah foto aktivitas ke-${activity.activity_order}.`);
+    } else if (keptExistingPhotos.length > 0) {
+      onStage?.(
+        "photos",
+        `Mempertahankan foto aktivitas ke-${activity.activity_order} tanpa kompresi ulang.`,
+      );
+    }
 
     for (const [index, photo] of keptExistingPhotos.entries()) {
       photoRows.push({
@@ -691,6 +844,7 @@ export async function saveReportToDatabase(
     }
   }
 
+  onStage?.("finalize", "Menyegarkan data terbaru dari database.");
   const reports = await fetchReports();
   return reports.find((report) => report.id === reportId) ?? null;
 }

@@ -194,3 +194,105 @@ Setiap patch sebaiknya ditulis dengan pola:
 
 ### Notes
 - Build frontend selesai dan sudah terverifikasi `npm run build`.
+
+## 2026-04-05 - Template Default Pejabat Form dari Database
+
+### Added
+- Migration `013_report_template_approver_defaults.sql`.
+- Tabel baru `report_template_approvers` untuk menyimpan default pejabat per template laporan.
+- Service `src/lib/report-template-service.ts` dan tipe `src/types/report-template.ts` untuk memuat dan mengelola template form pejabat secara modular.
+- Section baru di halaman Admin bagian `Aturan laporan` untuk mengubah default pejabat yang dipakai form.
+
+### Changed
+- Form laporan tidak lagi bergantung pada hard-coded pejabat di client sebagai sumber utama.
+- Draft kosong dan reset form sekarang mengambil nilai pejabat default dari template laporan aktif di database.
+- `daily_reports` kini menyimpan snapshot nama/jabatan/NIP pejabat sekaligus relasi ke record default pejabat template yang dipakai saat laporan dibuat.
+- Fetch laporan kini membaca catatan template dari relasi `report_templates`, bukan menyuntikkan fallback lokal secara buta.
+- Realtime dashboard ikut memantau perubahan `report_templates`, `report_template_notes`, dan `report_template_approvers`.
+
+### Database
+- Menambahkan kolom `template_approver_coordinator_id` dan `template_approver_division_head_id` pada `daily_reports`.
+- Menambahkan seed default pejabat untuk template aktif `bpbd-trc-harian-2026`.
+- Backfill `template_id` dan relasi default pejabat untuk laporan lama yang belum memiliki referensi template.
+
+### Notes
+- Jalankan migration `013` di Supabase setelah `012`.
+- Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-05 - Template Refresh Aman dan Aturan Suara Global
+
+### Added
+- Migration `014_notification_settings_flags.sql`.
+- Flag database `notification_settings.show_admin_sound_settings` untuk menentukan apakah panel `Suara Alert` tampil di halaman Admin.
+- Flag database `notification_settings.disable_sound_responses_for_all_users` untuk mematikan suara alert bagi seluruh user.
+
+### Changed
+- Input `Jabatan / Pangkat` untuk default `Koordinator Tim` di panel admin dihilangkan karena tidak dipakai.
+- Saat template pejabat atau data template aktif berubah, halaman laporan menampilkan notifikasi bahwa data template telah diperbarui lalu me-refresh data template tanpa menghapus progres form user.
+- Suara alert sekarang tetap menghormati preferensi browser masing-masing, tetapi izin bunyi global mengikuti aturan dari database.
+
+### Notes
+- Untuk menampilkan panel `Suara Alert` di admin, ubah `app_settings.notification_settings.show_admin_sound_settings` menjadi `true` langsung di database.
+- Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-05 - Global Sound Selection dan Non-Blocking Toast
+
+### Fixed
+- Pilihan mode/file suara di panel admin kini benar-benar berlaku global untuk seluruh user, tidak lagi hanya tersimpan di browser admin.
+- User umum kini membaca konfigurasi suara global melalui RPC publik `get_notification_settings()`.
+- Toast SweetAlert untuk success/error/info tidak lagi menahan flow async, sehingga animasi loading/progress tombol tidak ikut antre sampai toast hilang.
+
+### Database
+- Migration `016_global_sound_config_sync.sql`.
+- `notification_settings` kini juga menyimpan konfigurasi `success` dan `fail` secara global.
+- RPC `get_notification_settings()` diperluas agar mengembalikan konfigurasi suara global lengkap.
+
+### Notes
+- Jika sebelumnya sudah menjalankan `014` atau `015`, jalankan juga `016`.
+- Build frontend sudah diverifikasi dengan `npm run build`.
+
+## 2026-04-05 - Preserve Existing Photos Saat Edit Laporan
+
+### Fixed
+- Saat mengedit laporan lalu menyimpan tanpa mengganti foto, relasi foto lama sekarang tetap ditulis ulang ke `daily_report_activity_photos` dan tidak lagi hilang dari hasil simpan.
+- Proses edit tidak lagi melewati semua baris foto hanya karena `pendingPhotos` kosong pada aktivitas tertentu.
+- Foto lama yang tetap dipakai tidak dikompresi ulang, sehingga edit metadata/deskripsi/jam tidak memicu proses optimasi gambar baru.
+
+### Changed
+- Tahap progress simpan laporan kini membedakan antara upload foto baru dan mempertahankan dokumentasi lama agar alur proses lebih jelas.
+
+### Notes
+- Build frontend perlu diverifikasi ulang setelah patch ini dengan `npm run build`.
+
+## 2026-04-05 - UX Upload Foto Edit Laporan
+
+### Fixed
+- Input upload pada mode edit kini menghitung kapasitas aktual per aktivitas, bukan hanya mengandalkan atribut `multiple`.
+- Saat jumlah foto lama ditambah file baru melampaui batas rule, sistem otomatis mengganti foto lama dengan pilihan baru agar user tidak terjebak pada kondisi tidak bisa upload.
+- Edit laporan dengan rule `1 foto per aktivitas` kini tetap memungkinkan mengganti foto lama secara langsung dari form.
+
+### Changed
+- Menambahkan tombol `kosongkan foto` di samping card upload pada form laporan untuk menghapus semua foto aktivitas secara manual sebelum simpan.
+- Tombol kosongkan memakai gaya visual yang selaras dengan card upload, namun memberi sinyal merah saat di-hover dan dilengkapi tooltip.
+- Informasi pada card upload kini menjelaskan apakah aktivitas sedang memakai foto lama atau file baru yang siap diunggah.
+
+## 2026-04-05 - Restore Foto Asli dan Progress Toast Bertahap
+
+### Added
+- Tombol `restore` pada form edit laporan untuk mengembalikan foto asli aktivitas tanpa harus memuat ulang seluruh laporan.
+
+### Changed
+- Tombol aksi foto di samping card upload kini disusun vertikal dan tooltip pada tombol hapus dihilangkan agar interaksi lebih ringkas.
+- Progress SweetAlert untuk simpan laporan dan export Excel kini memakai satu toast dengan daftar tahap proses, indikator progres per baris, dan centang otomatis untuk tahap yang sudah selesai.
+- Detail progres tiap tahap diperbarui langsung di dalam toast yang sama tanpa membuka popup tambahan.
+- Tombol interaktif utama kini ikut nonaktif saat proses `load edit` sedang berjalan agar state form tidak bercampur di tengah transisi.
+
+## 2026-04-05 - Realtime History/Status Fallback dan SweetAlert Toast Cleanup
+
+### Fixed
+- Halaman `Histori` dan `Status` kini ikut tersinkron ulang lebih andal saat ada perubahan data, termasuk dengan fallback refresh saat tab aktif kembali dan polling ringan saat halaman terlihat.
+- Warning SweetAlert tentang parameter yang tidak kompatibel dengan mode toast dihapus dari progress toast.
+- Pembaruan isi progress toast kini tidak lagi memakai `Swal.update()` pada toast, sehingga console warning terkait toast tidak muncul lagi.
+
+### Changed
+- Fungsi `loadDashboardData` distabilkan agar dipakai konsisten oleh realtime subscription dan mekanisme fallback refresh.

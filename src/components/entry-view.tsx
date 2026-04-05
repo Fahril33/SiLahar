@@ -43,6 +43,7 @@ type EntryViewProps = {
   pendingPreviews: PendingPreviewMap;
   preview: Report;
   submitting: boolean;
+  isEditLoading: boolean;
   excelExportingReportId: string | null;
   hasDraftContent: boolean;
   draftSavedAt: string | null;
@@ -64,6 +65,9 @@ type EntryViewProps = {
     activityNo: number,
     files: FileList | null,
   ) => Promise<void>;
+  onClearActivityFiles: (activityNo: number) => void;
+  onRestoreActivityFiles: (activityNo: number) => void;
+  editableOriginalPhotos: Record<number, Array<{ id: string }>>;
   onHandleLoadEdit: (report: Report) => Promise<void>;
 
   onHandleExport: (report: Report) => Promise<void>;
@@ -159,6 +163,29 @@ function CheckIcon(props: { className?: string }) {
       {...props}
     >
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function RestoreIcon(props: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h2" />
+      <path d="M20 8v11a2 2 0 0 1-2 2h-2" />
+      <path d="m9 15 3-3 3 3" />
+      <path d="M12 12v9" />
     </svg>
   );
 }
@@ -330,14 +357,16 @@ export function EntryView(props: EntryViewProps) {
                           ? `Laporan ${props.searchResult.nama} sudah aktif di form.`
                           : `Laporan ${props.searchResult.nama} ditemukan dan siap dibuka.`}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void props.onHandleLoadEdit(props.searchResult!)
-                        }
-                        disabled={!props.searchResultCanReload}
-                        className="btn-secondary px-3 py-2 text-sm"
-                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void props.onHandleLoadEdit(props.searchResult!)
+                          }
+                          disabled={
+                            !props.searchResultCanReload || props.isEditLoading
+                          }
+                          className="btn-secondary px-3 py-2 text-sm disabled:opacity-60"
+                        >
                         {props.searchResultLoaded
                           ? "Sudah dimuat"
                           : props.searchResultNeedsReload
@@ -567,15 +596,69 @@ export function EntryView(props: EntryViewProps) {
                       ) : null}
                     </div>
                     <div className="mt-4">
-                      <FileUploadInput
-                        label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
-                        accept="image/png,image/jpeg,image/webp"
-                        multiple={props.reportRules.maxPhotosPerActivity > 1}
-                        helperText="Belum ada foto bukti di aktivitas ini."
-                        onChange={(files) =>
-                          void props.onSetActivityFiles(activity.no, files)
-                        }
-                      />
+                      <div className="flex items-stretch gap-2">
+                        <div className="min-w-0 flex-1">
+                          <FileUploadInput
+                            label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
+                            accept="image/png,image/jpeg,image/webp"
+                            multiple={
+                              Math.max(
+                                0,
+                                props.reportRules.maxPhotosPerActivity -
+                                  activity.photos.length,
+                              ) > 1
+                            }
+                            helperText="Belum ada foto bukti di aktivitas ini."
+                            selectedFileName={
+                              (props.pendingPreviews[activity.no]?.length ?? 0) > 0
+                                ? `${props.pendingPreviews[activity.no]?.length ?? 0} foto baru siap diunggah`
+                                : activity.photos.length > 0
+                                  ? `${activity.photos.length} foto lama tetap terhubung`
+                                  : undefined
+                            }
+                            disabled={props.isEditLoading}
+                            inputKey={`${activity.no}-${activity.photos.length}-${props.pendingPreviews[activity.no]?.length ?? 0}`}
+                            onChange={(files) =>
+                              void props.onSetActivityFiles(activity.no, files)
+                            }
+                          />
+                        </div>
+                        <div className="flex w-12 shrink-0 flex-col gap-2 self-stretch sm:w-14">
+                          <button
+                            type="button"
+                            onClick={() => props.onClearActivityFiles(activity.no)}
+                            disabled={
+                              props.isEditLoading ||
+                              activity.photos.length === 0 &&
+                              (props.pendingPreviews[activity.no]?.length ?? 0) === 0
+                            }
+                            className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-red-400 hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
+                            aria-label={`Kosongkan foto aktivitas ke-${activity.no}`}
+                          >
+                            <TrashIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                          </button>
+                          {props.editableOriginalPhotos[activity.no]?.length ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                props.onRestoreActivityFiles(activity.no)
+                              }
+                              disabled={
+                                props.isEditLoading ||
+                                (props.pendingPreviews[activity.no]?.length ?? 0) ===
+                                  0 &&
+                                activity.photos.length ===
+                                  (props.editableOriginalPhotos[activity.no]?.length ??
+                                    0)
+                              }
+                              className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-emerald-400 hover:bg-emerald-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
+                              aria-label={`Pulihkan foto asli aktivitas ke-${activity.no}`}
+                            >
+                              <RestoreIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
                       {(props.pendingPreviews[activity.no]?.length ?? 0) > 0 ||
                       activity.photos.length > 0 ? (
                         <div className="mt-4 flex flex-wrap gap-3">
@@ -588,7 +671,13 @@ export function EntryView(props: EntryViewProps) {
                             />
                           ))}
                           {(props.pendingPreviews[activity.no] ?? [])
-                            .slice(0, 1)
+                            .slice(
+                              0,
+                              Math.max(
+                                1,
+                                props.reportRules.maxPhotosPerActivity,
+                              ),
+                            )
                             .map((photo) => (
                               <img
                                 key={photo.url}
@@ -608,7 +697,8 @@ export function EntryView(props: EntryViewProps) {
                 <button
                   type="button"
                   onClick={props.onAddActivity}
-                  className="flex w-full items-center justify-center gap-2 bg-[var(--surface-accent)]/10 px-4 py-4 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-accent)]/20 active:bg-[var(--surface-accent)]/30"
+                  disabled={props.isEditLoading}
+                  className="flex w-full items-center justify-center gap-2 bg-[var(--surface-accent)]/10 px-4 py-4 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-accent)]/20 active:bg-[var(--surface-accent)]/30 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <PlusIcon className="h-4 w-4" />
                   Tambah baris aktivitas
@@ -787,7 +877,7 @@ export function EntryView(props: EntryViewProps) {
             <button
               type="button"
               onClick={() => void props.onHandleResetDraft()}
-              disabled={!props.hasDraftContent}
+              disabled={!props.hasDraftContent || props.isEditLoading}
               className="btn-ghost ml-auto text-sm disabled:opacity-50"
             >
               Reset draft
@@ -795,7 +885,8 @@ export function EntryView(props: EntryViewProps) {
             <button
               type="button"
               onClick={props.onAddActivity}
-              className="btn-secondary text-sm"
+              disabled={props.isEditLoading}
+              className="btn-secondary text-sm disabled:opacity-50"
             >
               Tambah baris
             </button>
@@ -867,7 +958,10 @@ export function EntryView(props: EntryViewProps) {
                   <button
                     type="button"
                     onClick={() => void props.onHandleExport(props.preview)}
-                    disabled={props.excelExportingReportId === props.preview.id}
+                    disabled={
+                      props.excelExportingReportId === props.preview.id ||
+                      props.isEditLoading
+                    }
                     className="btn-secondary px-3 py-2 text-xs disabled:opacity-60 sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
                     {props.excelExportingReportId === props.preview.id ? (
@@ -884,7 +978,8 @@ export function EntryView(props: EntryViewProps) {
                   <button
                     type="button"
                     onClick={() => void props.onHandlePrint(props.preview)}
-                    className="btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
+                    disabled={props.isEditLoading}
+                    className="btn-secondary px-3 py-2 text-xs disabled:opacity-60 sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
                     <PrintIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     <span className="hidden sm:inline">Print</span>
@@ -892,7 +987,7 @@ export function EntryView(props: EntryViewProps) {
                   <button
                     type="button"
                     onClick={() => void props.onSaveReport()}
-                    disabled={props.submitting}
+                    disabled={props.submitting || props.isEditLoading}
                     className="btn-primary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
                   >
                     <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />{" "}

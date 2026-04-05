@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { askConfirmation, showError, showInfo, showSuccess } from "../lib/alerts";
+import {
+  askAcknowledge,
+  askConfirmation,
+  openProgressToast,
+  showError,
+  showInfo,
+  showSuccess,
+} from "../lib/alerts";
 import {
   DEFAULT_REPORT_RULES,
   normalizeReportRules,
@@ -19,6 +26,12 @@ import {
 import { printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
+  createApproverDraftFromTemplate,
+  fetchActiveReportTemplateConfig,
+  saveTemplateApproverDefaults,
+} from "../lib/report-template-service";
+import {
+  applyTemplateDefaultsToDraft,
   createEmptyDraft,
   createPreviewReport,
   normalizeDraft,
@@ -32,11 +45,13 @@ import {
   checkReporterNameExists,
   deleteReportFromDatabase,
   deleteReporterDirectoryTrace,
+  fetchNotificationSettings,
   fetchReportRules,
   fetchReporterDirectoryProfiles,
   fetchReports,
   getActiveAdminSession,
   renameReporterDirectoryProfile,
+  saveNotificationSettingsToDatabase,
   saveReportRulesToDatabase,
   saveReportToDatabase,
   signInAdminAccount,
@@ -44,6 +59,11 @@ import {
   subscribeAdminSession,
   subscribeReportData,
 } from "../lib/report-service";
+import {
+  DEFAULT_NOTIFICATION_SETTINGS,
+  setRuntimeNotificationSettings,
+  saveNotificationSettings as persistNotificationSettings,
+} from "../lib/sound-utils";
 import {
   clearDraft,
   loadCachedReporterNames,
@@ -59,18 +79,50 @@ import {
 import { isWitaFriday } from "../lib/time";
 import { optimizeReportImages } from "../lib/image-optimizer";
 import type { AdminSessionState } from "../types/admin";
+import type { NotificationSettings } from "../types/notification-settings";
 import type {
   ExcelReportTemplate,
   ExcelTemplateUploadDraft,
 } from "../types/excel-template";
 import type {
+  ReportTemplateApproverDraft,
+  ReportTemplateApproverRole,
+  ReportTemplateConfig,
+} from "../types/report-template";
+import type {
   DraftReport,
   Report,
+  ReportActivityPhoto,
   ReporterDirectoryProfile,
 } from "../types/report";
 
 export type View = "entry" | "history" | "status" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
+const ACTIVE_TEMPLATE_VERSION_KEY = "silahar:active-template-version";
+
+function buildTemplateVersionId(template: ReportTemplateConfig | null) {
+  if (!template) {
+    return null;
+  }
+
+  return `${template.id}-${template.updatedAt.replace(/[^0-9]/g, "")}`;
+}
+
+function createDefaultApproverDraftMap(template: ReportTemplateConfig | null) {
+  return {
+    coordinator_team: createApproverDraftFromTemplate(
+      template,
+      "coordinator_team",
+    ),
+    division_head: createApproverDraftFromTemplate(template, "division_head"),
+  } satisfies Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>;
+}
+
+function mapOriginalActivityPhotos(report: Report) {
+  return Object.fromEntries(
+    report.activities.map((activity) => [activity.no, activity.photos ?? []]),
+  ) as Record<number, ReportActivityPhoto[]>;
+}
 
 function hasMeaningfulDraft(draft: DraftReport) {
   return Boolean(
@@ -86,11 +138,14 @@ function hasMeaningfulDraft(draft: DraftReport) {
 
 function createDraftSnapshot(draft: DraftReport, pendingPhotos: PendingPhotoMap) {
   return JSON.stringify({
+    templateId: draft.templateId,
     nama: draft.nama,
     tanggal: draft.tanggal,
     reportDate: draft.reportDate,
+    approverCoordinatorTemplateId: draft.approverCoordinatorTemplateId,
     approverCoordinator: draft.approverCoordinator,
     approverCoordinatorNip: draft.approverCoordinatorNip,
+    approverDivisionHeadTemplateId: draft.approverDivisionHeadTemplateId,
     approverDivisionHead: draft.approverDivisionHead,
     approverDivisionHeadTitle: draft.approverDivisionHeadTitle,
     approverDivisionHeadNip: draft.approverDivisionHeadNip,
@@ -145,6 +200,10 @@ export function useReportDashboard() {
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
   const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
   const [reporterProfiles, setReporterProfiles] = useState<ReporterDirectoryProfile[]>([]);
+  const [activeReportTemplateConfig, setActiveReportTemplateConfig] =
+    useState<ReportTemplateConfig | null>(null);
+  const [notificationSettings, setNotificationSettings] =
+    useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [excelTemplates, setExcelTemplates] = useState<ExcelReportTemplate[]>([]);
   const [excelTemplateDraft, setExcelTemplateDraft] =
     useState<ExcelTemplateUploadDraft>({
@@ -159,6 +218,9 @@ export function useReportDashboard() {
   >({});
   const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
   const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
+  const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(
+    null,
+  );
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
   const [historyName, setHistoryName] = useState("");
@@ -169,6 +231,9 @@ export function useReportDashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState<PendingPhotoMap>({});
   const [pendingPreviews, setPendingPreviews] = useState<PendingPreviewMap>({});
+  const [editableOriginalPhotos, setEditableOriginalPhotos] = useState<
+    Record<number, ReportActivityPhoto[]>
+  >({});
   const [nameCheckLoading, setNameCheckLoading] = useState(false);
   const [nameExistsInDirectory, setNameExistsInDirectory] = useState<boolean | null>(null);
   const [reportRules, setReportRules] = useState<ReportRules>(DEFAULT_REPORT_RULES);
@@ -178,6 +243,10 @@ export function useReportDashboard() {
   const [adminAuthLoading, setAdminAuthLoading] = useState(true);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
   const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(DEFAULT_REPORT_RULES);
+  const [adminTemplateApproverDrafts, setAdminTemplateApproverDrafts] =
+    useState<Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>>(
+      () => createDefaultApproverDraftMap(null),
+    );
   const [adminReporterDraftNames, setAdminReporterDraftNames] = useState<
     Record<string, string>
   >({});
@@ -187,6 +256,21 @@ export function useReportDashboard() {
   const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
   const [searchOpen, setSearchOpen] = useState(false);
   const realtimeReloadTimeoutRef = useRef<number | null>(null);
+  const backgroundRefreshIntervalRef = useRef<number | null>(null);
+  const templateVersionRef = useRef<string | null>(null);
+  const templatePreviousConfigRef = useRef<ReportTemplateConfig | null>(null);
+  const templateInitializedRef = useRef(false);
+  const templateRefreshPromptOpenRef = useRef(false);
+  const reportsRef = useRef(reports);
+  const reporterNamesRef = useRef(reporterNames);
+
+  useEffect(() => {
+    reportsRef.current = reports;
+  }, [reports]);
+
+  useEffect(() => {
+    reporterNamesRef.current = reporterNames;
+  }, [reporterNames]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -244,6 +328,29 @@ export function useReportDashboard() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadDashboardData();
+      }
+    };
+
+    backgroundRefreshIntervalRef.current = window.setInterval(() => {
+      refreshIfVisible();
+    }, 15000);
+
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+
+    return () => {
+      if (backgroundRefreshIntervalRef.current !== null) {
+        window.clearInterval(backgroundRefreshIntervalRef.current);
+      }
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, []);
   useEffect(() => {
     let alive = true;
 
@@ -277,6 +384,69 @@ export function useReportDashboard() {
 
     setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
   }, [adminSession, draft.reportDate, reportRules.allowAnyReportDate]);
+  useEffect(() => {
+    const nextVersionId = buildTemplateVersionId(activeReportTemplateConfig);
+
+    if (!nextVersionId) {
+      return;
+    }
+
+    if (!templateInitializedRef.current) {
+      templateInitializedRef.current = true;
+      templateVersionRef.current = nextVersionId;
+      templatePreviousConfigRef.current = activeReportTemplateConfig;
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextVersionId);
+      }
+      return;
+    }
+
+    if (nextVersionId === templateVersionRef.current) {
+      templatePreviousConfigRef.current = activeReportTemplateConfig;
+      return;
+    }
+
+    const previousTemplate = templatePreviousConfigRef.current;
+    templateVersionRef.current = nextVersionId;
+    templatePreviousConfigRef.current = activeReportTemplateConfig;
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextVersionId);
+    }
+
+    if (view === "entry") {
+      if (templateRefreshPromptOpenRef.current) {
+        return;
+      }
+
+      templateRefreshPromptOpenRef.current = true;
+      void askAcknowledge(
+        "Template form diperbarui",
+        "Admin baru saja mengubah data template. Klik OK untuk menyegarkan draft tanpa menghapus progres Anda.",
+        "OK",
+      )
+        .then(() => {
+          setDraft((current) =>
+            applyTemplateDefaultsToDraft(
+              current,
+              previousTemplate,
+              activeReportTemplateConfig,
+            ),
+          );
+        })
+        .finally(() => {
+          templateRefreshPromptOpenRef.current = false;
+        });
+      return;
+    }
+
+    setDraft((current) =>
+      applyTemplateDefaultsToDraft(
+        current,
+        previousTemplate,
+        activeReportTemplateConfig,
+      ),
+    );
+  }, [activeReportTemplateConfig, view]);
   useEffect(() => () => revokePreviews(pendingPreviews), [pendingPreviews]);
   useEffect(() => {
     if (!draft.nama.trim()) {
@@ -307,11 +477,15 @@ export function useReportDashboard() {
         dbReporterProfiles,
         dbReportRules,
         dbExcelTemplates,
+        dbActiveReportTemplateConfig,
+        dbNotificationSettings,
       ] = await Promise.all([
         fetchReports(),
         fetchReporterDirectoryProfiles(),
         fetchReportRules(),
         fetchExcelReportTemplates(),
+        fetchActiveReportTemplateConfig(),
+        fetchNotificationSettings(),
       ]);
       const dbReporterNames = dbReporterProfiles
         .filter((reporter) => reporter.isActive)
@@ -319,10 +493,17 @@ export function useReportDashboard() {
 
       setReports(dbReports);
       setReporterProfiles(dbReporterProfiles);
+      setActiveReportTemplateConfig(dbActiveReportTemplateConfig);
+      setNotificationSettings(dbNotificationSettings);
+      setRuntimeNotificationSettings(dbNotificationSettings);
+      persistNotificationSettings(dbNotificationSettings);
       setExcelTemplates(dbExcelTemplates);
       setReporterNames(dbReporterNames);
       setReportRules(dbReportRules);
       setAdminRuleDraft(dbReportRules);
+      setAdminTemplateApproverDrafts(
+        createDefaultApproverDraftMap(dbActiveReportTemplateConfig),
+      );
       setAdminReporterDraftNames((current) =>
         Object.fromEntries(
           dbReporterProfiles.map((reporter) => [
@@ -365,10 +546,20 @@ export function useReportDashboard() {
       });
       saveCachedReports(dbReports);
       saveCachedReporterNames(dbReporterNames);
+      setDraft((current) => {
+        if (hasMeaningfulDraft(current) || current.nama.trim()) {
+          return current;
+        }
+
+        return createEmptyDraft(dbActiveReportTemplateConfig);
+      });
     } catch (error) {
       console.error(error);
       setReportRules(DEFAULT_REPORT_RULES);
-      if (reports.length === 0 && reporterNames.length === 0) {
+      if (
+        reportsRef.current.length === 0 &&
+        reporterNamesRef.current.length === 0
+      ) {
         await showError("Database belum tersedia", "Data database belum bisa dimuat dan cache belum tersedia.");
       }
     } finally {
@@ -513,23 +704,125 @@ export function useReportDashboard() {
         .filter(([key]) => Number(key) !== index + 1)
         .map(([key, previews]) => [Number(key) > index + 1 ? Number(key) - 1 : Number(key), previews] as const);
       return Object.fromEntries(nextEntries);
+      });
+    }
+
+  function clearActivityFiles(activityNo: number) {
+    setDraft((current) =>
+      normalizeDraft({
+        ...current,
+        activities: current.activities.map((activity) =>
+          activity.no === activityNo ? { ...activity, photos: [] } : activity,
+        ),
+      }),
+    );
+
+    setPendingPhotos((current) => {
+      if (!(activityNo in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[activityNo];
+      return next;
+    });
+
+    setPendingPreviews((current) => {
+      (current[activityNo] ?? []).forEach((photo) => URL.revokeObjectURL(photo.url));
+
+      if (!(activityNo in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[activityNo];
+      return next;
+    });
+  }
+
+  function restoreActivityFiles(activityNo: number) {
+    const originalPhotos = editableOriginalPhotos[activityNo] ?? [];
+
+    if (originalPhotos.length === 0) {
+      return;
+    }
+
+    setDraft((current) =>
+      normalizeDraft({
+        ...current,
+        activities: current.activities.map((activity) =>
+          activity.no === activityNo
+            ? { ...activity, photos: originalPhotos }
+            : activity,
+        ),
+      }),
+    );
+
+    setPendingPhotos((current) => {
+      if (!(activityNo in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[activityNo];
+      return next;
+    });
+
+    setPendingPreviews((current) => {
+      (current[activityNo] ?? []).forEach((photo) => URL.revokeObjectURL(photo.url));
+
+      if (!(activityNo in current)) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[activityNo];
+      return next;
     });
   }
 
   async function setActivityFiles(activityNo: number, files: FileList | null) {
     const selectedFiles = files ? Array.from(files) : [];
-    const limitedFiles = selectedFiles.slice(0, reportRules.maxPhotosPerActivity);
+    const targetActivity = draft.activities.find((activity) => activity.no === activityNo);
+    const existingPhotos = targetActivity?.photos ?? [];
+    const maxPhotosPerActivity = reportRules.maxPhotosPerActivity;
+    const remainingSlots = Math.max(0, maxPhotosPerActivity - existingPhotos.length);
+    const shouldReplaceExisting =
+      existingPhotos.length > 0 && selectedFiles.length > remainingSlots;
+    const allowedSelectionCount = shouldReplaceExisting
+      ? maxPhotosPerActivity
+      : remainingSlots;
+    const limitedFiles = selectedFiles.slice(0, allowedSelectionCount);
 
-    if (selectedFiles.length > reportRules.maxPhotosPerActivity) {
+    if (selectedFiles.length > allowedSelectionCount) {
       void showInfo(
         "Batas foto aktivitas",
-        reportRules.maxPhotosPerActivity === 1
-          ? "Saat ini setiap baris aktivitas hanya dapat menyimpan 1 foto. Sistem hanya mengambil file pertama."
-          : `Saat ini setiap baris aktivitas hanya dapat menyimpan ${reportRules.maxPhotosPerActivity} foto. Sistem hanya mengambil file sesuai batas tersebut.`,
+        shouldReplaceExisting
+          ? maxPhotosPerActivity === 1
+            ? "Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan 1 foto."
+            : `Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan ${maxPhotosPerActivity} foto.`
+          : maxPhotosPerActivity === 1
+            ? "Saat ini setiap baris aktivitas hanya dapat menyimpan 1 foto. Sistem hanya mengambil file pertama."
+            : `Saat ini setiap baris aktivitas hanya dapat menyimpan ${maxPhotosPerActivity} foto. Sistem hanya mengambil file sesuai sisa kapasitas yang tersedia.`,
       );
     }
 
+    if (selectedFiles.length === 0 || limitedFiles.length === 0) {
+      return;
+    }
+
     const nextFiles = await optimizeReportImages(limitedFiles);
+
+    if (shouldReplaceExisting) {
+      setDraft((current) =>
+        normalizeDraft({
+          ...current,
+          activities: current.activities.map((activity) =>
+            activity.no === activityNo ? { ...activity, photos: [] } : activity,
+          ),
+        }),
+      );
+    }
 
     setPendingPhotos((current) => ({ ...current, [activityNo]: nextFiles }));
     setPendingPreviews((current) => {
@@ -545,16 +838,18 @@ export function useReportDashboard() {
     revokePreviews(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
+    setEditableOriginalPhotos({});
     setLoadedSearchReportId(null);
     setLoadedSearchSnapshot(null);
     clearDraft();
-    setDraft(createEmptyDraft());
+    setDraft(createEmptyDraft(activeReportTemplateConfig));
     setDraftSavedAt(null);
     setDraftCacheStatus("idle");
   }
 
   function loadReportIntoDraft(report: Report) {
     const nextDraft = normalizeDraft({
+      templateId: report.templateId,
       nama: report.nama,
       tanggal: report.tanggal,
       reportDate: report.reportDate,
@@ -566,8 +861,10 @@ export function useReportDashboard() {
         endTime: activity.endTime,
         photos: activity.photos ?? [],
       })),
+      approverCoordinatorTemplateId: report.approverCoordinatorTemplateId,
       approverCoordinator: report.approverCoordinator,
       approverCoordinatorNip: report.approverCoordinatorNip,
+      approverDivisionHeadTemplateId: report.approverDivisionHeadTemplateId,
       approverDivisionHead: report.approverDivisionHead,
       approverDivisionHeadTitle: report.approverDivisionHeadTitle,
       approverDivisionHeadNip: report.approverDivisionHeadNip,
@@ -577,6 +874,7 @@ export function useReportDashboard() {
     revokePreviews(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
+    setEditableOriginalPhotos(mapOriginalActivityPhotos(report));
     setDraft(nextDraft);
     setLoadedSearchReportId(report.id);
     setLoadedSearchSnapshot(createDraftSnapshot(nextDraft, {}));
@@ -600,8 +898,14 @@ export function useReportDashboard() {
       isReloadingOriginal ? "Muat ulang" : "Lanjut edit",
     );
     if (!confirmed) return;
-    loadReportIntoDraft(report);
-    setView("entry");
+    setEditLoadingReportId(report.id);
+    try {
+      await Promise.resolve();
+      loadReportIntoDraft(report);
+      setView("entry");
+    } finally {
+      setEditLoadingReportId(null);
+    }
   }
 
   async function handleResetDraft() {
@@ -620,12 +924,21 @@ export function useReportDashboard() {
     }
 
     setExcelExportingReportId(report.id);
-    try {
-      await generateDailyReportExcel({
-        report,
-        template: activeExcelTemplate,
-        pendingPhotos: report.id === "preview" ? pendingPhotos : undefined,
-      });
+      const progressToast = openProgressToast("Menyiapkan export Excel", [
+        { id: "prepare", label: "Menyiapkan template" },
+        { id: "mapping", label: "Memetakan data laporan" },
+        { id: "images", label: "Memproses dokumentasi" },
+        { id: "build", label: "Menyusun file Excel" },
+        { id: "download", label: "Memulai unduhan" },
+      ]);
+      try {
+        await generateDailyReportExcel({
+          report,
+          template: activeExcelTemplate,
+          pendingPhotos: report.id === "preview" ? pendingPhotos : undefined,
+          onStage: (stageId, detail) => progressToast.update(stageId, detail),
+        });
+      progressToast.close();
     } catch (error) {
       console.error(error);
       await showError(
@@ -694,8 +1007,21 @@ export function useReportDashboard() {
     if (!confirmed) return;
 
     setSubmitting(true);
-    try {
-      await saveReportToDatabase(draft, pendingPhotos, duplicateReport, reportRules);
+      const progressToast = openProgressToast("Menyimpan laporan", [
+        { id: "prepare", label: "Menyiapkan laporan" },
+        { id: "activities", label: "Menyimpan aktivitas" },
+        { id: "photos", label: "Memproses dokumentasi" },
+        { id: "finalize", label: "Finalisasi laporan" },
+      ]);
+      try {
+        await saveReportToDatabase(
+          draft,
+          pendingPhotos,
+          duplicateReport,
+          reportRules,
+          (stageId, detail) => progressToast.update(stageId, detail),
+        );
+      progressToast.close();
       await loadDashboardData();
       setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
       resetDraftState();
@@ -1153,6 +1479,121 @@ export function useReportDashboard() {
     }
   }
 
+  function changeAdminTemplateApproverDraft<
+    K extends keyof ReportTemplateApproverDraft,
+  >(
+    role: ReportTemplateApproverRole,
+    key: K,
+    value: ReportTemplateApproverDraft[K],
+  ) {
+    setAdminTemplateApproverDrafts((current) => ({
+      ...current,
+      [role]: {
+        ...current[role],
+        [key]:
+          typeof value === "string" ? value.toUpperCase() : (value as string),
+      },
+    }));
+  }
+
+  async function handleSaveTemplateApproverDefaults() {
+    if (!adminSession) {
+      await showError(
+        "Akses admin diperlukan",
+        "Silakan login admin terlebih dahulu.",
+      );
+      return;
+    }
+
+    if (!activeReportTemplateConfig) {
+      await showError(
+        "Template laporan belum tersedia",
+        "Template laporan aktif belum ditemukan di database.",
+      );
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      const nextTemplate = await saveTemplateApproverDefaults(
+        activeReportTemplateConfig.id,
+        adminTemplateApproverDrafts,
+      );
+
+      setActiveReportTemplateConfig(nextTemplate);
+      setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(nextTemplate));
+      setDraft((current) => {
+        if (hasMeaningfulDraft(current) || current.nama.trim()) {
+          return current;
+        }
+
+        return createEmptyDraft(nextTemplate);
+      });
+      await loadDashboardData();
+      await showSuccess(
+        "Default pejabat diperbarui",
+        "Form laporan sekarang mengikuti template pejabat terbaru.",
+      );
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Default pejabat template belum berhasil disimpan.";
+      await showError("Simpan default pejabat gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
+  function changeNotificationSettings<K extends keyof NotificationSettings>(
+    key: K,
+    value: NotificationSettings[K],
+  ) {
+    setNotificationSettings((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
+  async function handleSaveNotificationSettings() {
+    if (!adminSession) {
+      await showError(
+        "Akses admin diperlukan",
+        "Silakan login admin terlebih dahulu.",
+      );
+      return;
+    }
+
+    setAdminSubmitting(true);
+    try {
+      const nextSettings =
+        await saveNotificationSettingsToDatabase(notificationSettings);
+      setNotificationSettings(nextSettings);
+      setRuntimeNotificationSettings(nextSettings);
+      persistNotificationSettings(nextSettings);
+      await showSuccess(
+        "Pengaturan notifikasi diperbarui",
+        "Aturan suara alert global sudah disimpan ke database.",
+      );
+    } catch (error) {
+      console.error(error);
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof error.message === "string"
+          ? error.message
+          : "Pengaturan notifikasi belum berhasil disimpan.";
+      await showError("Simpan notifikasi gagal", message);
+    } finally {
+      setAdminSubmitting(false);
+    }
+  }
+
   return {
     view,
     setView,
@@ -1161,6 +1602,8 @@ export function useReportDashboard() {
     draft,
     reports,
     reporterProfiles,
+    activeReportTemplateConfig,
+    notificationSettings,
     excelTemplates,
     activeExcelTemplate,
     excelTemplateDraft,
@@ -1168,6 +1611,7 @@ export function useReportDashboard() {
     adminExcelTemplateDrafts,
     excelTemplateUploading,
     excelExportingReportId,
+    editLoadingReportId,
     savedNames: deviceSubmittedNames,
     reporterNames,
     historyName,
@@ -1193,6 +1637,7 @@ export function useReportDashboard() {
     adminAuthLoading,
     adminSubmitting,
     adminRuleDraft,
+    adminTemplateApproverDrafts,
     adminReporterDraftNames,
     canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
     canManageReports: Boolean(adminSession),
@@ -1216,6 +1661,9 @@ export function useReportDashboard() {
     addActivity,
     removeActivity,
     setActivityFiles,
+    clearActivityFiles,
+    restoreActivityFiles,
+    editableOriginalPhotos,
     handleDeleteReport,
     handleLoadEdit,
     handleResetDraft,
@@ -1224,6 +1672,8 @@ export function useReportDashboard() {
     saveReport,
     handleRemoveSavedName,
     changeAdminRule,
+    changeNotificationSettings,
+    changeAdminTemplateApproverDraft,
     changeExcelTemplateDraft,
     clearExcelTemplateDraftName,
     selectExcelTemplateFile,
@@ -1238,5 +1688,8 @@ export function useReportDashboard() {
     handleDeleteExcelTemplate,
     handleRenameReporterProfile,
     handleSaveAdminRules,
+    handleSaveTemplateApproverDefaults,
+    handleSaveNotificationSettings,
+    isEditLoading: editLoadingReportId !== null,
   };
 }

@@ -1,7 +1,21 @@
 import { getWitaToday, nowIso } from "../lib/time";
+import {
+  fallbackReportTemplateConfig,
+  getTemplateApproverByRole,
+} from "../lib/report-template-defaults";
 import type { DraftReport, Report } from "../types/report";
 
+const fallbackCoordinator = getTemplateApproverByRole(
+  fallbackReportTemplateConfig,
+  "coordinator_team",
+);
+const fallbackDivisionHead = getTemplateApproverByRole(
+  fallbackReportTemplateConfig,
+  "division_head",
+);
+
 export const defaultDraft: DraftReport = {
+  templateId: fallbackReportTemplateConfig.id,
   nama: "",
   tanggal: "RABU, 01 APRIL 2026",
   reportDate: getWitaToday(),
@@ -14,20 +28,20 @@ export const defaultDraft: DraftReport = {
       photos: [],
     },
   ],
-  approverCoordinator: "ARIS PEBRIANSYAH, S.STP, M.AP",
-  approverCoordinatorNip: "199602102018081001",
-  approverDivisionHead: "ANDY A SEMBIRING,.S.STP,.M.Si",
-  approverDivisionHeadTitle: "Pembina Utama Tkt I",
-  approverDivisionHeadNip: "19831221 200212 1 004",
-  notes: [
-    "DIKUMPULKAN SETIAP HARI DI ADMIN.",
-    "LAPORAN DI KUMPULKAN DENGAN MAP SNEILHEKTER YANG TELAH DI BERIKAN NAMA MASING2.",
-  ],
+  approverCoordinatorTemplateId: fallbackCoordinator?.id ?? null,
+  approverCoordinator: fallbackCoordinator?.officialName ?? "",
+  approverCoordinatorNip: fallbackCoordinator?.officialNip ?? "",
+  approverDivisionHeadTemplateId: fallbackDivisionHead?.id ?? null,
+  approverDivisionHead: fallbackDivisionHead?.officialName ?? "",
+  approverDivisionHeadTitle: fallbackDivisionHead?.officialTitle ?? "",
+  approverDivisionHeadNip: fallbackDivisionHead?.officialNip ?? "",
+  notes: fallbackReportTemplateConfig.notes,
 };
 
 export const seededReports: Report[] = [
   {
     id: "RPT-001",
+    templateId: fallbackReportTemplateConfig.id,
     nama: "MUHAMMAD FAHRIL, S.KOM.",
     tanggal: "RABU, 01 APRIL 2026",
     reportDate: getWitaToday(),
@@ -47,15 +61,14 @@ export const seededReports: Report[] = [
         photos: [],
       },
     ],
-    approverCoordinator: "ARIS PEBRIANSYAH, S.STP, M.AP",
-    approverCoordinatorNip: "199602102018081001",
-    approverDivisionHead: "ANDY A SEMBIRING,.S.STP,.M.Si",
-    approverDivisionHeadTitle: "Pembina Utama Tkt I",
-    approverDivisionHeadNip: "19831221 200212 1 004",
-    notes: [
-      "DIKUMPULKAN SETIAP HARI DI ADMIN.",
-      "LAPORAN DI KUMPULKAN DENGAN MAP SNEILHEKTER YANG TELAH DI BERIKAN NAMA MASING2.",
-    ],
+    approverCoordinatorTemplateId: fallbackCoordinator?.id ?? null,
+    approverCoordinator: fallbackCoordinator?.officialName ?? "",
+    approverCoordinatorNip: fallbackCoordinator?.officialNip ?? "",
+    approverDivisionHeadTemplateId: fallbackDivisionHead?.id ?? null,
+    approverDivisionHead: fallbackDivisionHead?.officialName ?? "",
+    approverDivisionHeadTitle: fallbackDivisionHead?.officialTitle ?? "",
+    approverDivisionHeadNip: fallbackDivisionHead?.officialNip ?? "",
+    notes: fallbackReportTemplateConfig.notes,
     createdAt: nowIso(),
     updatedAt: nowIso(),
     createdByRole: "anonymous",
