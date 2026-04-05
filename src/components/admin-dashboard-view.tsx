@@ -21,11 +21,7 @@ import {
   type ReporterSortMode,
 } from "./admin-reporter-toolbar";
 import { FileUploadInput } from "./file-upload-input";
-import {
-  SUCCESS_SOUNDS,
-  FAIL_SOUNDS,
-  playSound,
-} from "../lib/sound-utils";
+import { SUCCESS_SOUNDS, FAIL_SOUNDS, playSound } from "../lib/sound-utils";
 
 const inputClassName = "field-input";
 
@@ -116,6 +112,7 @@ type AdminDashboardViewProps = {
   onHandleDeleteReporterTrace: (
     reporter: ReporterDirectoryProfile,
   ) => Promise<void>;
+  isOnline: boolean;
 };
 
 function AdminSectionTabs({
@@ -455,7 +452,9 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
           <button
             type="button"
             onClick={() => void props.onHandleSaveTemplateApproverDefaults()}
-            disabled={props.adminSubmitting || !props.activeReportTemplateConfig}
+            disabled={
+              props.adminSubmitting || !props.activeReportTemplateConfig
+            }
             className="btn-primary min-w-[176px] px-4 py-2 text-sm disabled:opacity-60"
           >
             {props.adminActiveAction === "save-template-approvers" ? (
@@ -478,14 +477,17 @@ type ReporterManagementPanelProps = AdminDashboardViewProps & {
 };
 
 function ReporterManagementPanel(props: ReporterManagementPanelProps) {
-  const [editingReporterId, setEditingReporterId] = useState<string | null>(null);
+  const [editingReporterId, setEditingReporterId] = useState<string | null>(
+    null,
+  );
   const [selectedReporterId, setSelectedReporterId] = useState<string | null>(
     null,
   );
 
   const selectedReporter =
-    props.reporterProfiles.find((reporter) => reporter.id === selectedReporterId) ??
-    null;
+    props.reporterProfiles.find(
+      (reporter) => reporter.id === selectedReporterId,
+    ) ?? null;
 
   const visibleReporters = props.reporterProfiles
     .filter((reporter) =>
@@ -554,7 +556,9 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
               <div className="flex flex-wrap gap-x-4 gap-y-1">
                 <span>{reporter.totalReports} laporan</span>
                 {reporter.firstReportedAt ? (
-                  <span>Awal: {formatWitaDateTime(reporter.firstReportedAt)}</span>
+                  <span>
+                    Awal: {formatWitaDateTime(reporter.firstReportedAt)}
+                  </span>
                 ) : null}
                 {reporter.lastReportedAt ? (
                   <span>
@@ -580,7 +584,10 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
                   }
                 />
                 <div className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)]">
-                  <p>Data relasional laporan ikut memakai nama terbaru saat disimpan.</p>
+                  <p>
+                    Data relasional laporan ikut memakai nama terbaru saat
+                    disimpan.
+                  </p>
                 </div>
               </div>
             }
@@ -618,7 +625,9 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
 }
 
 function ExcelTemplatePanel(props: AdminDashboardViewProps) {
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
+    null,
+  );
 
   return (
     <div className="space-y-4">
@@ -737,7 +746,9 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
               meta={
                 <>
                   <p className="break-all">{template.storagePath}</p>
-                  <p className="mt-1">Update: {formatWitaDateTime(template.updatedAt)}</p>
+                  <p className="mt-1">
+                    Update: {formatWitaDateTime(template.updatedAt)}
+                  </p>
                 </>
               }
               isEditing={isEditing}
@@ -812,10 +823,11 @@ function ExcelTemplatePanel(props: AdminDashboardViewProps) {
               onPrimaryAction={
                 template.isActive
                   ? undefined
-                  : () =>
-                      void props.onHandleActivateExcelTemplate(template.id)
+                  : () => void props.onHandleActivateExcelTemplate(template.id)
               }
-              primaryActionLabel={template.isActive ? "Sedang aktif" : "Jadikan utama"}
+              primaryActionLabel={
+                template.isActive ? "Sedang aktif" : "Jadikan utama"
+              }
               onDelete={
                 template.isActive
                   ? undefined
@@ -861,18 +873,26 @@ function SoundSettingsPanel(props: {
   ) => {
     props.onChangeNotificationSettings(type, {
       ...props.notificationSettings[type],
-        [key]: value,
+      [key]: value,
     });
   };
 
-  const renderSection = (type: "success" | "fail", title: string, list: Record<string, string>) => {
+  const renderSection = (
+    type: "success" | "fail",
+    title: string,
+    list: Record<string, string>,
+  ) => {
     const config = props.notificationSettings[type];
     return (
       <div className="surface-card rounded-[24px] p-5">
-        <h4 className="text-base font-semibold text-[var(--text-primary)] mb-4">{title}</h4>
+        <h4 className="text-base font-semibold text-[var(--text-primary)] mb-4">
+          {title}
+        </h4>
         <div className="grid gap-4">
           <label className="space-y-2">
-            <span className="text-sm font-medium text-[var(--text-muted)]">Mode Putar</span>
+            <span className="text-sm font-medium text-[var(--text-muted)]">
+              Mode Putar
+            </span>
             <select
               className={inputClassName}
               value={config.mode}
@@ -885,15 +905,23 @@ function SoundSettingsPanel(props: {
 
           {config.mode === "specific" && (
             <label className="space-y-2">
-              <span className="text-sm font-medium text-[var(--text-muted)]">File Suara</span>
+              <span className="text-sm font-medium text-[var(--text-muted)]">
+                File Suara
+              </span>
               <select
                 className={inputClassName}
                 value={config.specificFile || ""}
-                onChange={(e) => handleUpdate(type, "specificFile", e.target.value)}
+                onChange={(e) =>
+                  handleUpdate(type, "specificFile", e.target.value)
+                }
               >
-                <option value="" disabled>Pilih suara...</option>
+                <option value="" disabled>
+                  Pilih suara...
+                </option>
                 {Object.keys(list).map((name) => (
-                  <option key={name} value={name}>{name}</option>
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
                 ))}
               </select>
             </label>
@@ -958,7 +986,10 @@ function SoundSettingsPanel(props: {
       {renderSection("success", "Suara Berhasil (Success)", SUCCESS_SOUNDS)}
       {renderSection("fail", "Suara Gagal (Error)", FAIL_SOUNDS)}
       <div className="md:col-span-2 surface-card rounded-[24px] border border-dashed border-[var(--border-soft)] bg-[var(--surface-muted)]/30 p-4 text-xs text-[var(--text-muted)]">
-        <p>💡 Fitur iseng: Suara hanya tersimpan di browser ini saja (Local Storage). Admin lain mungkin punya selera audio yang berbeda!</p>
+        <p>
+          💡 Fitur iseng: Suara hanya tersimpan di browser ini saja (Local
+          Storage). Admin lain mungkin punya selera audio yang berbeda!
+        </p>
       </div>
     </div>
   );
@@ -983,8 +1014,12 @@ function AdminLoadingOverlay() {
         </div>
       </div>
       <div className="text-center">
-        <p className="text-sm font-bold tracking-widest uppercase text-[var(--text-primary)]">Verifikasi Akses</p>
-        <p className="mt-1 text-xs text-[var(--text-muted)] animate-pulse">Memuat kredensial admin...</p>
+        <p className="text-sm font-bold tracking-widest uppercase text-[var(--text-primary)]">
+          Verifikasi Akses
+        </p>
+        <p className="mt-1 text-xs text-[var(--text-muted)] animate-pulse">
+          Memuat kredensial admin...
+        </p>
       </div>
     </div>
   );
@@ -993,8 +1028,14 @@ function AdminLoadingOverlay() {
 export function AdminDashboardView(props: AdminDashboardViewProps) {
   const [activeSection, setActiveSection] = useState<AdminSection>(() => {
     if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("silahar:admin-active-section");
-      if (stored === "rules" || stored === "reporters" || stored === "templates") {
+      const stored = window.localStorage.getItem(
+        "silahar:admin-active-section",
+      );
+      if (
+        stored === "rules" ||
+        stored === "reporters" ||
+        stored === "templates"
+      ) {
         return stored as AdminSection;
       }
     }
@@ -1006,7 +1047,10 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      window.localStorage.setItem("silahar:admin-active-section", activeSection);
+      window.localStorage.setItem(
+        "silahar:admin-active-section",
+        activeSection,
+      );
     }
   }, [activeSection]);
 
@@ -1073,7 +1117,9 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                 ) : null}
               </div>
 
-              {activeSection === "rules" ? <ReportRulesPanel {...props} /> : null}
+              {activeSection === "rules" ? (
+                <ReportRulesPanel {...props} />
+              ) : null}
               {activeSection === "reporters" ? (
                 <ReporterManagementPanel
                   {...props}
@@ -1092,7 +1138,9 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                   notificationSettings={props.notificationSettings}
                   adminSubmitting={props.adminSubmitting}
                   adminActiveAction={props.adminActiveAction}
-                  onChangeNotificationSettings={props.onChangeNotificationSettings}
+                  onChangeNotificationSettings={
+                    props.onChangeNotificationSettings
+                  }
                   onHandleSaveNotificationSettings={
                     props.onHandleSaveNotificationSettings
                   }

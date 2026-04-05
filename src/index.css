@@ -8,9 +8,21 @@
   --text-muted: #5f6b80;
   --text-soft: #7d899d;
   --surface-app:
-    radial-gradient(circle at top left, rgba(77, 146, 216, 0.22), transparent 26%),
-    radial-gradient(circle at 82% 10%, rgba(74, 180, 155, 0.2), transparent 24%),
-    radial-gradient(circle at 18% 92%, rgba(232, 141, 86, 0.18), transparent 28%),
+    radial-gradient(
+      circle at top left,
+      rgba(77, 146, 216, 0.22),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 82% 10%,
+      rgba(74, 180, 155, 0.2),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 18% 92%,
+      rgba(232, 141, 86, 0.18),
+      transparent 28%
+    ),
     linear-gradient(180deg, #f6f9ff 0%, #edf3fb 54%, #f4f8f2 100%);
   --surface-panel: rgba(255, 255, 255, 0.76);
   --surface-panel-strong: rgba(255, 255, 255, 0.92);
@@ -21,7 +33,8 @@
   --text-tooltip: #f8fcff;
   --border-soft: rgba(146, 164, 187, 0.28);
   --border-strong: rgba(88, 117, 152, 0.22);
-  --shadow-soft: 0 20px 60px rgba(19, 33, 58, 0.12), 0 6px 18px rgba(37, 95, 153, 0.08);
+  --shadow-soft:
+    0 20px 60px rgba(19, 33, 58, 0.12), 0 6px 18px rgba(37, 95, 153, 0.08);
   --shadow-card: 0 16px 40px rgba(19, 33, 58, 0.12);
   --field-bg: rgba(255, 255, 255, 0.98);
   --field-border: rgba(132, 150, 175, 0.3);
@@ -48,8 +61,16 @@
   --text-muted: #a4b0c2;
   --text-soft: #8792a4;
   --surface-app:
-    radial-gradient(circle at top left, rgba(69, 117, 179, 0.26), transparent 26%),
-    radial-gradient(circle at 84% 12%, rgba(53, 118, 112, 0.28), transparent 25%),
+    radial-gradient(
+      circle at top left,
+      rgba(69, 117, 179, 0.26),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 84% 12%,
+      rgba(53, 118, 112, 0.28),
+      transparent 25%
+    ),
     radial-gradient(circle at 18% 88%, rgba(135, 87, 58, 0.2), transparent 24%),
     linear-gradient(180deg, #0d131b 0%, #111926 54%, #101823 100%);
   --surface-panel: rgba(17, 24, 37, 0.78);
@@ -61,7 +82,8 @@
   --text-tooltip: #0f172a;
   --border-soft: rgba(129, 152, 186, 0.2);
   --border-strong: rgba(150, 171, 199, 0.18);
-  --shadow-soft: 0 22px 62px rgba(0, 0, 0, 0.4), 0 8px 20px rgba(4, 10, 18, 0.42);
+  --shadow-soft:
+    0 22px 62px rgba(0, 0, 0, 0.4), 0 8px 20px rgba(4, 10, 18, 0.42);
   --shadow-card: 0 18px 44px rgba(0, 0, 0, 0.34);
   --field-bg: rgba(12, 19, 30, 0.92);
   --field-border: rgba(125, 148, 181, 0.22);
@@ -89,9 +111,21 @@
   --text-muted: #5f7087;
   --text-soft: #7f8ea3;
   --surface-app:
-    radial-gradient(circle at top left, rgba(99, 179, 237, 0.28), transparent 26%),
-    radial-gradient(circle at 82% 14%, rgba(52, 211, 153, 0.22), transparent 24%),
-    radial-gradient(circle at 18% 90%, rgba(251, 146, 60, 0.2), transparent 26%),
+    radial-gradient(
+      circle at top left,
+      rgba(99, 179, 237, 0.28),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 82% 14%,
+      rgba(52, 211, 153, 0.22),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 18% 90%,
+      rgba(251, 146, 60, 0.2),
+      transparent 26%
+    ),
     linear-gradient(180deg, #f6fbff 0%, #fef6f1 50%, #f2fbf6 100%);
   --surface-panel: rgba(255, 255, 255, 0.8);
   --surface-panel-strong: rgba(255, 255, 255, 0.94);
@@ -102,7 +136,8 @@
   --text-tooltip: #f8fcff;
   --border-soft: rgba(148, 163, 184, 0.3);
   --border-strong: rgba(99, 102, 241, 0.16);
-  --shadow-soft: 0 22px 60px rgba(79, 70, 229, 0.09), 0 8px 18px rgba(14, 165, 233, 0.08);
+  --shadow-soft:
+    0 22px 60px rgba(79, 70, 229, 0.09), 0 8px 18px rgba(14, 165, 233, 0.08);
   --shadow-card: 0 16px 40px rgba(79, 70, 229, 0.08);
   --field-bg: rgba(255, 255, 255, 0.98);
   --field-border: rgba(148, 163, 184, 0.34);
@@ -163,7 +198,12 @@ select:focus {
 }
 
 .skeleton {
-  background: linear-gradient(90deg, rgba(214, 222, 233, 0.25) 25%, rgba(255, 255, 255, 0.55) 50%, rgba(214, 222, 233, 0.25) 75%);
+  background: linear-gradient(
+    90deg,
+    rgba(214, 222, 233, 0.25) 25%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(214, 222, 233, 0.25) 75%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.6s infinite linear;
 }
@@ -227,7 +267,9 @@ select:focus {
   align-items: flex-start;
   gap: 0.65rem;
   opacity: 0.72;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .swal-progress-row.is-active,
@@ -345,7 +387,11 @@ select:focus {
 }
 
 .swal-confirm {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--primary) 0%,
+    var(--primary-strong) 100%
+  );
   color: var(--primary-contrast);
 }
 
@@ -404,14 +450,18 @@ select:focus {
     background: var(--field-bg);
     padding: 0.8rem 0.95rem;
     color: var(--text-primary);
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      background-color 0.18s ease;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
   .field-input:focus,
   .field-textarea:focus {
     border-color: var(--field-border-focus);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--field-border-focus) 16%, transparent);
+    box-shadow: 0 0 0 4px
+      color-mix(in srgb, var(--field-border-focus) 16%, transparent);
   }
 
   .field-input::placeholder,
@@ -428,7 +478,10 @@ select:focus {
     color: var(--text-primary);
     resize: vertical;
     min-height: 120px;
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      background-color 0.18s ease;
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
   }
 
@@ -443,11 +496,19 @@ select:focus {
     border-radius: 999px;
     padding: 0.8rem 1.15rem;
     font-weight: 600;
-    transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.18s ease, border-color 0.18s ease;
+    transition:
+      transform 0.15s ease,
+      opacity 0.15s ease,
+      background-color 0.18s ease,
+      border-color 0.18s ease;
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+    background: linear-gradient(
+      135deg,
+      var(--primary) 0%,
+      var(--primary-strong) 100%
+    );
     color: var(--primary-contrast);
   }
 
@@ -593,7 +654,11 @@ select:focus {
     width: var(--active-tab-width, calc((100% - 0.5rem) / 4));
     height: calc(100% - 0.5rem);
     border-radius: 999px;
-    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-strong) 100%);
+    background: linear-gradient(
+      135deg,
+      var(--primary) 0%,
+      var(--primary-strong) 100%
+    );
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
     transform: translateX(var(--active-tab-x, 0.25rem));
     transition:
@@ -658,7 +723,6 @@ select:focus {
     color: var(--text-primary);
   }
 
-
   .navbar-motion-track {
     pointer-events: none;
     position: absolute;
@@ -704,7 +768,12 @@ select:focus {
   }
 
   .sticky-fade {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--surface-panel-strong) 94%, transparent) 0%, color-mix(in srgb, var(--surface-panel-strong) 84%, transparent) 72%, transparent 100%);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface-panel-strong) 94%, transparent) 0%,
+      color-mix(in srgb, var(--surface-panel-strong) 84%, transparent) 72%,
+      transparent 100%
+    );
     backdrop-filter: blur(16px);
   }
 
@@ -730,18 +799,30 @@ select:focus {
     align-items: center;
     justify-content: center;
     background: var(--surface-elevated);
-    transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+    transition:
+      transform 0.18s ease,
+      border-color 0.18s ease,
+      background-color 0.18s ease,
+      color 0.18s ease;
   }
 
   .cache-status-button.is-idle {
     color: var(--danger);
-    background: color-mix(in srgb, var(--danger-soft) 72%, var(--surface-elevated));
+    background: color-mix(
+      in srgb,
+      var(--danger-soft) 72%,
+      var(--surface-elevated)
+    );
   }
 
   .cache-status-button.is-saving,
   .cache-status-button.is-saved {
     color: var(--success);
-    background: color-mix(in srgb, var(--success-soft) 74%, var(--surface-elevated));
+    background: color-mix(
+      in srgb,
+      var(--success-soft) 74%,
+      var(--surface-elevated)
+    );
   }
 
   .cache-status-button.is-saved {
@@ -766,7 +847,11 @@ select:focus {
     max-width: 260px;
     border-radius: 14px;
     padding: 0.7rem 0.8rem;
-    background: color-mix(in srgb, var(--surface-panel-strong) 96%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--surface-panel-strong) 96%,
+      transparent
+    );
     border: 1px solid var(--border-soft);
     box-shadow: var(--shadow-card);
     color: var(--text-primary);
@@ -774,7 +859,9 @@ select:focus {
     line-height: 1.45;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.16s ease, transform 0.16s ease;
+    transition:
+      opacity 0.16s ease,
+      transform 0.16s ease;
     backdrop-filter: blur(14px);
     z-index: 30;
   }
@@ -805,7 +892,8 @@ select:focus {
     min-width: 180px;
     max-width: 260px;
     border-radius: 16px;
-    border: 1px solid color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
+    border: 1px solid
+      color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
     background: var(--surface-tooltip);
     box-shadow: 0 16px 40px rgba(15, 23, 38, 0.24);
     color: var(--text-tooltip);
@@ -814,7 +902,9 @@ select:focus {
     line-height: 1.5;
     opacity: 0;
     transform: translateY(6px);
-    transition: opacity 0.18s ease, transform 0.18s ease;
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease;
     z-index: 30;
   }
 
@@ -825,8 +915,10 @@ select:focus {
     width: 10px;
     height: 10px;
     background: inherit;
-    border-right: 1px solid color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
-    border-bottom: 1px solid color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
+    border-right: 1px solid
+      color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
+    border-bottom: 1px solid
+      color-mix(in srgb, var(--surface-tooltip) 88%, var(--border-soft));
     transform: rotate(45deg);
   }
 
@@ -861,7 +953,10 @@ select:focus {
     font-size: 0.875rem;
     font-weight: 600;
     white-space: nowrap;
-    transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease,
+      transform 0.2s ease;
   }
 
   .status-pill-success {
@@ -907,6 +1002,19 @@ select:focus {
   }
   100% {
     transform: scale(1);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 1s linear infinite;
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

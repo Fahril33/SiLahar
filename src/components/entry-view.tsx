@@ -79,6 +79,7 @@ type EntryViewProps = {
   searchOpen: boolean;
   navbarPosition?: "top" | "left" | "right";
   navbarSlot?: ReactNode;
+  isOnline: boolean;
 };
 
 function SaveIcon(props: { className?: string }) {
@@ -357,25 +358,25 @@ export function EntryView(props: EntryViewProps) {
                           ? `Laporan ${props.searchResult.nama} sudah aktif di form.`
                           : `Laporan ${props.searchResult.nama} ditemukan dan siap dibuka.`}
                       </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void props.onHandleLoadEdit(props.searchResult!)
-                          }
-                          disabled={
-                            !props.searchResultCanReload || props.isEditLoading
-                          }
-                          className="btn-secondary px-3 py-2 text-sm disabled:opacity-60"
-                        >
-                          {props.isEditLoading ? (
-                            <SpinnerIcon className="h-4 w-4 animate-spin" />
-                          ) : props.searchResultLoaded ? (
-                            "Sudah dimuat"
-                          ) : props.searchResultNeedsReload ? (
-                            "Muat ulang data asli"
-                          ) : (
-                            "Buka untuk edit"
-                          )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void props.onHandleLoadEdit(props.searchResult!)
+                        }
+                        disabled={
+                          !props.searchResultCanReload || props.isEditLoading
+                        }
+                        className="btn-secondary px-3 py-2 text-sm disabled:opacity-60"
+                      >
+                        {props.isEditLoading ? (
+                          <SpinnerIcon className="h-4 w-4 animate-spin" />
+                        ) : props.searchResultLoaded ? (
+                          "Sudah dimuat"
+                        ) : props.searchResultNeedsReload ? (
+                          "Muat ulang data asli"
+                        ) : (
+                          "Buka untuk edit"
+                        )}
                       </button>
                     </div>
                   </div>
@@ -479,225 +480,234 @@ export function EntryView(props: EntryViewProps) {
             <section className="surface-card rounded-[15px] overflow-hidden">
               <div className="p-4 pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 px-2">
-                <div>
-                  <p className={eyebrowClassName}>Aktivitas Harian</p>
+                  <div>
+                    <p className={eyebrowClassName}>Aktivitas Harian</p>
+                  </div>
                 </div>
-              </div>
-              <div className="mt-4 space-y-3">
-                {props.draft.activities.map((activity, index) => (
-                  <article
-                    key={activity.no}
-                    className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
-                  >
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                      <h4 className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
-                        <div
-                          className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white transition-colors ${
-                            props.activityCompletionStates[index]
-                              ? "bg-green-400"
-                              : "bg-[var(--primary)]" 
-                          }`} 
-                        >
-                          {activity.no}
-                        </div>
-                        Aktivitas ke-{activity.no}
-                        {props.activityCompletionStates[index] ? (
-                          <span className="ml-2 text-xs font-semibold text-green-400">
-                            <CheckIcon className="h-4 w-4" />
-                          </span>
-                        ) : null}
-                      </h4>
-                      {props.draft.activities.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => props.onRemoveActivity(index)}
-                          className="flex items-center gap-1.5 rounded-full bg-[var(--danger-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--danger)] transition hover:bg-[var(--danger)] hover:text-white"
-                        >
-                          <TrashIcon className="h-3.5 w-3.5" />
-                          Hapus baris
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 sm:max-w-xs">
-                      <label className="space-y-1.5">
-                        <span className="text-xs font-medium text-[var(--text-muted)]">
-                          Jam mulai
-                        </span>
-                        <input
-                          type="time"
-                          value={activity.startTime}
-                          onChange={(event) =>
-                            props.onChangeActivity(
-                              index,
-                              "startTime",
-                              event.target.value,
-                            )
-                          }
-                          className={`${inputClassName} py-2.5 text-sm`}
-                        />
-                      </label>
-                      <label className="space-y-1.5">
-                        <span className="text-xs font-medium text-[var(--text-muted)]">
-                          Jam selesai
-                        </span>
-                        <input
-                          type="time"
-                          value={activity.endTime}
-                          onChange={(event) =>
-                            props.onChangeActivity(
-                              index,
-                              "endTime",
-                              event.target.value,
-                            )
-                          }
-                          className={`${inputClassName} py-2.5 text-sm`}
-                        />
-                      </label>
-                    </div>
-
-                    <label className="mt-4 block space-y-1.5">
-                      <span className="text-xs font-medium text-[var(--text-muted)]">
-                        Detail aktivitas
-                      </span>
-                      <textarea
-                        rows={3}
-                        value={activity.description}
-                        onChange={(event) =>
-                          props.onChangeActivity(
-                            index,
-                            "description",
-                            event.target.value,
-                          )
-                        }
-                        className={`${textareaClassName} break-words`}
-                        placeholder="Tulis ringkasan pekerjaan atau kegiatan yang dilakukan"
-                      />
-                    </label>
-                    <div className="mt-3 space-y-2">
-                      {props.activityTimeIssues[index]?.startAfterMorning ? (
-                        <div className="inline-note inline-note-warning">
-                          Aktivitas pertama dimulai lewat dari pukul 09.00 WITA.
-                          Cek lagi apakah ada kegiatan pagi yang belum tercatat.
-                        </div>
-                      ) : null}
-                      {props.activityTimeIssues[index]?.endBeforeStart ? (
-                        <div className="inline-note inline-note-danger">
-                          Jam selesai tidak boleh lebih awal dari jam mulai.
-                        </div>
-                      ) : null}
-                      {props.activityTimeIssues[index]
-                        ?.startsBeforePreviousEnd ? (
-                        <div className="inline-note inline-note-danger">
-                          Jam mulai aktivitas ini bertabrakan dengan jam selesai
-                          aktivitas sebelumnya.
-                        </div>
-                      ) : null}
-                      {props.activityTimeIssues[index]?.overtime ? (
-                        <div className="inline-note inline-note-success">
-                          Sepertinya anda lembur hari ini.
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="mt-4">
-                      <div className="flex items-stretch gap-2">
-                        <div className="min-w-0 flex-1">
-                          <FileUploadInput
-                            label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
-                            accept="image/png,image/jpeg,image/webp"
-                            multiple={
-                              Math.max(
-                                0,
-                                props.reportRules.maxPhotosPerActivity -
-                                  activity.photos.length,
-                              ) > 1
-                            }
-                            helperText="Belum ada foto bukti di aktivitas ini."
-                            selectedFileName={
-                              (props.pendingPreviews[activity.no]?.length ?? 0) > 0
-                                ? `${props.pendingPreviews[activity.no]?.length ?? 0} foto baru siap diunggah`
-                                : activity.photos.length > 0
-                                  ? `${activity.photos.length} foto lama tetap terhubung`
-                                  : undefined
-                            }
-                            disabled={props.isEditLoading}
-                            inputKey={`${activity.no}-${activity.photos.length}-${props.pendingPreviews[activity.no]?.length ?? 0}`}
-                            onChange={(files) =>
-                              void props.onSetActivityFiles(activity.no, files)
-                            }
-                          />
-                        </div>
-                        <div className="flex w-12 shrink-0 flex-col gap-2 self-stretch sm:w-14">
+                <div className="mt-4 space-y-3">
+                  {props.draft.activities.map((activity, index) => (
+                    <article
+                      key={activity.no}
+                      className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
+                    >
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <h4 className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
+                          <div
+                            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white transition-colors ${
+                              props.activityCompletionStates[index]
+                                ? "bg-green-400"
+                                : "bg-[var(--primary)]"
+                            }`}
+                          >
+                            {activity.no}
+                          </div>
+                          Aktivitas ke-{activity.no}
+                          {props.activityCompletionStates[index] ? (
+                            <span className="ml-2 text-xs font-semibold text-green-400">
+                              <CheckIcon className="h-4 w-4" />
+                            </span>
+                          ) : null}
+                        </h4>
+                        {props.draft.activities.length > 1 && (
                           <button
                             type="button"
-                            onClick={() => props.onClearActivityFiles(activity.no)}
-                            disabled={
-                              props.isEditLoading ||
-                              activity.photos.length === 0 &&
-                              (props.pendingPreviews[activity.no]?.length ?? 0) === 0
-                            }
-                            className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-red-400 hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
-                            aria-label={`Kosongkan foto aktivitas ke-${activity.no}`}
+                            onClick={() => props.onRemoveActivity(index)}
+                            className="flex items-center gap-1.5 rounded-full bg-[var(--danger-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--danger)] transition hover:bg-[var(--danger)] hover:text-white"
                           >
-                            <TrashIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                            <TrashIcon className="h-3.5 w-3.5" />
+                            Hapus baris
                           </button>
-                          {props.editableOriginalPhotos[activity.no]?.length ? (
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 sm:max-w-xs">
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium text-[var(--text-muted)]">
+                            Jam mulai
+                          </span>
+                          <input
+                            type="time"
+                            value={activity.startTime}
+                            onChange={(event) =>
+                              props.onChangeActivity(
+                                index,
+                                "startTime",
+                                event.target.value,
+                              )
+                            }
+                            className={`${inputClassName} py-2.5 text-sm`}
+                          />
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium text-[var(--text-muted)]">
+                            Jam selesai
+                          </span>
+                          <input
+                            type="time"
+                            value={activity.endTime}
+                            onChange={(event) =>
+                              props.onChangeActivity(
+                                index,
+                                "endTime",
+                                event.target.value,
+                              )
+                            }
+                            className={`${inputClassName} py-2.5 text-sm`}
+                          />
+                        </label>
+                      </div>
+
+                      <label className="mt-4 block space-y-1.5">
+                        <span className="text-xs font-medium text-[var(--text-muted)]">
+                          Detail aktivitas
+                        </span>
+                        <textarea
+                          rows={3}
+                          value={activity.description}
+                          onChange={(event) =>
+                            props.onChangeActivity(
+                              index,
+                              "description",
+                              event.target.value,
+                            )
+                          }
+                          className={`${textareaClassName} break-words`}
+                          placeholder="Tulis ringkasan pekerjaan atau kegiatan yang dilakukan"
+                        />
+                      </label>
+                      <div className="mt-3 space-y-2">
+                        {props.activityTimeIssues[index]?.startAfterMorning ? (
+                          <div className="inline-note inline-note-warning">
+                            Aktivitas pertama dimulai lewat dari pukul 09.00
+                            WITA. Cek lagi apakah ada kegiatan pagi yang belum
+                            tercatat.
+                          </div>
+                        ) : null}
+                        {props.activityTimeIssues[index]?.endBeforeStart ? (
+                          <div className="inline-note inline-note-danger">
+                            Jam selesai tidak boleh lebih awal dari jam mulai.
+                          </div>
+                        ) : null}
+                        {props.activityTimeIssues[index]
+                          ?.startsBeforePreviousEnd ? (
+                          <div className="inline-note inline-note-danger">
+                            Jam mulai aktivitas ini bertabrakan dengan jam
+                            selesai aktivitas sebelumnya.
+                          </div>
+                        ) : null}
+                        {props.activityTimeIssues[index]?.overtime ? (
+                          <div className="inline-note inline-note-success">
+                            Sepertinya anda lembur hari ini.
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-4">
+                        <div className="flex items-stretch gap-2">
+                          <div className="min-w-0 flex-1">
+                            <FileUploadInput
+                              label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
+                              accept="image/png,image/jpeg,image/webp"
+                              multiple={
+                                Math.max(
+                                  0,
+                                  props.reportRules.maxPhotosPerActivity -
+                                    activity.photos.length,
+                                ) > 1
+                              }
+                              helperText="Belum ada foto bukti di aktivitas ini."
+                              selectedFileName={
+                                (props.pendingPreviews[activity.no]?.length ??
+                                  0) > 0
+                                  ? `${props.pendingPreviews[activity.no]?.length ?? 0} foto baru siap diunggah`
+                                  : activity.photos.length > 0
+                                    ? `${activity.photos.length} foto lama tetap terhubung`
+                                    : undefined
+                              }
+                              disabled={props.isEditLoading}
+                              inputKey={`${activity.no}-${activity.photos.length}-${props.pendingPreviews[activity.no]?.length ?? 0}`}
+                              onChange={(files) =>
+                                void props.onSetActivityFiles(
+                                  activity.no,
+                                  files,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="flex w-12 shrink-0 flex-col gap-2 self-stretch sm:w-14">
                             <button
                               type="button"
                               onClick={() =>
-                                props.onRestoreActivityFiles(activity.no)
+                                props.onClearActivityFiles(activity.no)
                               }
                               disabled={
                                 props.isEditLoading ||
-                                (props.pendingPreviews[activity.no]?.length ?? 0) ===
-                                  0 &&
-                                activity.photos.length ===
-                                  (props.editableOriginalPhotos[activity.no]?.length ??
-                                    0)
+                                (activity.photos.length === 0 &&
+                                  (props.pendingPreviews[activity.no]?.length ??
+                                    0) === 0)
                               }
-                              className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-emerald-400 hover:bg-emerald-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
-                              aria-label={`Pulihkan foto asli aktivitas ke-${activity.no}`}
+                              className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-red-400 hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
+                              aria-label={`Kosongkan foto aktivitas ke-${activity.no}`}
                             >
-                              <RestoreIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                              <TrashIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                             </button>
-                          ) : null}
+                            {props.editableOriginalPhotos[activity.no]
+                              ?.length ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  props.onRestoreActivityFiles(activity.no)
+                                }
+                                disabled={
+                                  props.isEditLoading ||
+                                  ((props.pendingPreviews[activity.no]
+                                    ?.length ?? 0) === 0 &&
+                                    activity.photos.length ===
+                                      (props.editableOriginalPhotos[activity.no]
+                                        ?.length ?? 0))
+                                }
+                                className="flex flex-1 items-center justify-center rounded-[22px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-muted)] transition hover:border-emerald-400 hover:bg-emerald-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border-soft)] disabled:hover:bg-[var(--surface-panel-strong)] disabled:hover:text-[var(--text-muted)]"
+                                aria-label={`Pulihkan foto asli aktivitas ke-${activity.no}`}
+                              >
+                                <RestoreIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                      {(props.pendingPreviews[activity.no]?.length ?? 0) > 0 ||
-                      activity.photos.length > 0 ? (
-                        <div className="mt-4 flex flex-wrap gap-3">
-                          {activity.photos.slice(0, 1).map((photo) => (
-                            <img
-                              key={photo.id}
-                              src={photo.publicUrl}
-                              alt={photo.originalFileName}
-                              className="h-24 w-24 rounded-2xl object-cover"
-                            />
-                          ))}
-                          {(props.pendingPreviews[activity.no] ?? [])
-                            .slice(
-                              0,
-                              Math.max(
-                                1,
-                                props.reportRules.maxPhotosPerActivity,
-                              ),
-                            )
-                            .map((photo) => (
+                        {(props.pendingPreviews[activity.no]?.length ?? 0) >
+                          0 || activity.photos.length > 0 ? (
+                          <div className="mt-4 flex flex-wrap gap-3">
+                            {activity.photos.slice(0, 1).map((photo) => (
                               <img
-                                key={photo.url}
-                                src={photo.url}
-                                alt={photo.name}
-                                className="h-24 w-24 rounded-2xl object-cover ring-2 ring-[var(--primary)]/40"
+                                key={photo.id}
+                                src={photo.publicUrl}
+                                alt={photo.originalFileName}
+                                className="h-24 w-24 rounded-2xl object-cover"
                               />
                             ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  </article>
-                ))}
+                            {(props.pendingPreviews[activity.no] ?? [])
+                              .slice(
+                                0,
+                                Math.max(
+                                  1,
+                                  props.reportRules.maxPhotosPerActivity,
+                                ),
+                              )
+                              .map((photo) => (
+                                <img
+                                  key={photo.url}
+                                  src={photo.url}
+                                  alt={photo.name}
+                                  className="h-24 w-24 rounded-2xl object-cover ring-2 ring-[var(--primary)]/40"
+                                />
+                              ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="border-t border-[var(--border-soft)]">
+              <div className="border-t border-[var(--border-soft)]">
                 <button
                   type="button"
                   onClick={props.onAddActivity}
