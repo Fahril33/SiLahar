@@ -17,6 +17,203 @@ const eyebrowClassName =
 
 type PendingPreviewMap = Record<number, Array<{ name: string; url: string }>>;
 
+type PreviewSettingsSection = "header" | "content";
+
+type ReportPreviewSettings = {
+  headerFontSize: number;
+  headerMarginBottom: number;
+  contentFontFamily: string;
+  contentFontSize: number;
+  contentLineHeight: number;
+  contentPaddingTop: number;
+  contentPaddingRight: number;
+  contentPaddingBottom: number;
+  contentPaddingLeft: number;
+};
+
+type PreviewSettingConfig = {
+  key: PreviewNumericSettingKey;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  section: PreviewSettingsSection;
+};
+
+type PreviewNumericSettingKey = Exclude<
+  keyof ReportPreviewSettings,
+  "contentFontFamily"
+>;
+
+const defaultReportPreviewSettings: ReportPreviewSettings = {
+  headerFontSize: 11,
+  headerMarginBottom: 25,
+  contentFontFamily: "Calibri, Arial, Helvetica, sans-serif",
+  contentFontSize: 10,
+  contentLineHeight: 1.35,
+  contentPaddingTop: 20,
+  contentPaddingRight: 18,
+  contentPaddingBottom: 20,
+  contentPaddingLeft: 20,
+};
+
+const previewFontFamilyOptions = [
+  {
+    label: "Calibri",
+    value: "Calibri, Arial, Helvetica, sans-serif",
+  },
+  {
+    label: "Times New Roman",
+    value: "\"Times New Roman\", Times, serif",
+  },
+  {
+    label: "Arial",
+    value: "Arial, Helvetica, sans-serif",
+  },
+  {
+    label: "Helvetica",
+    value: "Helvetica, Arial, sans-serif",
+  },
+  {
+    label: "sans-serif",
+    value: "sans-serif",
+  },
+] as const;
+
+const previewSettingConfigs: PreviewSettingConfig[] = [
+  {
+    key: "headerFontSize",
+    label: "Font size",
+    min: 10,
+    max: 18,
+    step: 0.5,
+    unit: "pt",
+    section: "header",
+  },
+  {
+    key: "headerMarginBottom",
+    label: "Margin bawah",
+    min: 8,
+    max: 48,
+    step: 1,
+    unit: "px",
+    section: "header",
+  },
+  {
+    key: "contentFontSize",
+    label: "Font size",
+    min: 9,
+    max: 14,
+    step: 0.5,
+    unit: "pt",
+    section: "content",
+  },
+  {
+    key: "contentLineHeight",
+    label: "Line height",
+    min: 1.1,
+    max: 1.8,
+    step: 0.05,
+    unit: "",
+    section: "content",
+  },
+  {
+    key: "contentPaddingTop",
+    label: "Padding atas",
+    min: 8,
+    max: 35,
+    step: 1,
+    unit: "mm",
+    section: "content",
+  },
+  {
+    key: "contentPaddingRight",
+    label: "Padding kanan",
+    min: 8,
+    max: 35,
+    step: 1,
+    unit: "mm",
+    section: "content",
+  },
+  {
+    key: "contentPaddingBottom",
+    label: "Padding bawah",
+    min: 8,
+    max: 35,
+    step: 1,
+    unit: "mm",
+    section: "content",
+  },
+  {
+    key: "contentPaddingLeft",
+    label: "Padding kiri",
+    min: 8,
+    max: 35,
+    step: 1,
+    unit: "mm",
+    section: "content",
+  },
+];
+
+const previewSectionMeta: Record<
+  PreviewSettingsSection,
+  { title: string; selector: string }
+> = {
+  header: {
+    title: "Report Header",
+    selector: ".pdf-report-header",
+  },
+  content: {
+    title: "Report Content",
+    selector: ".pdf-report-page",
+  },
+};
+
+const printFormats = ["a4", "f4", "legal", "letter"] as const;
+
+function clampPreviewSetting(
+  key: PreviewNumericSettingKey,
+  value: number,
+): number {
+  const config = previewSettingConfigs.find((item) => item.key === key);
+
+  if (!config || Number.isNaN(value)) {
+    return defaultReportPreviewSettings[key];
+  }
+
+  return Math.min(config.max, Math.max(config.min, value));
+}
+
+function havePreviewSettingsChanged(
+  left: ReportPreviewSettings,
+  right: ReportPreviewSettings,
+) {
+  return (Object.keys(defaultReportPreviewSettings) as Array<
+    keyof ReportPreviewSettings
+  >).some(
+    (key) => left[key] !== right[key],
+  );
+}
+
+function getPreviewSectionDefaults(section: PreviewSettingsSection) {
+  const defaults = previewSettingConfigs
+    .filter((config) => config.section === section)
+    .reduce(
+      (accumulator, config) => {
+        accumulator[config.key] = defaultReportPreviewSettings[config.key];
+        return accumulator;
+      },
+      {} as Partial<ReportPreviewSettings>,
+    );
+
+  if (section === "content") {
+    defaults.contentFontFamily = defaultReportPreviewSettings.contentFontFamily;
+  }
+
+  return defaults;
+}
+
 type EntryViewProps = {
   draft: DraftReport;
   savedNames: string[];
@@ -305,7 +502,7 @@ function ChevronDownIcon(props: { className?: string }) {
   );
 }
 
-function PaperIcon(props: { className?: string }) {
+function GearIcon(props: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -316,10 +513,8 @@ function PaperIcon(props: { className?: string }) {
       strokeLinejoin="round"
       {...props}
     >
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <path d="M14 2v6h6" />
-      <path d="M8 13h8" />
-      <path d="M8 17h6" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.43.3.93.47 1.46.47H21a2 2 0 1 1 0 4h-.14c-.53 0-1.03.17-1.46.53Z" />
     </svg>
   );
 }
@@ -343,16 +538,39 @@ export function EntryView(props: EntryViewProps) {
   const [isApproverExpanded, setIsApproverExpanded] = useState(false);
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   const [paperMenuOpen, setPaperMenuOpen] = useState(false);
+  const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false);
+  const [draftPreviewSettings, setDraftPreviewSettings] = useState(
+    defaultReportPreviewSettings,
+  );
+  const [appliedPreviewSettings, setAppliedPreviewSettings] = useState(
+    defaultReportPreviewSettings,
+  );
   const saveMenuRef = useRef<HTMLDivElement | null>(null);
   const paperMenuRef = useRef<HTMLDivElement | null>(null);
+  const previewSettingsRef = useRef<HTMLDivElement | null>(null);
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
   const paperPreview = useMemo(
     () => getPaperPreview(props.paperFormat),
     [props.paperFormat],
   );
+  const hasPendingPreviewSettings = useMemo(
+    () =>
+      havePreviewSettingsChanged(draftPreviewSettings, appliedPreviewSettings),
+    [appliedPreviewSettings, draftPreviewSettings],
+  );
+  const previewStyleTag = useMemo(
+    () =>
+      [
+        pdfStyles,
+        ".pdf-report-shell, .pdf-report-page { width: 100% !important; min-height: 100% !important; }",
+        `.pdf-report-header { font-size: ${appliedPreviewSettings.headerFontSize}pt !important; margin-bottom: ${appliedPreviewSettings.headerMarginBottom}px !important; }`,
+        `.pdf-report-page { padding: ${appliedPreviewSettings.contentPaddingTop}mm ${appliedPreviewSettings.contentPaddingRight}mm ${appliedPreviewSettings.contentPaddingBottom}mm ${appliedPreviewSettings.contentPaddingLeft}mm !important; font-family: ${appliedPreviewSettings.contentFontFamily} !important; font-size: ${appliedPreviewSettings.contentFontSize}pt !important; line-height: ${appliedPreviewSettings.contentLineHeight} !important; }`,
+      ].join("\n"),
+    [appliedPreviewSettings],
+  );
 
   useEffect(() => {
-    if (!saveMenuOpen && !paperMenuOpen) {
+    if (!saveMenuOpen && !paperMenuOpen && !previewSettingsOpen) {
       return;
     }
 
@@ -364,12 +582,19 @@ export function EntryView(props: EntryViewProps) {
       if (paperMenuOpen && !paperMenuRef.current?.contains(target)) {
         setPaperMenuOpen(false);
       }
+      if (
+        previewSettingsOpen &&
+        !previewSettingsRef.current?.contains(target)
+      ) {
+        setPreviewSettingsOpen(false);
+      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setSaveMenuOpen(false);
         setPaperMenuOpen(false);
+        setPreviewSettingsOpen(false);
       }
     }
 
@@ -380,12 +605,30 @@ export function EntryView(props: EntryViewProps) {
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [paperMenuOpen, saveMenuOpen]);
+  }, [paperMenuOpen, previewSettingsOpen, saveMenuOpen]);
 
   const hClass =
     props.navbarPosition === "top" || !props.navbarPosition
       ? "lg:h-[calc(100vh-8rem)]"
       : "lg:h-[calc(100vh-2.2rem)]";
+  const previewSections = ["header", "content"] as const;
+
+  function handleDraftPreviewSettingChange(
+    key: PreviewNumericSettingKey,
+    value: number,
+  ) {
+    setDraftPreviewSettings((current) => ({
+      ...current,
+      [key]: clampPreviewSetting(key, value),
+    }));
+  }
+
+  function handleResetPreviewSection(section: PreviewSettingsSection) {
+    setDraftPreviewSettings((current) => ({
+      ...current,
+      ...getPreviewSectionDefaults(section),
+    }));
+  }
 
   return (
     <section
@@ -995,84 +1238,214 @@ export function EntryView(props: EntryViewProps) {
               </div>
               <div className="min-w-0 overflow-visible">
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap sm:gap-2">
-                <div className="mr-1 flex items-center rounded-full border border-[var(--border-soft)] bg-[var(--field-bg)] px-1 py-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPreviewScale((s) =>
-                        Math.max(0.4, Number((s - 0.1).toFixed(1))),
-                      )
-                    }
-                    className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
-                    title="Perkecil"
+                  <div
+                    ref={previewSettingsRef}
+                    className={`${isMobileOrTablet ? "hidden" : "relative"}`}
                   >
-                    -
-                  </button>
-                  <span className="w-10 text-center text-[10px] font-medium text-[var(--text-primary)] sm:w-12 sm:text-xs">
-                    {Math.round(previewScale * 100)}%
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPreviewScale((s) =>
-                        Math.min(1.5, Number((s + 0.1).toFixed(1))),
-                      )
-                    }
-                    className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
-                    title="Perbesar"
-                  >
-                    +
-                  </button>
-                </div>
-                <div
-                  ref={paperMenuRef}
-                  className={`${isMobileOrTablet ? "hidden" : "relative"}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setPaperMenuOpen((open) => !open)}
-                    className="btn-secondary px-2.5 py-2 text-xs sm:hidden"
-                    aria-label={`Pilih ukuran kertas, saat ini ${props.paperFormat.toUpperCase()}`}
-                    title={`Ukuran kertas ${props.paperFormat.toUpperCase()}`}
-                  >
-                    <PaperIcon className="h-4 w-4" />
-                  </button>
-                  <select
-                    value={props.paperFormat}
-                    onChange={(event) =>
-                      props.setPaperFormat(
-                        event.target.value as "a4" | "f4" | "legal" | "letter",
-                      )
-                    }
-                    className="field-input hidden w-[80px] px-3 py-2 text-xs sm:block sm:text-sm 2xl:py-2.5"
-                  >
-                    <option value="a4">A4</option>
-                    <option value="f4">F4</option>
-                    <option value="legal">Legal</option>
-                    <option value="letter">Letter</option>
-                  </select>
-                  {paperMenuOpen ? (
-                    <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[144px] rounded-[14px] border border-[var(--border-soft)] bg-[var(--surface-panel)] p-1 shadow-2xl sm:hidden">
-                      {(["a4", "f4", "legal", "letter"] as const).map((format) => (
-                        <button
-                          key={format}
-                          type="button"
-                          onClick={() => {
-                            props.setPaperFormat(format);
-                            setPaperMenuOpen(false);
+                    <button
+                      type="button"
+                      onClick={() => setPreviewSettingsOpen((open) => !open)}
+                      className={`btn-secondary px-2.5 py-2 text-xs sm:px-3 sm:text-sm 2xl:py-2.5 ${
+                        previewSettingsOpen ? "bg-[var(--surface-muted)]" : ""
+                      }`}
+                      aria-label="Buka pengaturan preview dokumen"
+                      title="Pengaturan preview"
+                    >
+                      <GearIcon className="h-4 w-4" />
+                    </button>
+                    {previewSettingsOpen ? (
+                      <div
+                        className="pointer-events-auto absolute right-auto top-[calc(100%+10px)] z-30 flex min-h-0 flex-col overflow-hidden rounded-[22px] border border-[var(--border-soft)] shadow-2xl backdrop-blur-sm mt-2"
+                        style={{
+                          width: "min(96vw, 300px)",
+                          maxWidth: "calc(100vw - 24px)",
+                          maxHeight: "min(72vh, calc(100vh - 120px))",
+                          background:
+                            "color-mix(in srgb, var(--surface-panel-strong) 98%, black 2%)",
+                        }}
+                      >
+                        <div className="shrink-0 flex items-start justify-between gap-3 px-4 py-4">
+                          <div>
+                            <p className="text-sm font-semibold text-[var(--text-primary)]">
+                              Custom Settings
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDraftPreviewSettings(
+                                defaultReportPreviewSettings,
+                              )
+                            }
+                            className="text-xs font-semibold text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+                          >
+                            Reset all
+                          </button>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+                          <div className="space-y-4">
+                            {previewSections.map((section) => (
+                              <section
+                                key={section}
+                                className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-base)] p-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-semibold text-[var(--text-primary)]">
+                                      {previewSectionMeta[section].title}
+                                    </p>
+                                    <p className="text-[11px] text-[var(--text-muted)]">
+                                      {previewSectionMeta[section].selector}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleResetPreviewSection(section)
+                                    }
+                                    className="text-xs font-semibold text-[var(--text-muted)] transition hover:text-[var(--text-primary)]"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                  {section === "content" ? (
+                                    <label className="space-y-2 sm:col-span-2">
+                                      <span className="text-xs font-medium text-[var(--text-muted)]">
+                                        Font family
+                                      </span>
+                                      <select
+                                        value={
+                                          draftPreviewSettings.contentFontFamily
+                                        }
+                                        onChange={(event) =>
+                                          setDraftPreviewSettings((current) => ({
+                                            ...current,
+                                            contentFontFamily:
+                                              event.target.value,
+                                          }))
+                                        }
+                                        className={`${inputClassName} w-full px-3 py-2 text-sm`}
+                                      >
+                                        {previewFontFamilyOptions.map(
+                                          (fontFamily) => (
+                                            <option
+                                              key={fontFamily.label}
+                                              value={fontFamily.value}
+                                            >
+                                              {fontFamily.label}
+                                            </option>
+                                          ),
+                                        )}
+                                      </select>
+                                    </label>
+                                  ) : null}
+                                  {previewSettingConfigs
+                                    .filter(
+                                      (config) => config.section === section,
+                                    )
+                                    .map((config) => (
+                                      <label
+                                        key={config.key}
+                                        className="space-y-2"
+                                      >
+                                        <span className="text-xs font-medium text-[var(--text-muted)]">
+                                          {config.label}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                          <input
+                                            type="number"
+                                            min={config.min}
+                                            max={config.max}
+                                            step={config.step}
+                                            value={draftPreviewSettings[config.key]}
+                                            onChange={(event) => {
+                                              const nextValue =
+                                                event.target.valueAsNumber;
+                                              if (Number.isNaN(nextValue)) {
+                                                return;
+                                              }
+                                              handleDraftPreviewSettingChange(
+                                                config.key,
+                                                nextValue,
+                                              );
+                                            }}
+                                            className={`${inputClassName} min-w-0 px-3 py-2 text-sm`}
+                                          />
+                                          {config.unit ? (
+                                            <span className="w-8 shrink-0 text-xs font-semibold uppercase text-[var(--text-muted)]">
+                                              {config.unit}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                        <p className="text-[11px] text-[var(--text-muted)]">
+                                          Min {config.min}
+                                          {config.unit} - max {config.max}
+                                          {config.unit}
+                                        </p>
+                                      </label>
+                                    ))}
+                                </div>
+                              </section>
+                            ))}
+                          </div>
+                        </div>
+                        <div
+                          className="shrink-0 sticky bottom-0 flex items-center justify-between gap-3 border-t border-[var(--border-soft)] px-4 py-3"
+                          style={{
+                            background:
+                              "color-mix(in srgb, var(--surface-panel-strong) 99%, black 1%)",
                           }}
-                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm uppercase text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
                         >
-                          <span>{format}</span>
-                          {props.paperFormat === format ? (
-                            <CheckIcon className="h-4 w-4 text-[var(--success)]" />
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1.5 sm:gap-2">
+                          <p className="text-xs text-[var(--text-muted)]">
+                            {hasPendingPreviewSettings
+                              ? "Ada perubahan yang belum diterapkan."
+                              : "Preview sudah sesuai."}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAppliedPreviewSettings(draftPreviewSettings)
+                            }
+                            disabled={!hasPendingPreviewSettings}
+                            className="btn-primary px-4 py-2 text-sm disabled:opacity-60"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mr-1 flex items-center rounded-full border border-[var(--border-soft)] bg-[var(--field-bg)] px-1 py-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPreviewScale((s) =>
+                          Math.max(0.4, Number((s - 0.1).toFixed(1))),
+                        )
+                      }
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
+                      title="Perkecil"
+                    >
+                      -
+                    </button>
+                    <span className="w-10 text-center text-[10px] font-medium text-[var(--text-primary)] sm:w-12 sm:text-xs">
+                      {Math.round(previewScale * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPreviewScale((s) =>
+                          Math.min(1.5, Number((s + 0.1).toFixed(1))),
+                        )
+                      }
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] 2xl:h-7 2xl:w-7"
+                      title="Perbesar"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
                     onClick={() => void props.onHandleExport(props.preview)}
@@ -1091,23 +1464,78 @@ export function EntryView(props: EntryViewProps) {
                       </>
                     )}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      isMobileOrTablet
-                        ? void props.onHandleUnsupportedMobilePrint()
-                        : void props.onHandlePrint(props.preview)
-                    }
-                    aria-disabled={props.isEditLoading || isMobileOrTablet}
-                    className={`btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5 ${
-                      props.isEditLoading || isMobileOrTablet
-                        ? "cursor-not-allowed opacity-60"
-                        : ""
-                    }`}
-                  >
-                    <PrintIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    <span className="hidden sm:inline">Print</span>
-                  </button>
+                    <div
+                      ref={paperMenuRef}
+                      className="relative flex items-stretch"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaperMenuOpen(false);
+                          if (isMobileOrTablet) {
+                            void props.onHandleUnsupportedMobilePrint();
+                            return;
+                          }
+                          void props.onHandlePrint(props.preview);
+                        }}
+                        className={`btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5 ${
+                          isMobileOrTablet ? "" : "rounded-r-none"
+                        } ${
+                          props.isEditLoading || isMobileOrTablet
+                            ? "cursor-not-allowed opacity-60"
+                            : ""
+                        }`}
+                        aria-label={`Print ${props.paperFormat.toUpperCase()} untuk preview laporan`}
+                        aria-disabled={props.isEditLoading || isMobileOrTablet}
+                      >
+                        <PrintIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span className="hidden sm:inline">
+                          {props.paperFormat.toUpperCase()}
+                        </span>
+                      </button>
+                      {!isMobileOrTablet ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPaperMenuOpen((open) => !open)
+                          }
+                          className="btn-secondary ml-[2px] rounded-l-none px-2 py-2 text-xs sm:px-3 sm:text-sm 2xl:py-2.5"
+                          aria-label={`Pilih ukuran kertas, saat ini ${props.paperFormat.toUpperCase()}`}
+                        >
+                          <ChevronDownIcon className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                      {!isMobileOrTablet && paperMenuOpen ? (
+                        <div
+                          className="pointer-events-auto absolute right-0 top-[calc(100%+8px)] z-30 min-w-[156px] rounded-[18px] border border-[var(--border-soft)] p-2 shadow-2xl backdrop-blur-sm"
+                          style={{
+                            background:
+                              "color-mix(in srgb, var(--surface-panel-strong) 97%, black 3%)",
+                          }}
+                        >
+                          {printFormats.map((format) => (
+                            <button
+                              key={format}
+                              type="button"
+                              onClick={() => {
+                                props.setPaperFormat(format);
+                                setPaperMenuOpen(false);
+                              }}
+                              className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm uppercase text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                            >
+                              <span>{format}</span>
+                              {props.paperFormat === format ? (
+                                <CheckIcon className="h-4 w-4 text-[var(--success)]" />
+                              ) : format === "a4" ? (
+                                <span className="text-xs text-[var(--text-muted)]">
+                                  default
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   <div ref={saveMenuRef} className="relative flex items-stretch">
                     <button
                       type="button"
@@ -1141,7 +1569,13 @@ export function EntryView(props: EntryViewProps) {
                       />
                     </button>
                     {saveMenuOpen ? (
-                      <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[260px] rounded-[14px] border border-[var(--border-soft)] bg-[var(--surface-panel)] p-1 shadow-2xl">
+                      <div
+                        className="pointer-events-auto absolute right-0 top-[calc(100%+8px)] z-30 min-w-[260px] rounded-[14px] border border-[var(--border-soft)] p-1 shadow-2xl backdrop-blur-sm"
+                        style={{
+                          background:
+                            "color-mix(in srgb, var(--surface-panel-strong) 97%, black 3%)",
+                        }}
+                      >
                         {props.loadedLocalDraftSummary ? (
                           <button
                             type="button"
@@ -1180,7 +1614,7 @@ export function EntryView(props: EntryViewProps) {
                     ) : null}
                   </div>
                 </div>
-              </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1200,9 +1634,7 @@ export function EntryView(props: EntryViewProps) {
               >
                 <style
                   dangerouslySetInnerHTML={{
-                    __html:
-                      pdfStyles +
-                      `\n.pdf-report-shell, .pdf-report-page { width: 100% !important; min-height: 100% !important; }`,
+                    __html: previewStyleTag,
                   }}
                 />
                 <ReportPdfDocument report={props.preview} />

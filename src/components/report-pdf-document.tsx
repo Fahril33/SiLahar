@@ -79,7 +79,6 @@ export function ReportPdfDocument(props: { report: Report }) {
           <section className="approval-column">
             <p className="approval-role">KOORDINATOR TIM</p>
             <div className="signature-space" />
-            <br />
             <p className="approval-name">{report.approverCoordinator || "-"}</p>
             <p className="approval-meta">
               NIP: {report.approverCoordinatorNip || "-"}
