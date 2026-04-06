@@ -105,7 +105,7 @@ export function StatusView(props: {
         {statusRows.map((row) => (
           <div key={row.name} className="surface-card flex items-center justify-between rounded-[22px] px-4 py-4">
             <div>
-              <p className="font-semibold uppercase">{row.name}</p>
+              <p className="font-semibold">{row.name}</p>
               <p className="text-sm text-[var(--text-muted)]">
                 {historyDate}
                 {row.report ? ` | ${row.report.activities.length} aktivitas` : ""}

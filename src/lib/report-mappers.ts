@@ -69,7 +69,7 @@ export function mapReportRow(row: ReportRow): Report {
   return {
     id: row.id,
     templateId: row.template_id,
-    nama: row.reporter_name.toUpperCase(),
+    nama: row.reporter_name,
     tanggal: row.display_date_text.toUpperCase(),
     reportDate: row.report_date,
     activities: (row.daily_report_activities ?? []).sort((a, b) => a.activity_order - b.activity_order).map(mapActivity),

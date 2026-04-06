@@ -131,6 +131,75 @@ export async function askAcknowledge(
   });
 }
 
+export async function askSlowSaveFallback() {
+  const result = await Swal.fire({
+    title: "Simpan masih berjalan",
+    text: "Anda bisa simpan snapshot ke draft lokal agar aman, atau biarkan proses upload tetap lanjut di background sementara Anda pindah halaman.",
+    icon: "info",
+    showCancelButton: true,
+    showDenyButton: true,
+    confirmButtonText: "Simpan draft lokal",
+    denyButtonText: "Lanjut di background",
+    cancelButtonText: "Tetap tunggu",
+    reverseButtons: true,
+    customClass: {
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
+      confirmButton: "swal-confirm",
+      denyButton: "swal-cancel",
+      cancelButton: "swal-cancel",
+    },
+    buttonsStyling: false,
+  });
+
+  if (result.isConfirmed) {
+    return "save-local" as const;
+  }
+
+  if (result.isDenied) {
+    return "background" as const;
+  }
+
+  return "wait" as const;
+}
+
+export async function askDraftUploadConfirmation(options: {
+  title: string;
+  text: string;
+  confirmText?: string;
+}) {
+  const checkboxId = "delete-draft-after-upload";
+  const result = await Swal.fire({
+    title: options.title,
+    text: options.text,
+    icon: "question",
+    showCancelButton: true,
+    confirmButtonText: options.confirmText ?? "Lanjut upload",
+    cancelButtonText: "Batal",
+    reverseButtons: true,
+    input: "checkbox",
+    inputValue: 0,
+    inputPlaceholder: "Hapus draft ini setelah upload",
+    inputAttributes: { id: checkboxId },
+    customClass: {
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
+      confirmButton: "swal-confirm",
+      cancelButton: "swal-cancel",
+    },
+    buttonsStyling: false,
+  });
+
+  return {
+    confirmed: result.isConfirmed,
+    deleteAfterUpload: Boolean(result.value),
+  };
+}
+
 export function showSuccess(title: string, text: string) {
   playSound("success");
   return fireToast("success", title, text);

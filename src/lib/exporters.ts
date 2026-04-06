@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import pdfStyles from "../styles/report-pdf.css?inline";
 import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
+import type { PendingPhotoMap } from "./report-draft";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
 
@@ -35,6 +36,10 @@ function blobToDataUrl(blob: Blob) {
     reader.onerror = () => reject(reader.error ?? new Error("Gagal membaca blob gambar."));
     reader.readAsDataURL(blob);
   });
+}
+
+function fileToDataUrl(file: File) {
+  return blobToDataUrl(file);
 }
 
 function renderReportMarkup(report: Report) {
@@ -136,14 +141,44 @@ async function preloadReportImages(report: Report) {
   );
 }
 
-async function materializeReportImages(report: Report) {
+async function materializeReportImages(
+  report: Report,
+  pendingPhotos?: PendingPhotoMap,
+) {
   const cache = new Map<string, string>();
 
   const activities = await Promise.all(
-    report.activities.map(async (activity) => ({
-      ...activity,
-      photos: await Promise.all(
-        activity.photos.map(async (photo) => {
+    report.activities.map(async (activity) => {
+      let pendingPhotoIndex = -1;
+
+      return {
+        ...activity,
+        photos: await Promise.all(
+          activity.photos.map(async (photo) => {
+            const isPendingLocalPhoto =
+              !photo.storagePath && photo.publicUrl.startsWith("blob:");
+            if (isPendingLocalPhoto) {
+              pendingPhotoIndex += 1;
+              const localPendingFile =
+                pendingPhotos?.[activity.no]?.[pendingPhotoIndex] ?? null;
+
+              if (localPendingFile) {
+                const cacheKey = `${activity.no}:${pendingPhotoIndex}:${localPendingFile.name}:${localPendingFile.size}`;
+                const cachedLocal = cache.get(cacheKey);
+                if (cachedLocal) {
+                  return { ...photo, publicUrl: cachedLocal };
+                }
+
+                try {
+                  const dataUrl = await fileToDataUrl(localPendingFile);
+                  cache.set(cacheKey, dataUrl);
+                  return { ...photo, publicUrl: dataUrl };
+                } catch {
+                  // fallback ke publicUrl blob yang sudah ada
+                }
+              }
+            }
+
           const source = photo.publicUrl;
           if (!source) {
             return photo;
@@ -167,9 +202,10 @@ async function materializeReportImages(report: Report) {
             cache.set(source, source);
             return photo;
           }
-        }),
-      ),
-    })),
+          }),
+        ),
+      };
+    }),
   );
 
   return {
@@ -279,9 +315,10 @@ export async function exportReportAsPdf(
 export async function printReportDocument(
   report: Report,
   paperFormat: "a4" | "f4" | "legal" | "letter",
+  pendingPhotos?: PendingPhotoMap,
 ) {
   const originalTitle = document.title;
-  const printReadyReport = await materializeReportImages(report);
+  const printReadyReport = await materializeReportImages(report, pendingPhotos);
   const container = createPdfContainer(printReadyReport);
   await preloadReportImages(printReadyReport);
   const iframe = document.createElement("iframe");

@@ -1,6 +1,8 @@
-import { useMemo, useState, ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
+import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
 import type { ReportRules } from "../config/report-rules";
+import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { DraftReport, Report } from "../types/report";
 import { AutocompleteInput } from "./autocomplete-input";
 import { DeviceNameHistory } from "./device-name-history";
@@ -48,6 +50,9 @@ type EntryViewProps = {
   hasDraftContent: boolean;
   draftSavedAt: string | null;
   draftCacheStatus: "idle" | "saving" | "saved";
+  localDraftCount: number;
+  queuedLocalDraftCount: number;
+  loadedLocalDraftSummary: LocalReportDraftSummary | null;
   paperFormat: "a4" | "f4" | "legal" | "letter";
   setPaperFormat: (format: "a4" | "f4" | "legal" | "letter") => void;
   onChange: <K extends keyof DraftReport>(
@@ -72,8 +77,11 @@ type EntryViewProps = {
 
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (report: Report) => Promise<void>;
+  onHandleUnsupportedMobilePrint: () => Promise<void>;
   onHandleResetDraft: () => Promise<void>;
   onSaveReport: () => Promise<void>;
+  onSaveLocalDraft: (mode?: "update" | "new") => Promise<void>;
+  onOpenSavedDrafts: () => void;
   onHandleRemoveSavedName: (name: string) => void;
 
   searchOpen: boolean;
@@ -297,6 +305,25 @@ function ChevronDownIcon(props: { className?: string }) {
   );
 }
 
+function PaperIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+      <path d="M8 13h8" />
+      <path d="M8 17h6" />
+    </svg>
+  );
+}
+
 function getPaperPreview(paperFormat: "a4" | "f4" | "legal" | "letter") {
   return {
     width: paperFormat === "a4" || paperFormat === "f4" ? "210mm" : "216mm",
@@ -314,10 +341,46 @@ function getPaperPreview(paperFormat: "a4" | "f4" | "legal" | "letter") {
 export function EntryView(props: EntryViewProps) {
   const [previewScale, setPreviewScale] = useState(1);
   const [isApproverExpanded, setIsApproverExpanded] = useState(false);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  const [paperMenuOpen, setPaperMenuOpen] = useState(false);
+  const saveMenuRef = useRef<HTMLDivElement | null>(null);
+  const paperMenuRef = useRef<HTMLDivElement | null>(null);
+  const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
   const paperPreview = useMemo(
     () => getPaperPreview(props.paperFormat),
     [props.paperFormat],
   );
+
+  useEffect(() => {
+    if (!saveMenuOpen && !paperMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (saveMenuOpen && !saveMenuRef.current?.contains(target)) {
+        setSaveMenuOpen(false);
+      }
+      if (paperMenuOpen && !paperMenuRef.current?.contains(target)) {
+        setPaperMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSaveMenuOpen(false);
+        setPaperMenuOpen(false);
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [paperMenuOpen, saveMenuOpen]);
 
   const hClass =
     props.navbarPosition === "top" || !props.navbarPosition
@@ -777,7 +840,7 @@ export function EntryView(props: EntryViewProps) {
                               onChange={(event) =>
                                 props.onChange(
                                   "approverCoordinator",
-                                  event.target.value.toUpperCase(),
+                                  event.target.value,
                                 )
                               }
                               placeholder="Nama koordinator tim"
@@ -822,7 +885,7 @@ export function EntryView(props: EntryViewProps) {
                               onChange={(event) =>
                                 props.onChange(
                                   "approverDivisionHead",
-                                  event.target.value.toUpperCase(),
+                                  event.target.value,
                                 )
                               }
                               placeholder="Nama kepala bidang"
@@ -894,16 +957,22 @@ export function EntryView(props: EntryViewProps) {
               disabled={!props.hasDraftContent || props.isEditLoading}
               className="btn-ghost ml-auto text-sm disabled:opacity-50"
             >
-              Reset draft
+              Reset Form
             </button>
-            <button
-              type="button"
-              onClick={props.onAddActivity}
-              disabled={props.isEditLoading}
-              className="btn-secondary text-sm disabled:opacity-50"
-            >
-              Tambah baris
-            </button>
+            {props.localDraftCount > 0 ? (
+              <button
+                type="button"
+                onClick={props.onOpenSavedDrafts}
+                className="btn-secondary text-sm"
+              >
+                Lihat draft ({props.localDraftCount})
+              </button>
+            ) : null}
+            {props.queuedLocalDraftCount > 0 ? (
+              <div className="rounded-full border border-[var(--info-soft)] bg-[var(--info-soft)] px-3 py-2 text-xs font-semibold text-[var(--info)]">
+                {props.queuedLocalDraftCount} upload background aktif
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -919,12 +988,13 @@ export function EntryView(props: EntryViewProps) {
             <div className="pointer-events-auto flex flex-row items-center justify-between gap-2 px-3 py-3 sm:px-4 2xl:gap-3 2xl:px-5 2xl:py-4">
               <div className="min-w-0 shrink">
                 <p
-                  className={`preview-title-pill ${eyebrowClassName} block truncate rounded-[10px] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] sm:text-sm lg:hidden xl:block 2xl:text-lg`}
+                  className={`preview-title-pill ${eyebrowClassName} hidden truncate rounded-[10px] px-2 py-1 text-xs font-semibold text-[var(--text-primary)] sm:block sm:text-sm lg:hidden xl:block 2xl:text-lg`}
                 >
                   Preview Dokumen
                 </p>
               </div>
-              <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2">
+              <div className="min-w-0 overflow-visible">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap sm:gap-2">
                 <div className="mr-1 flex items-center rounded-full border border-[var(--border-soft)] bg-[var(--field-bg)] px-1 py-1">
                   <button
                     type="button"
@@ -954,20 +1024,54 @@ export function EntryView(props: EntryViewProps) {
                     +
                   </button>
                 </div>
-                <select
-                  value={props.paperFormat}
-                  onChange={(event) =>
-                    props.setPaperFormat(
-                      event.target.value as "a4" | "f4" | "legal" | "letter",
-                    )
-                  }
-                  className="field-input w-[80px] px-3 py-2 text-xs sm:text-sm 2xl:py-2.5"
+                <div
+                  ref={paperMenuRef}
+                  className={`${isMobileOrTablet ? "hidden" : "relative"}`}
                 >
-                  <option value="a4">A4</option>
-                  <option value="f4">F4</option>
-                  <option value="legal">Legal</option>
-                  <option value="letter">Letter</option>
-                </select>
+                  <button
+                    type="button"
+                    onClick={() => setPaperMenuOpen((open) => !open)}
+                    className="btn-secondary px-2.5 py-2 text-xs sm:hidden"
+                    aria-label={`Pilih ukuran kertas, saat ini ${props.paperFormat.toUpperCase()}`}
+                    title={`Ukuran kertas ${props.paperFormat.toUpperCase()}`}
+                  >
+                    <PaperIcon className="h-4 w-4" />
+                  </button>
+                  <select
+                    value={props.paperFormat}
+                    onChange={(event) =>
+                      props.setPaperFormat(
+                        event.target.value as "a4" | "f4" | "legal" | "letter",
+                      )
+                    }
+                    className="field-input hidden w-[80px] px-3 py-2 text-xs sm:block sm:text-sm 2xl:py-2.5"
+                  >
+                    <option value="a4">A4</option>
+                    <option value="f4">F4</option>
+                    <option value="legal">Legal</option>
+                    <option value="letter">Letter</option>
+                  </select>
+                  {paperMenuOpen ? (
+                    <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[144px] rounded-[14px] border border-[var(--border-soft)] bg-[var(--surface-panel)] p-1 shadow-2xl sm:hidden">
+                      {(["a4", "f4", "legal", "letter"] as const).map((format) => (
+                        <button
+                          key={format}
+                          type="button"
+                          onClick={() => {
+                            props.setPaperFormat(format);
+                            setPaperMenuOpen(false);
+                          }}
+                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm uppercase text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                        >
+                          <span>{format}</span>
+                          {props.paperFormat === format ? (
+                            <CheckIcon className="h-4 w-4 text-[var(--success)]" />
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     type="button"
@@ -989,31 +1093,94 @@ export function EntryView(props: EntryViewProps) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void props.onHandlePrint(props.preview)}
-                    disabled={props.isEditLoading}
-                    className="btn-secondary px-3 py-2 text-xs disabled:opacity-60 sm:px-4 sm:text-sm 2xl:py-2.5"
+                    onClick={() =>
+                      isMobileOrTablet
+                        ? void props.onHandleUnsupportedMobilePrint()
+                        : void props.onHandlePrint(props.preview)
+                    }
+                    aria-disabled={props.isEditLoading || isMobileOrTablet}
+                    className={`btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5 ${
+                      props.isEditLoading || isMobileOrTablet
+                        ? "cursor-not-allowed opacity-60"
+                        : ""
+                    }`}
                   >
                     <PrintIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     <span className="hidden sm:inline">Print</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void props.onSaveReport()}
-                    disabled={props.submitting || props.isEditLoading}
-                    className="btn-primary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
-                  >
-                    {props.submitting ? (
-                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
-                    ) : (
-                      <>
-                        <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="whitespace-nowrap lg:hidden xl:inline">
-                          Simpan
-                        </span>
-                      </>
-                    )}
-                  </button>
+                  <div ref={saveMenuRef} className="relative flex items-stretch">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSaveMenuOpen(false);
+                        void props.onSaveReport();
+                      }}
+                      disabled={props.submitting || props.isEditLoading}
+                      className="btn-primary rounded-r-none px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
+                    >
+                      {props.submitting ? (
+                        <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                      ) : (
+                        <>
+                          <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                          <span className="hidden whitespace-nowrap sm:inline">
+                            Simpan
+                          </span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSaveMenuOpen((open) => !open)}
+                      disabled={props.submitting || props.isEditLoading}
+                      className="btn-primary ml-[2px] rounded-l-none px-2 py-2 text-xs sm:px-3 sm:text-sm 2xl:py-2.5"
+                      aria-label="Opsi simpan"
+                    >
+                      <ChevronDownIcon
+                        className={`h-4 w-4 transition-transform ${saveMenuOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {saveMenuOpen ? (
+                      <div className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[260px] rounded-[14px] border border-[var(--border-soft)] bg-[var(--surface-panel)] p-1 shadow-2xl">
+                        {props.loadedLocalDraftSummary ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSaveMenuOpen(false);
+                              void props.onSaveLocalDraft("update");
+                            }}
+                            className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                          >
+                            <span>Perbarui draft</span>
+                            <span className="text-xs text-[var(--text-muted)]">
+                              aktif
+                            </span>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaveMenuOpen(false);
+                            void props.onSaveLocalDraft(
+                              props.loadedLocalDraftSummary ? "new" : undefined,
+                            );
+                          }}
+                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                        >
+                          <span>
+                            {props.loadedLocalDraftSummary
+                              ? "Simpan sbg draft baru"
+                              : "Simpan sebagai draft lokal"}
+                          </span>
+                          <span className="text-xs text-[var(--text-muted)]">
+                            {props.localDraftCount} draft
+                          </span>
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
+              </div>
               </div>
             </div>
           </div>

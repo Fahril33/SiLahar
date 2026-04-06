@@ -43,7 +43,7 @@ export function normalizeDraft(draft: DraftReport): DraftReport {
   return {
     ...draft,
     templateId: draft.templateId ?? defaultDraft.templateId,
-    nama: (draft.nama ?? "").toUpperCase(),
+    nama: draft.nama ?? "",
     tanggal: getWitaDisplayDateUppercase(reportDate),
     reportDate,
     approverCoordinatorTemplateId:
@@ -202,12 +202,12 @@ export function createPreviewReport(draft: DraftReport, pendingPreviews: Pending
       photos: [
         ...activity.photos,
         ...(pendingPreviews[activity.no] ?? []).map((photo, index) => ({
-          id: `preview-${activity.no}-${index}`,
+          id: `preview-${activity.no}-${index}-${photo.url}`,
           activityId: `preview-${activity.no}`,
           storagePath: "",
           publicUrl: photo.url,
           originalFileName: photo.name,
-          sortOrder: index + 1,
+          sortOrder: activity.photos.length + index + 1,
           createdAt: timestamp,
         })),
       ],

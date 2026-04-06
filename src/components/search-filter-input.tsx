@@ -10,7 +10,7 @@ export function SearchFilterInput(props: SearchFilterInputProps) {
   return (
     <input
       value={props.value}
-      onChange={(event) => props.onChange(event.target.value.toUpperCase())}
+      onChange={(event) => props.onChange(event.target.value)}
       placeholder={props.placeholder}
       disabled={props.disabled}
       className={`field-input ${props.className ?? ""}`.trim()}

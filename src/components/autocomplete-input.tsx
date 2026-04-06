@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { includesReporterName } from "../lib/reporter-name";
 
 type AutocompleteInputProps = {
   value: string;
@@ -23,13 +24,15 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const filteredOptions = useMemo(() => {
-    const keyword = value.trim().toUpperCase();
+    const keyword = value.trim();
 
     if (!keyword) {
       return options.slice(0, 8);
     }
 
-    return options.filter((option) => option.includes(keyword)).slice(0, 8);
+    return options
+      .filter((option) => includesReporterName(option, keyword))
+      .slice(0, 8);
   }, [options, value]);
 
   const showPanel = isOpen && (filteredOptions.length > 0 || value.trim().length > 0);
@@ -38,7 +41,7 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
     <div className="relative">
       <input
         value={value}
-        onChange={(event) => onChange(event.target.value.toUpperCase())}
+        onChange={(event) => onChange(event.target.value)}
         onFocus={() => setIsOpen(true)}
         onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
         placeholder={placeholder}

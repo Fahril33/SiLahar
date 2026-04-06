@@ -258,6 +258,47 @@ Setiap patch sebaiknya ditulis dengan pola:
 - Proses edit tidak lagi melewati semua baris foto hanya karena `pendingPhotos` kosong pada aktivitas tertentu.
 - Foto lama yang tetap dipakai tidak dikompresi ulang, sehingga edit metadata/deskripsi/jam tidak memicu proses optimasi gambar baru.
 
+## 2026-04-06 - Draft Lokal Bertumpuk, Print Reliability, dan Normalisasi Nama
+
+### Added
+- Sistem `draft lokal` bertumpuk berbasis `IndexedDB` untuk menyimpan progres laporan secara manual, terpisah dari cache dasar form.
+- Tombol split `Simpan` di halaman Laporan: klik utama tetap simpan ke database, dropdown memberi opsi simpan/update draft lokal.
+- Tombol `Lihat draft` di footer form dan toggle `Tampilkan draft lokal` di halaman Histori beserta jumlah draft aktif.
+- Antrean upload draft lokal ke database di background dengan notifikasi saat selesai.
+- Konfirmasi upload draft dengan opsi `Hapus draft ini setelah upload`.
+- Migration `017_preserve_reporter_name_casing.sql`.
+- Helper responsif `src/hooks/use-media-query.ts` untuk perilaku mobile/tablet yang lebih terkontrol.
+
+### Changed
+- Halaman Histori memisahkan perilaku filter: laporan database tetap mengikuti filter nama + tanggal, sementara draft lokal hanya mengikuti filter nama.
+- Tombol `Print` pada daftar histori menjadi split button dengan default klik `A4`, sedangkan pemilihan ukuran kertas di toolbar histori dihapus.
+- Action button histori dirapikan agar lebih compact di mobile, tetap rata kanan, dan tetap mendukung overflow horizontal saat ruang sempit.
+- Header preview dokumen di halaman Laporan disederhanakan di mobile dengan menyembunyikan teks `Preview Dokumen`.
+- Print di perangkat mobile/tablet dinonaktifkan secara eksplisit; tombol tetap tampil tetapi menampilkan SweetAlert bahwa print belum didukung pada perangkat mobile.
+- Aturan nama pelapor diselaraskan dari docs, frontend, hingga schema: casing input terakhir dipertahankan, tetapi deduplikasi dan pencarian tetap berbasis nama ternormalisasi case-insensitive.
+- Input nama pelapor tidak lagi dipaksa uppercase saat mengetik, termasuk autocomplete dan filter pencarian terkait.
+- Rename reporter, cek reporter existing, cache nama perangkat, dan target update laporan kini memakai helper normalisasi nama yang konsisten dengan database.
+
+### Fixed
+- Print preview browser sekarang mematerialisasi semua gambar dengan lebih andal, termasuk pada laporan preview yang masih memakai `pendingPhotos`, bukan hanya laporan yang sudah tersimpan di database.
+- Kasus edit laporan database lalu mengubah tanggal tidak lagi membuat duplikasi laporan baru; perubahan diperlakukan sebagai pemindahan record yang sama selama tidak bentrok dengan laporan lain.
+- Konflik upload draft lokal ke database kini memeriksa kombinasi `nama + tanggal`, sehingga tidak menimpa laporan dari tanggal yang berbeda.
+- Saat draft lokal ditinjau lalu dibuka di form, dropdown simpan kini kontekstual: `Perbarui draft` dan `Simpan sbg draft baru`.
+- Dropdown split button `Simpan` dan `Print` sekarang otomatis tertutup saat klik di luar area atau saat menekan `Escape`.
+- Dropdown print di histori tidak lagi tenggelam di dalam container action saat dibuka.
+- Hasil Excel tidak lagi menyisakan satu kolom kosong di sisi kiri dan seluruh konten digeser lebih rapat ke area template.
+
+### Database
+- `schema.sql` diperbarui agar `reporter_name` dan `reporter_directory.full_name` tidak lagi dipaksa uppercase oleh trigger, melainkan hanya diformat `trim + single-space`.
+- Menambahkan function SQL `public.format_reporter_name(value text)`.
+- RPC `upsert_reporter_directory_for_report(...)` dan `rename_reporter_directory_profile(...)` diperbarui agar menyimpan casing nama terakhir yang valid tanpa mengubah aturan deduplikasi pada `normalized_name`.
+- Migration `017_preserve_reporter_name_casing.sql` juga melakukan backfill format nama pada `reporter_directory` dan `daily_reports`.
+
+### Notes
+- Jalankan migration `017_preserve_reporter_name_casing.sql` di Supabase agar perilaku nama di deploy mengikuti frontend terbaru.
+- Data lama yang sebelumnya sudah uppercase tidak otomatis kembali ke casing aslinya; casing baru akan mengikuti input terakhir setelah record diubah/disimpan ulang.
+- Build frontend terbaru sudah diverifikasi dengan `npm run build`.
+
 ### Changed
 - Tahap progress simpan laporan kini membedakan antara upload foto baru dan mempertahankan dokumentasi lama agar alur proses lebih jelas.
 

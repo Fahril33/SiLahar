@@ -1,4 +1,8 @@
 import type { DraftReport, Report } from "../types/report";
+import {
+  formatReporterNameForDatabase,
+  normalizeReporterName,
+} from "./reporter-name";
 
 const DRAFT_KEY = "silahar:report-draft";
 const REPORTS_CACHE_KEY = "silahar:reports-cache";
@@ -39,11 +43,22 @@ export function loadCachedReporterNames() {
 }
 
 export function saveCachedReporterNames(names: string[]) {
+  const uniqueNames = Array.from(
+    names
+      .reduce((map, name) => {
+        const formatted = formatReporterNameForDatabase(name);
+        const normalized = normalizeReporterName(formatted);
+        if (formatted && !map.has(normalized)) {
+          map.set(normalized, formatted);
+        }
+        return map;
+      }, new Map<string, string>())
+      .values(),
+  ).sort();
+
   window.localStorage.setItem(
     REPORTER_NAMES_CACHE_KEY,
-    JSON.stringify(
-      Array.from(new Set(names.map((name) => name.trim().toUpperCase()).filter(Boolean))).sort(),
-    ),
+    JSON.stringify(uniqueNames),
   );
 }
 
@@ -52,24 +67,39 @@ export function loadDeviceSubmittedNames() {
 }
 
 export function saveDeviceSubmittedNames(names: string[]) {
+  const uniqueNames = Array.from(
+    names
+      .reduce((map, name) => {
+        const formatted = formatReporterNameForDatabase(name);
+        const normalized = normalizeReporterName(formatted);
+        if (formatted && !map.has(normalized)) {
+          map.set(normalized, formatted);
+        }
+        return map;
+      }, new Map<string, string>())
+      .values(),
+  ).sort();
+
   window.localStorage.setItem(
     DEVICE_SUBMITTED_NAMES_KEY,
-    JSON.stringify(
-      Array.from(new Set(names.map((name) => name.trim().toUpperCase()).filter(Boolean))).sort(),
-    ),
+    JSON.stringify(uniqueNames),
   );
 }
 
 export function pushDeviceSubmittedName(name: string) {
-  const nextNames = Array.from(
-    new Set([name.trim().toUpperCase(), ...loadDeviceSubmittedNames()].filter(Boolean)),
-  );
+  const current = loadDeviceSubmittedNames();
+  const formatted = formatReporterNameForDatabase(name);
+  const nextNames = [
+    formatted,
+    ...current.filter((item) => normalizeReporterName(item) !== normalizeReporterName(formatted)),
+  ].filter(Boolean);
   saveDeviceSubmittedNames(nextNames);
   return nextNames;
 }
 export function removeDeviceSubmittedName(name: string) {
   const current = loadDeviceSubmittedNames();
-  const nextNames = current.filter((n) => n !== name.trim().toUpperCase());
+  const target = normalizeReporterName(name);
+  const nextNames = current.filter((n) => normalizeReporterName(n) !== target);
   saveDeviceSubmittedNames(nextNames);
   return nextNames;
 }

@@ -10,6 +10,10 @@ import type { NotificationSettings } from "../types/notification-settings";
 import { supabase } from "./supabase";
 import { logSafeError, logSafeWarn } from "./logger";
 import { mapReportRow } from "./report-mappers";
+import {
+  formatReporterNameForDatabase,
+  normalizeReporterName,
+} from "./reporter-name";
 import type {
   DraftReport,
   Report,
@@ -79,7 +83,7 @@ function sanitizeFileName(name: string) {
 function mapAdminProfile(row: AdminProfileRow): AdminProfile {
   return {
     id: row.id,
-    fullName: row.full_name.toUpperCase(),
+    fullName: row.full_name,
     role: row.role,
     isActive: row.is_active,
   };
@@ -90,7 +94,7 @@ function mapReporterDirectoryRow(
 ): ReporterDirectoryProfile {
   return {
     id: row.id,
-    fullName: row.full_name.toUpperCase(),
+    fullName: row.full_name,
     firstReportedAt: row.first_reported_at,
     lastReportedAt: row.last_reported_at,
     totalReports: Number(row.total_reports ?? 0),
@@ -199,7 +203,7 @@ export async function fetchReporterDirectoryNames() {
     throw error;
   }
 
-  return (data ?? []).map((row) => row.full_name.toUpperCase());
+  return (data ?? []).map((row) => row.full_name);
 }
 
 export async function fetchReporterDirectoryProfiles() {
@@ -541,12 +545,10 @@ export async function checkReporterNameExists(name: string) {
     return false;
   }
 
-  const normalizedName = name.trim().toLowerCase().replace(/\s+/g, " ");
-
   const { data, error } = await supabase
     .from("reporter_directory")
     .select("id")
-    .eq("normalized_name", normalizedName)
+    .eq("normalized_name", normalizeReporterName(name))
     .maybeSingle();
 
   if (error) {
@@ -592,7 +594,7 @@ export async function renameReporterDirectoryProfile(
 
   const { error } = await supabase.rpc("rename_reporter_directory_profile", {
     reporter_id_input: reporterId,
-    next_full_name_input: nextName.trim().toUpperCase(),
+    next_full_name_input: formatReporterNameForDatabase(nextName),
   });
 
   if (error) {
@@ -657,9 +659,8 @@ async function upsertReporterDirectory(name: string) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const uppercaseName = name.trim().toUpperCase();
   const { data, error } = await supabase.rpc("upsert_reporter_directory_for_report", {
-    reporter_name_input: uppercaseName,
+    reporter_name_input: formatReporterNameForDatabase(name),
   });
 
   if (error) {
@@ -686,7 +687,7 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
         ? draft.templateId
         : existingReport?.templateId ?? null,
     reporter_directory_id: reporterDirectoryId,
-    reporter_name: draft.nama,
+    reporter_name: formatReporterNameForDatabase(draft.nama),
     report_date: draft.reportDate,
     template_approver_coordinator_id:
       draft.approverCoordinatorTemplateId &&

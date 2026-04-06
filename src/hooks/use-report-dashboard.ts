@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   askAcknowledge,
   askConfirmation,
+  askDraftUploadConfirmation,
+  askSlowSaveFallback,
   openProgressToast,
   showError,
   showInfo,
   showSuccess,
 } from "../lib/alerts";
+import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import {
   DEFAULT_REPORT_RULES,
   normalizeReportRules,
@@ -25,6 +28,20 @@ import {
 } from "../lib/excel-template-service";
 import { printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
+import {
+  formatReporterNameForDatabase,
+  includesReporterName,
+  isSameReporterName,
+} from "../lib/reporter-name";
+import {
+  createLocalDraftTitle,
+  deleteLocalReportDraft,
+  listLocalReportDrafts,
+  loadLocalReportDraft,
+  saveLocalReportDraft,
+  touchLocalReportDraft,
+  updateLocalReportDraftStatus,
+} from "../lib/local-report-drafts";
 import {
   createApproverDraftFromTemplate,
   fetchActiveReportTemplateConfig,
@@ -96,6 +113,11 @@ import type {
   ReportActivityPhoto,
   ReporterDirectoryProfile,
 } from "../types/report";
+import type {
+  LocalDraftFileMap,
+  LocalReportDraftRecord,
+  LocalReportDraftSummary,
+} from "../types/local-draft";
 
 export type View = "entry" | "history" | "status" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
@@ -112,6 +134,7 @@ export type AdminActiveAction =
   | "delete-reporter"
   | "save-notification-settings";
 const ACTIVE_TEMPLATE_VERSION_KEY = "silahar:active-template-version";
+const SLOW_SAVE_PROMPT_DELAY_MS = 9000;
 
 function buildTemplateVersionId(template: ReportTemplateConfig | null) {
   if (!template) return null;
@@ -123,6 +146,35 @@ function createDefaultApproverDraftMap(template: ReportTemplateConfig | null) {
     coordinator_team: createApproverDraftFromTemplate(template, "coordinator_team"),
     division_head: createApproverDraftFromTemplate(template, "division_head"),
   } satisfies Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>;
+}
+
+function clonePendingPhotoMap(pendingPhotos: PendingPhotoMap): LocalDraftFileMap {
+  return Object.fromEntries(
+    Object.entries(pendingPhotos).map(([activityNo, files]) => [
+      Number(activityNo),
+      [...files],
+    ]),
+  );
+}
+
+function revokePreviewMap(previews: PendingPreviewMap) {
+  revokePreviews(previews);
+}
+
+function buildPendingPreviewMap(
+  pendingPhotos: PendingPhotoMap | LocalDraftFileMap,
+): PendingPreviewMap {
+  return Object.fromEntries(
+    Object.entries(pendingPhotos)
+      .filter(([, files]) => files.length > 0)
+      .map(([activityNo, files]) => [
+        Number(activityNo),
+        files.map((file) => ({
+          name: file.name,
+          url: URL.createObjectURL(file),
+        })),
+      ]),
+  );
 }
 
 function mapOriginalActivityPhotos(report: Report) {
@@ -191,6 +243,56 @@ function isActivityComplete(
       !issue.endBeforeStart &&
       !issue.startsBeforePreviousEnd,
   );
+}
+
+function getActivityTimeIssuesForDraft(draft: DraftReport) {
+  return draft.activities.map((act, i) => {
+    const s = timeToMinutes(act.startTime);
+    const e = timeToMinutes(act.endTime);
+    const pE = i > 0 ? timeToMinutes(draft.activities[i - 1].endTime) : null;
+    return {
+      startAfterMorning: i === 0 && s > timeToMinutes("09:00"),
+      endBeforeStart: e < s,
+      startsBeforePreviousEnd: pE !== null && s < pE,
+      overtime: e > timeToMinutes("16:00"),
+    };
+  });
+}
+
+function validateDraftBeforeDatabaseSave(
+  draft: DraftReport,
+  pendingPhotos: PendingPhotoMap,
+  canUseAnyReportDate: boolean,
+) {
+  if (!draft.nama.trim()) {
+    return "Nama petugas wajib diisi.";
+  }
+
+  if (!canUseAnyReportDate && draft.reportDate !== today) {
+    return "Hanya laporan hari berjalan yang diizinkan.";
+  }
+
+  const issues = getActivityTimeIssuesForDraft(draft);
+  if (issues.some((item) => item.endBeforeStart || item.startsBeforePreviousEnd)) {
+    return "Periksa kembali urutan jam aktivitas.";
+  }
+
+  const completionStates = draft.activities.map((activity, index) =>
+    isActivityComplete(
+      activity,
+      pendingPhotos,
+      issues[index] ?? {
+        endBeforeStart: false,
+        startsBeforePreviousEnd: false,
+      },
+    ),
+  );
+  const fatalIndex = completionStates.findIndex((done) => !done);
+  if (fatalIndex !== -1) {
+    return `Lengkapi Aktivitas ke-${draft.activities[fatalIndex].no}.`;
+  }
+
+  return null;
 }
 
 export function useReportDashboard() {
@@ -262,6 +364,11 @@ export function useReportDashboard() {
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [draftCacheStatus, setDraftCacheStatus] = useState<DraftCacheStatus>("idle");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [savedLocalDrafts, setSavedLocalDrafts] = useState<LocalReportDraftSummary[]>([]);
+  const [localDraftsLoading, setLocalDraftsLoading] = useState(true);
+  const [showDraftsInHistory, setShowDraftsInHistory] = useState(false);
+  const [activeLocalDraftId, setActiveLocalDraftId] = useState<string | null>(null);
+  const [loadedLocalDraftId, setLoadedLocalDraftId] = useState<string | null>(null);
 
   const realtimeReloadTimeoutRef = useRef<number | null>(null);
   const backgroundRefreshIntervalRef = useRef<number | null>(null);
@@ -272,9 +379,14 @@ export function useReportDashboard() {
   const previousViewRef = useRef<View>(view);
   const reportsRef = useRef(reports);
   const reporterNamesRef = useRef(reporterNames);
+  const reportRulesRef = useRef(reportRules);
+  const adminSessionRef = useRef(adminSession);
+  const activeBackgroundUploadRef = useRef<string | null>(null);
 
   useEffect(() => { reportsRef.current = reports; }, [reports]);
   useEffect(() => { reporterNamesRef.current = reporterNames; }, [reporterNames]);
+  useEffect(() => { reportRulesRef.current = reportRules; }, [reportRules]);
+  useEffect(() => { adminSessionRef.current = adminSession; }, [adminSession]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -310,7 +422,10 @@ export function useReportDashboard() {
     };
   }, [draft]);
 
-  useEffect(() => { void loadDashboardData(); }, []);
+  useEffect(() => {
+    void loadDashboardData();
+    void refreshLocalDrafts();
+  }, []);
 
   useEffect(() => {
     const activeTemplate = excelTemplates.find((t) => t.isActive) ?? null;
@@ -410,6 +525,51 @@ export function useReportDashboard() {
     return () => window.clearTimeout(t);
   }, [draft.nama]);
 
+  useEffect(() => {
+    if (activeBackgroundUploadRef.current) {
+      return;
+    }
+
+    const nextDraft = savedLocalDrafts.find((item) => item.uploadStatus === "queued");
+    if (!nextDraft) {
+      return;
+    }
+
+    void processQueuedLocalDraftUpload(nextDraft.id);
+  }, [savedLocalDrafts]);
+
+  async function refreshLocalDrafts() {
+    setLocalDraftsLoading(true);
+    try {
+      let nextDrafts = await listLocalReportDrafts();
+      const interruptedDrafts = nextDrafts.filter(
+        (draft) =>
+          draft.uploadStatus === "uploading" &&
+          activeBackgroundUploadRef.current !== draft.id,
+      );
+
+      if (interruptedDrafts.length > 0) {
+        await Promise.all(
+          interruptedDrafts.map((draft) =>
+            updateLocalReportDraftStatus(draft.id, {
+              uploadStatus: "queued",
+              uploadError:
+                draft.uploadError ??
+                "Upload sebelumnya terputus dan dijadwalkan ulang.",
+            }),
+          ),
+        );
+        nextDrafts = await listLocalReportDrafts();
+      }
+
+      setSavedLocalDrafts(nextDrafts);
+    } catch (err) {
+      logSafeError(err, "Dashboard/LocalDrafts");
+    } finally {
+      setLocalDraftsLoading(false);
+    }
+  }
+
   async function loadDashboardData() {
     setLoading(true);
     try {
@@ -458,33 +618,48 @@ export function useReportDashboard() {
   const currentDraftSnapshot = useMemo(() => createDraftSnapshot(draft, pendingPhotos), [draft, pendingPhotos]);
   const hasDraftContent = useMemo(() => hasMeaningfulDraft(draft), [draft]);
   const similarName = useMemo(() => getSimilarName(draft.nama, reporterNames), [draft.nama, reporterNames]);
-  const duplicateReport = useMemo(() => reports.find(r => r.reportDate === draft.reportDate && r.nama.trim().toLowerCase() === draft.nama.trim().toLowerCase()) ?? null, [draft.nama, draft.reportDate, reports]);
+  const duplicateReport = useMemo(
+    () =>
+      reports.find(
+        (report) =>
+          report.reportDate === draft.reportDate &&
+          isSameReporterName(report.nama, draft.nama) &&
+          (!loadedSearchReportId || report.id !== loadedSearchReportId),
+      ) ?? null,
+    [draft.nama, draft.reportDate, loadedSearchReportId, reports],
+  );
   const preview = useMemo(() => createPreviewReport(draft, pendingPreviews), [draft, pendingPreviews]);
-  const historyResults = useMemo(() => reports.filter(r => (!historyName || r.nama.toLowerCase().includes(historyName.toLowerCase())) && (!historyDate || r.reportDate === historyDate)), [historyDate, historyName, reports]);
-  const searchResult = useMemo(() => reports.find(r => r.reportDate === searchDate && r.nama.toLowerCase() === searchName.trim().toLowerCase()) ?? null, [reports, searchDate, searchName]);
+  const historyResults = useMemo(() => reports.filter(r => (!historyName || includesReporterName(r.nama, historyName)) && (!historyDate || r.reportDate === historyDate)), [historyDate, historyName, reports]);
+  const historyLocalDrafts = useMemo(
+    () =>
+      savedLocalDrafts.filter(
+        (item) =>
+          !historyName ||
+          includesReporterName(item.reporterName, historyName) ||
+          includesReporterName(item.title, historyName),
+      ),
+    [historyName, savedLocalDrafts],
+  );
+  const searchResult = useMemo(() => reports.find(r => r.reportDate === searchDate && isSameReporterName(r.nama, searchName)) ?? null, [reports, searchDate, searchName]);
   const searchResultLoaded = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot === currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
   const searchResultCanReload = useMemo(() => Boolean(searchResult && (loadedSearchReportId !== searchResult.id || loadedSearchSnapshot !== currentDraftSnapshot)), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
   const searchResultNeedsReload = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot !== currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
   const statusRows = useMemo(() => reporterNames.map(name => ({
     name,
-    done: reports.some(r => r.reportDate === historyDate && r.nama.toLowerCase() === name.toLowerCase()),
-    report: reports.find(r => r.reportDate === historyDate && r.nama.toLowerCase() === name.toLowerCase()) ?? null,
+    done: reports.some(r => r.reportDate === historyDate && isSameReporterName(r.nama, name)),
+    report: reports.find(r => r.reportDate === historyDate && isSameReporterName(r.nama, name)) ?? null,
   })).sort((a, b) => a.name.localeCompare(b.name)), [historyDate, reporterNames, reports]);
 
-  const activityTimeIssues = useMemo(() => draft.activities.map((act, i) => {
-    const s = timeToMinutes(act.startTime);
-    const e = timeToMinutes(act.endTime);
-    const pE = i > 0 ? timeToMinutes(draft.activities[i - 1].endTime) : null;
-    return {
-      startAfterMorning: i === 0 && s > timeToMinutes("09:00"),
-      endBeforeStart: e < s,
-      startsBeforePreviousEnd: pE !== null && s < pE,
-      overtime: e > timeToMinutes("16:00"),
-    };
-  }), [draft.activities]);
+  const activityTimeIssues = useMemo(() => getActivityTimeIssuesForDraft(draft), [draft]);
 
   const activityCompletionStates = useMemo(() => draft.activities.map((act, i) => isActivityComplete(act, pendingPhotos, activityTimeIssues[i] ?? { endBeforeStart: false, startsBeforePreviousEnd: false })), [activityTimeIssues, draft.activities, pendingPhotos]);
   const activeExcelTemplate = useMemo(() => excelTemplates.find(t => t.isActive) ?? null, [excelTemplates]);
+  const localDraftCount = savedLocalDrafts.length;
+  const queuedLocalDraftCount = savedLocalDrafts.filter(item => item.uploadStatus === "queued" || item.uploadStatus === "uploading").length;
+  const loadedLocalDraftSummary = useMemo(
+    () => savedLocalDrafts.find((item) => item.id === loadedLocalDraftId) ?? null,
+    [loadedLocalDraftId, savedLocalDrafts],
+  );
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
     if (key === "reportDate" && !adminSession && !reportRules.allowAnyReportDate) {
@@ -561,13 +736,357 @@ export function useReportDashboard() {
     });
   }
 
+  function resolveSaveTargetReport(sourceReportId: string | null, targetDraft: DraftReport) {
+    if (sourceReportId) {
+      const exact = reportsRef.current.find((report) => report.id === sourceReportId);
+      if (exact) {
+        return exact;
+      }
+    }
+
+    return (
+      reportsRef.current.find(
+        (report) =>
+          report.reportDate === targetDraft.reportDate &&
+          isSameReporterName(report.nama, targetDraft.nama),
+      ) ?? null
+    );
+  }
+
+  function findConflictingDatabaseReportForDraft(
+    targetDraft: DraftReport,
+    sourceReportId: string | null,
+  ) {
+    const matchedReport = reportsRef.current.find(
+      (report) =>
+        report.reportDate === targetDraft.reportDate &&
+        isSameReporterName(report.nama, targetDraft.nama) &&
+        (!sourceReportId || report.id !== sourceReportId),
+    );
+
+    if (!matchedReport) {
+      return null;
+    }
+
+    return {
+      report: matchedReport,
+      isDirectSource: false,
+    };
+  }
+
+  async function persistCurrentAsLocalDraft(options?: {
+    draftId?: string | null;
+    queueUpload?: boolean;
+    showToast?: boolean;
+    forceNew?: boolean;
+  }) {
+    const normalizedPendingPhotos = clonePendingPhotoMap(pendingPhotos);
+    const createdAt = new Date().toISOString();
+    const targetDraftId =
+      options?.forceNew ? null : options?.draftId ?? loadedLocalDraftId;
+    const saved = await saveLocalReportDraft({
+      id: targetDraftId ?? undefined,
+      title: createLocalDraftTitle(draft.nama, draft.reportDate, createdAt),
+      createdAt,
+      draft,
+      pendingPhotos: normalizedPendingPhotos,
+      editableOriginalPhotos,
+      sourceReportId: loadedSearchReportId,
+      sourceDraftSnapshot: loadedSearchSnapshot,
+    });
+
+    if (options?.queueUpload) {
+      await updateLocalReportDraftStatus(saved.id, {
+        uploadStatus: "queued",
+        uploadError: null,
+        uploadedReportId: null,
+      });
+    }
+
+    await refreshLocalDrafts();
+    setLoadedLocalDraftId(saved.id);
+
+    if (options?.showToast !== false) {
+      await showSuccess(
+        options?.queueUpload
+          ? "Draft lokal masuk antrean"
+          : targetDraftId
+            ? "Draft lokal diperbarui"
+            : "Draft lokal tersimpan",
+        options?.queueUpload
+          ? "Draft akan dicoba di-upload ke database saat antreannya berjalan."
+          : targetDraftId
+            ? "Perubahan terbaru sudah menggantikan isi draft lokal yang sedang ditinjau."
+            : "Progress aman tersimpan di perangkat ini dan bisa dibuka lagi dari Histori.",
+      );
+    }
+
+    return saved.id;
+  }
+
+  async function applyLocalDraftToForm(localDraft: LocalReportDraftRecord) {
+    revokePreviewMap(pendingPreviews);
+    const nextPendingPhotos = clonePendingPhotoMap(localDraft.pendingPhotos);
+    const nextPreviews = buildPendingPreviewMap(nextPendingPhotos);
+
+    setPendingPhotos(nextPendingPhotos);
+    setPendingPreviews(nextPreviews);
+    setEditableOriginalPhotos(localDraft.editableOriginalPhotos);
+    setDraft(normalizeDraft(localDraft.draft));
+    setLoadedSearchReportId(localDraft.sourceReportId);
+    setLoadedSearchSnapshot(localDraft.sourceDraftSnapshot);
+    setLoadedLocalDraftId(localDraft.id);
+    setView("entry");
+    await touchLocalReportDraft(localDraft.id);
+    await refreshLocalDrafts();
+  }
+
+  async function handleLoadLocalDraft(draftId: string) {
+    const localDraft = await loadLocalReportDraft(draftId);
+    if (!localDraft) {
+      await showError("Draft tidak ditemukan", "Draft lokal ini sudah tidak tersedia.");
+      await refreshLocalDrafts();
+      return;
+    }
+
+    const hasUnsavedCurrentState =
+      hasDraftContent || Object.keys(pendingPhotos).length > 0 || draft.nama.trim();
+    if (hasUnsavedCurrentState) {
+      const confirmed = await askConfirmation(
+        "Buka draft lokal?",
+        "Isian form saat ini akan diganti dengan draft lokal yang dipilih.",
+        "Buka draft",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setActiveLocalDraftId(draftId);
+    try {
+      await applyLocalDraftToForm(localDraft);
+    } finally {
+      setActiveLocalDraftId(null);
+    }
+  }
+
+  async function handleDeleteLocalDraft(draftId: string) {
+    const confirmed = await askConfirmation(
+      "Hapus draft lokal?",
+      "Draft ini akan dihapus dari perangkat ini dan tidak bisa dikembalikan.",
+      "Hapus draft",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    await deleteLocalReportDraft(draftId);
+    if (loadedLocalDraftId === draftId) {
+      setLoadedLocalDraftId(null);
+    }
+    await refreshLocalDrafts();
+    await showSuccess("Draft dihapus", "Draft lokal sudah dibersihkan dari perangkat ini.");
+  }
+
+  async function handleQueueLocalDraftUpload(draftId: string) {
+    const localDraft = await loadLocalReportDraft(draftId);
+    if (!localDraft) {
+      await showError("Draft tidak ditemukan", "Draft lokal ini sudah tidak tersedia.");
+      await refreshLocalDrafts();
+      return;
+    }
+
+    const validationError = validateDraftBeforeDatabaseSave(
+      localDraft.draft,
+      localDraft.pendingPhotos,
+      Boolean(adminSessionRef.current) || reportRulesRef.current.allowAnyReportDate,
+    );
+    if (validationError) {
+      await updateLocalReportDraftStatus(draftId, {
+        uploadStatus: "failed",
+        uploadError: validationError,
+        lastUploadFinishedAt: new Date().toISOString(),
+      });
+      await refreshLocalDrafts();
+      await showError("Draft belum siap di-upload", validationError);
+      return;
+    }
+
+    const sourceReport = resolveSaveTargetReport(
+      localDraft.sourceReportId,
+      localDraft.draft,
+    );
+    const conflictingDatabaseReport = findConflictingDatabaseReportForDraft(
+      localDraft.draft,
+      localDraft.sourceReportId,
+    );
+    if (sourceReport && conflictingDatabaseReport) {
+      await updateLocalReportDraftStatus(draftId, {
+        uploadStatus: "failed",
+        uploadError:
+          "Tanggal baru bentrok dengan laporan lain yang sudah ada di database.",
+        lastUploadFinishedAt: new Date().toISOString(),
+      });
+      await refreshLocalDrafts();
+      await showError(
+        "Tanggal bentrok",
+        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Edit laporan target itu langsung atau pilih tanggal lain.`,
+      );
+      return;
+    }
+
+    const confirmation = await askDraftUploadConfirmation({
+      title: sourceReport
+        ? "Pindahkan laporan database?"
+        : conflictingDatabaseReport
+          ? "Laporan serupa sudah ada di database"
+          : "Upload draft ke database?",
+      text: sourceReport
+        ? `Draft ini terhubung ke laporan ${sourceReport.nama}. Jika tanggal berubah, laporan yang sama akan dipindahkan ke tanggal baru tanpa membuat duplikat.`
+        : conflictingDatabaseReport
+          ? `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Upload draft ini akan mengganti laporan yang ada, bukan membuat data baru.`
+        : "Draft lokal ini akan di-upload ke database sebagai laporan aktif.",
+      confirmText: "Lanjut upload",
+    });
+
+    if (!confirmation.confirmed) {
+      await showInfo(
+        "Upload dibatalkan",
+        "Draft lokal tetap aman dan bisa ditinjau lagi sebelum di-upload.",
+      );
+      return;
+    }
+
+    await updateLocalReportDraftStatus(draftId, {
+      uploadStatus: "queued",
+      uploadError: sourceReport
+        ? "Siap memperbarui laporan sumber di database."
+        : conflictingDatabaseReport
+          ? "Siap mengganti laporan yang sudah ada di database."
+        : null,
+      uploadedReportId: null,
+      deleteAfterUpload: confirmation.deleteAfterUpload,
+    });
+    await refreshLocalDrafts();
+    await showInfo(
+      "Draft masuk antrean",
+      confirmation.deleteAfterUpload
+        ? "Upload akan berjalan di background dan draft lokal akan dihapus otomatis setelah sukses."
+        : "Upload akan berjalan di background. Anda bisa pindah ke halaman lain.",
+    );
+  }
+
+  async function processQueuedLocalDraftUpload(draftId: string) {
+    activeBackgroundUploadRef.current = draftId;
+    try {
+      await updateLocalReportDraftStatus(draftId, {
+        uploadStatus: "uploading",
+        uploadError: null,
+        lastUploadStartedAt: new Date().toISOString(),
+        lastUploadFinishedAt: null,
+      });
+      await refreshLocalDrafts();
+
+      const localDraft = await loadLocalReportDraft(draftId);
+      if (!localDraft) {
+        throw new Error("Draft lokal sudah tidak tersedia.");
+      }
+
+      const validationError = validateDraftBeforeDatabaseSave(
+        localDraft.draft,
+        localDraft.pendingPhotos,
+        Boolean(adminSessionRef.current) || reportRulesRef.current.allowAnyReportDate,
+      );
+      if (validationError) {
+        throw new Error(validationError);
+      }
+
+      const sourceReport = resolveSaveTargetReport(
+        localDraft.sourceReportId,
+        localDraft.draft,
+      );
+      const conflictingDatabaseReport = findConflictingDatabaseReportForDraft(
+        localDraft.draft,
+        localDraft.sourceReportId,
+      );
+      if (sourceReport && conflictingDatabaseReport) {
+        throw new Error(
+          `Tanggal baru bentrok dengan laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}.`,
+        );
+      }
+
+      const savedReport = await saveReportToDatabase(
+        localDraft.draft,
+        localDraft.pendingPhotos,
+        resolveSaveTargetReport(localDraft.sourceReportId, localDraft.draft),
+        reportRulesRef.current,
+      );
+
+      await updateLocalReportDraftStatus(draftId, {
+        uploadStatus: "uploaded",
+        uploadError: null,
+        uploadedReportId: savedReport?.id ?? null,
+        lastUploadFinishedAt: new Date().toISOString(),
+      });
+      await loadDashboardData();
+      if (localDraft.deleteAfterUpload) {
+        await deleteLocalReportDraft(draftId);
+        if (loadedLocalDraftId === draftId) {
+          setLoadedLocalDraftId(null);
+        }
+      }
+      await refreshLocalDrafts();
+      setDeviceSubmittedNames(pushDeviceSubmittedName(localDraft.draft.nama));
+      notifyBackgroundTask(
+        "Upload draft selesai",
+        sourceReport
+          ? `${localDraft.draft.nama || "Draft lokal"} berhasil memindahkan laporan yang sama ke tanggal baru di database.`
+          : `${localDraft.draft.nama || "Draft lokal"} berhasil tersimpan ke database.`,
+      );
+      await showSuccess(
+        "Upload draft selesai",
+        localDraft.deleteAfterUpload
+          ? "Upload selesai dan draft lokalnya sudah dihapus otomatis."
+          : sourceReport
+            ? `${localDraft.draft.nama || "Draft lokal"} berhasil memindahkan laporan yang sama ke tanggal baru di database.`
+            : `${localDraft.draft.nama || "Draft lokal"} berhasil tersimpan ke database.`,
+      );
+    } catch (err) {
+      logSafeError(err, "Dashboard/BackgroundDraftUpload");
+      const message =
+        typeof err === "object" &&
+        err !== null &&
+        "message" in err &&
+        typeof err.message === "string"
+          ? err.message
+          : "Draft belum berhasil di-upload.";
+      await updateLocalReportDraftStatus(draftId, {
+        uploadStatus: "failed",
+        uploadError: message,
+        lastUploadFinishedAt: new Date().toISOString(),
+      });
+      await refreshLocalDrafts();
+      notifyBackgroundTask("Upload draft gagal", message);
+      await showError("Upload draft gagal", message);
+    } finally {
+      activeBackgroundUploadRef.current = null;
+    }
+  }
+
+  function openSavedDraftHistory() {
+    setShowDraftsInHistory(true);
+    setView("history");
+  }
+
   function resetDraftState() {
-    revokePreviews(pendingPreviews);
+    revokePreviewMap(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
     setEditableOriginalPhotos({});
     setLoadedSearchReportId(null);
     setLoadedSearchSnapshot(null);
+    setLoadedLocalDraftId(null);
     clearDraft();
     setDraft(createEmptyDraft(activeReportTemplateConfig));
     setDraftSavedAt(null);
@@ -590,13 +1109,14 @@ export function useReportDashboard() {
       approverDivisionHeadNip: report.approverDivisionHeadNip,
       notes: report.notes,
     });
-    revokePreviews(pendingPreviews);
+    revokePreviewMap(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
     setEditableOriginalPhotos(mapOriginalActivityPhotos(report));
     setDraft(d);
     setLoadedSearchReportId(report.id);
     setLoadedSearchSnapshot(createDraftSnapshot(d, {}));
+    setLoadedLocalDraftId(null);
   }
 
   async function handleLoadEdit(report: Report) {
@@ -626,22 +1146,93 @@ export function useReportDashboard() {
     finally { setExcelExportingReportId(null); }
   }
 
-  async function handlePrint(report: Report) {
-    try { await printReportDocument(report, paperFormat); } catch (err) { logSafeError(err, "Dashboard/Print"); await showError("Print gagal", "Dokumen belum berhasil dibuka."); }
+  async function handlePrint(
+    report: Report,
+    format?: "a4" | "f4" | "legal" | "letter",
+  ) {
+    try {
+      await printReportDocument(
+        report,
+        format ?? paperFormat,
+        report.id === "preview" ? pendingPhotos : undefined,
+      );
+    } catch (err) {
+      logSafeError(err, "Dashboard/Print");
+      await showError("Print gagal", "Dokumen belum berhasil dibuka.");
+    }
+  }
+
+  async function handleUnsupportedMobilePrint() {
+    await askAcknowledge(
+      "Print belum didukung",
+      "Saat ini print tidak didukung pada perangkat mobile.",
+      "OK",
+    );
   }
 
   async function saveReport() {
-    if (!draft.nama.trim()) { await showError("Nama belum diisi", "Nama petugas wajib diisi."); return; }
-    const fatalIdx = activityCompletionStates.findIndex(c => !c);
-    if (fatalIdx !== -1) { await showError("Data belum lengkap", `Lengkapi Aktivitas ke-${draft.activities[fatalIdx].no}.`); return; }
-    if (!adminSession && !reportRules.allowAnyReportDate && draft.reportDate !== today) { await showError("Tanggal belum diizinkan", "Hanya laporan hari berjalan yang diizinkan."); return; }
-    if (activityTimeIssues.some(i => i.endBeforeStart || i.startsBeforePreviousEnd)) { await showError("Jam belum valid", "Periksa kembali urutan jam aktivitas."); return; }
+    const validationError = validateDraftBeforeDatabaseSave(
+      draft,
+      pendingPhotos,
+      Boolean(adminSession) || reportRules.allowAnyReportDate,
+    );
+    if (validationError) {
+      await showError(
+        validationError.startsWith("Lengkapi Aktivitas")
+          ? "Data belum lengkap"
+          : validationError.includes("jam")
+            ? "Jam belum valid"
+            : validationError.includes("hari berjalan")
+              ? "Tanggal belum diizinkan"
+              : "Nama belum diisi",
+        validationError,
+      );
+      return;
+    }
+
+    const sourceReport = resolveSaveTargetReport(loadedSearchReportId, draft);
+    const conflictingDatabaseReport = findConflictingDatabaseReportForDraft(
+      draft,
+      loadedSearchReportId,
+    );
+    if (sourceReport && conflictingDatabaseReport) {
+      await showError(
+        "Tanggal bentrok",
+        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Ubah tanggal lain atau edit laporan target itu langsung.`,
+      );
+      return;
+    }
 
     if (await askConfirmation(duplicateReport ? "Perbarui laporan?" : "Simpan laporan?", duplicateReport ? "Laporan sudah ada dan akan diperbarui." : "Laporan akan disimpan ke database.", duplicateReport ? "Perbarui" : "Simpan")) {
       setSubmitting(true);
       const toast = openProgressToast("Menyimpan laporan", [{ id: "prepare", label: "Menyiapkan" }, { id: "activities", label: "Menyimpan" }, { id: "photos", label: "Memproses" }, { id: "finalize", label: "Finalisasi" }]);
+      let slowPromptResolved = false;
+      const slowSaveTimer = window.setTimeout(() => {
+        if (slowPromptResolved) {
+          return;
+        }
+        slowPromptResolved = true;
+        void askSlowSaveFallback().then(async (choice) => {
+          if (choice === "save-local") {
+            await persistCurrentAsLocalDraft({ showToast: true });
+            return;
+          }
+          if (choice === "background") {
+            await showInfo(
+              "Upload tetap berjalan",
+              "Anda bisa pindah ke halaman lain. Notifikasi akan muncul saat proses selesai.",
+            );
+          }
+        });
+      }, SLOW_SAVE_PROMPT_DELAY_MS);
       try {
-        await saveReportToDatabase(draft, pendingPhotos, duplicateReport, reportRules, (s, d) => toast.update(s, d));
+        await saveReportToDatabase(
+          draft,
+          pendingPhotos,
+          sourceReport ?? duplicateReport,
+          reportRules,
+          (s, d) => toast.update(s, d),
+        );
         toast.close();
         await loadDashboardData();
         setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
@@ -651,7 +1242,10 @@ export function useReportDashboard() {
         logSafeError(err, "Dashboard/SaveReport");
         const msg = (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") ? err.message : "Gagal menyimpan laporan.";
         await showError("Simpan gagal", msg);
-      } finally { setSubmitting(false); }
+      } finally {
+        window.clearTimeout(slowSaveTimer);
+        setSubmitting(false);
+      }
     }
   }
 
@@ -671,7 +1265,7 @@ export function useReportDashboard() {
 
   async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile) {
     if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
-    const nextName = adminReporterDraftNames[reporter.id]?.trim().toUpperCase() ?? reporter.fullName;
+    const nextName = formatReporterNameForDatabase(adminReporterDraftNames[reporter.id] ?? reporter.fullName);
     if (!nextName) { await showError("Nama belum valid", "Nama tidak boleh kosong."); return; }
     if (nextName === reporter.fullName) { await showInfo("Tidak ada perubahan", "Nama belum berubah."); return; }
 
@@ -696,7 +1290,7 @@ export function useReportDashboard() {
       setAdminActiveItemId(reporter.id);
       try {
         await deleteReporterDirectoryTrace(reporter.id);
-        if (draft.nama.trim().toUpperCase() === reporter.fullName) resetDraftState();
+        if (isSameReporterName(draft.nama, reporter.fullName)) resetDraftState();
         await loadDashboardData();
         await showSuccess("Jejak dihapus", "Data sudah dihapus.");
       } catch (err) { console.error(err); await showError("Hapus gagal", "Gagal menghapus jejak."); }
@@ -731,7 +1325,7 @@ export function useReportDashboard() {
   }
 
   function changeAdminReporterDraftName(reporterId: string, value: string) {
-    setAdminReporterDraftNames(c => ({ ...c, [reporterId]: value.toUpperCase() }));
+    setAdminReporterDraftNames(c => ({ ...c, [reporterId]: value }));
   }
 
   async function handleSaveAdminRules() {
@@ -874,11 +1468,15 @@ export function useReportDashboard() {
     canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
     canManageReports: Boolean(adminSession),
     duplicateReport, activityTimeIssues, activityCompletionStates, preview, historyResults,
-    searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,
+    historyLocalDrafts, searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,
     hasDraftContent, draftSavedAt, draftCacheStatus, searchOpen, setSearchOpen,
+    savedLocalDrafts, localDraftsLoading, showDraftsInHistory, setShowDraftsInHistory,
+    localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
     change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handlePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handlePrint, handleUnsupportedMobilePrint, saveReport,
+    persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
+    handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,
     changeAdminTemplateApproverDraft, changeExcelTemplateDraft, clearExcelTemplateDraftName,
     selectExcelTemplateFile, changeAdminExcelTemplateDraft, changeAdminReporterDraftName,

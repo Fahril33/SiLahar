@@ -382,6 +382,9 @@ export default function App() {
             hasDraftContent={dashboard.hasDraftContent}
             draftSavedAt={dashboard.draftSavedAt}
             draftCacheStatus={dashboard.draftCacheStatus}
+            localDraftCount={dashboard.localDraftCount}
+            queuedLocalDraftCount={dashboard.queuedLocalDraftCount}
+            loadedLocalDraftSummary={dashboard.loadedLocalDraftSummary}
             searchOpen={dashboard.searchOpen}
             onChange={dashboard.change}
             onChangeActivity={dashboard.changeActivity}
@@ -394,8 +397,20 @@ export default function App() {
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
             onHandleResetDraft={dashboard.handleResetDraft}
             onSaveReport={dashboard.saveReport}
+            onSaveLocalDraft={(mode) =>
+              dashboard
+                .persistCurrentAsLocalDraft({
+                  showToast: true,
+                  forceNew: mode === "new",
+                  draftId:
+                    mode === "update" ? dashboard.loadedLocalDraftId : undefined,
+                })
+                .then(() => undefined)
+            }
+            onOpenSavedDrafts={dashboard.openSavedDraftHistory}
             onHandleRemoveSavedName={dashboard.handleRemoveSavedName}
             paperFormat={dashboard.paperFormat}
             setPaperFormat={dashboard.setPaperFormat}
@@ -408,22 +423,30 @@ export default function App() {
         {dashboard.view === "history" ? (
           <HistoryView
             loading={dashboard.loading}
+            localDraftsLoading={dashboard.localDraftsLoading}
             historyName={dashboard.historyName}
             setHistoryName={dashboard.setHistoryName}
             historyDate={dashboard.historyDate}
             setHistoryDate={dashboard.setHistoryDate}
             historyResults={dashboard.historyResults}
+            historyLocalDrafts={dashboard.historyLocalDrafts}
+            showDraftsInHistory={dashboard.showDraftsInHistory}
+            setShowDraftsInHistory={dashboard.setShowDraftsInHistory}
             onHandleLoadEdit={dashboard.handleLoadEdit}
+            onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
+            onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
+            onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
             onHandleDeleteReport={dashboard.handleDeleteReport}
             excelExportingReportId={dashboard.excelExportingReportId}
             editLoadingReportId={dashboard.editLoadingReportId}
+            activeLocalDraftId={dashboard.activeLocalDraftId}
+            localDraftCount={dashboard.localDraftCount}
             today={today}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             canManageReports={dashboard.canManageReports}
-            paperFormat={dashboard.paperFormat}
-            setPaperFormat={dashboard.setPaperFormat}
             onReload={dashboard.handleReloadDashboardData}
           />
         ) : null}

@@ -16,6 +16,14 @@ as $$
   select regexp_replace(lower(trim(coalesce(value, ''))), '\s+', ' ', 'g');
 $$;
 
+create or replace function public.format_reporter_name(value text)
+returns text
+language sql
+immutable
+as $$
+  select regexp_replace(trim(coalesce(value, '')), '\s+', ' ', 'g');
+$$;
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -196,7 +204,7 @@ returns trigger
 language plpgsql
 as $$
 begin
-  new.reporter_name = upper(trim(coalesce(new.reporter_name, '')));
+  new.reporter_name = public.format_reporter_name(new.reporter_name);
   new.normalized_reporter_name = public.normalize_name(new.reporter_name);
 
   if new.report_date is null then
@@ -214,7 +222,7 @@ returns trigger
 language plpgsql
 as $$
 begin
-  new.full_name = upper(trim(coalesce(new.full_name, '')));
+  new.full_name = public.format_reporter_name(new.full_name);
   new.normalized_name = public.normalize_name(new.full_name);
   return new;
 end;
@@ -668,7 +676,7 @@ set search_path = public
 as $$
 declare
   normalized_input text := public.normalize_name(next_full_name_input);
-  uppercase_input text := upper(trim(coalesce(next_full_name_input, '')));
+  formatted_input text := public.format_reporter_name(next_full_name_input);
   current_normalized_name text;
 begin
   if not public.is_admin() then
@@ -679,7 +687,7 @@ begin
     raise exception 'ID pengguna publik tidak valid.';
   end if;
 
-  if uppercase_input = '' then
+  if formatted_input = '' then
     raise exception 'Nama pengguna publik wajib diisi.';
   end if;
 
@@ -703,13 +711,13 @@ begin
   end if;
 
   update public.reporter_directory
-  set full_name = uppercase_input,
+  set full_name = formatted_input,
       is_active = true,
       updated_at = now()
   where id = reporter_id_input;
 
   update public.daily_reports
-  set reporter_name = uppercase_input,
+  set reporter_name = formatted_input,
       reporter_directory_id = reporter_id_input,
       updated_by_role = 'admin',
       updated_by_label = 'Admin',

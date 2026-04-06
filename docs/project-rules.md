@@ -17,7 +17,8 @@
 - Pengaturan admin dilakukan dari halaman Admin setelah login Supabase Auth dan tetap divalidasi oleh RLS.
 - Zona waktu aplikasi adalah WITA / `Asia/Makassar`.
 - Laporan default-nya mengikuti hari berjalan, tetapi admin bisa membuka sementara CRUD semua tanggal lewat `report_rules.allow_any_report_date` di database.
-- Nama yang disimpan dan ditampilkan selalu uppercase.
+- Nama pelapor disimpan dan ditampilkan mengikuti casing input terakhir yang valid, tanpa dipaksa uppercase.
+- Pencocokan / deduplikasi nama pelapor tetap harus case-insensitive dan berbasis nama ternormalisasi agar `Budi`, `budi`, dan `  BuDi  ` dianggap orang yang sama.
 - User umum cukup memilih `report_date` lewat input tanggal saat rule mengizinkan, lalu teks hari/tanggal dokumen terisi otomatis, uppercase, dan tetap read-only.
 - Jika `report_rules.allow_any_report_date` dimatikan admin, input `report_date` kembali dikunci ke hari berjalan.
 - Nilai `display_date_text` tidak boleh dipercaya dari client; database harus selalu menurunkannya ulang dari `report_date`.
