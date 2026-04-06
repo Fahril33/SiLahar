@@ -28,6 +28,15 @@ function buildPdfFileName(report: Report) {
   return `${buildDocumentTitle(report)}.pdf`;
 }
 
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Gagal membaca blob gambar."));
+    reader.readAsDataURL(blob);
+  });
+}
+
 function renderReportMarkup(report: Report) {
   return `<div class="pdf-report-shell">${renderToStaticMarkup(createElement(ReportPdfDocument, { report }))}</div>`;
 }
@@ -125,6 +134,48 @@ async function preloadReportImages(report: Report) {
         }),
     ),
   );
+}
+
+async function materializeReportImages(report: Report) {
+  const cache = new Map<string, string>();
+
+  const activities = await Promise.all(
+    report.activities.map(async (activity) => ({
+      ...activity,
+      photos: await Promise.all(
+        activity.photos.map(async (photo) => {
+          const source = photo.publicUrl;
+          if (!source) {
+            return photo;
+          }
+
+          const cached = cache.get(source);
+          if (cached) {
+            return { ...photo, publicUrl: cached };
+          }
+
+          try {
+            const response = await fetch(source, { mode: "cors", credentials: "omit" });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            const dataUrl = await blobToDataUrl(await response.blob());
+            cache.set(source, dataUrl);
+            return { ...photo, publicUrl: dataUrl };
+          } catch {
+            cache.set(source, source);
+            return photo;
+          }
+        }),
+      ),
+    })),
+  );
+
+  return {
+    ...report,
+    activities,
+  };
 }
 
 type Html2PdfInstance = {
@@ -230,8 +281,9 @@ export async function printReportDocument(
   paperFormat: "a4" | "f4" | "legal" | "letter",
 ) {
   const originalTitle = document.title;
-  const container = createPdfContainer(report);
-  await preloadReportImages(report);
+  const printReadyReport = await materializeReportImages(report);
+  const container = createPdfContainer(printReadyReport);
+  await preloadReportImages(printReadyReport);
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.left = "-10000px";
