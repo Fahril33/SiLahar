@@ -109,11 +109,15 @@
   padding: 6px;
 }
 
+.pdf-report-main-table .proof-images-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .pdf-report-main-table .proof-image {
   display: block;
-  /* height: 120px; */
   height: auto;
-  /* width: auto; */
   width: 100%;
   object-fit: contain;
 }

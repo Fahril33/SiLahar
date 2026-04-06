@@ -1,5 +1,10 @@
 import { DEFAULT_REPORT_RULES, normalizeReportRules, type ReportRules } from "../config/report-rules";
-import { fallbackReportTemplateConfig } from "./report-template-defaults";
+import {
+  fallbackReportTemplateConfig,
+  FALLBACK_TEMPLATE_ID,
+  FALLBACK_COORDINATOR_ID,
+  FALLBACK_DIVISION_HEAD_ID,
+} from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
 import { supabase } from "./supabase";
@@ -677,16 +682,24 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
 
   const payload = {
     template_id:
-      draft.templateId && draft.templateId !== fallbackReportTemplateConfig.id
+      draft.templateId && draft.templateId !== FALLBACK_TEMPLATE_ID
         ? draft.templateId
         : existingReport?.templateId ?? null,
     reporter_directory_id: reporterDirectoryId,
     reporter_name: draft.nama,
     report_date: draft.reportDate,
-    template_approver_coordinator_id: draft.approverCoordinatorTemplateId,
+    template_approver_coordinator_id:
+      draft.approverCoordinatorTemplateId &&
+      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_ID
+        ? draft.approverCoordinatorTemplateId
+        : null,
     approver_coordinator_name: draft.approverCoordinator,
     approver_coordinator_nip: draft.approverCoordinatorNip,
-    template_approver_division_head_id: draft.approverDivisionHeadTemplateId,
+    template_approver_division_head_id:
+      draft.approverDivisionHeadTemplateId &&
+      draft.approverDivisionHeadTemplateId !== FALLBACK_DIVISION_HEAD_ID
+        ? draft.approverDivisionHeadTemplateId
+        : null,
     approver_division_head_name: draft.approverDivisionHead,
     approver_division_head_title: draft.approverDivisionHeadTitle,
     approver_division_head_nip: draft.approverDivisionHeadNip,

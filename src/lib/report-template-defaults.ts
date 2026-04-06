@@ -4,7 +4,10 @@ import type {
   ReportTemplateConfig,
 } from "../types/report-template";
 
-const FALLBACK_TEMPLATE_ID = "fallback-bpbd-trc-harian-2026";
+export const FALLBACK_TEMPLATE_ID = "fallback-bpbd-trc-harian-2026";
+export const FALLBACK_COORDINATOR_ID = "fallback-coordinator-team";
+export const FALLBACK_DIVISION_HEAD_ID = "fallback-division-head";
+
 const now = new Date().toISOString();
 
 function createFallbackApprover(
@@ -46,13 +49,13 @@ export const fallbackReportTemplateConfig: ReportTemplateConfig = {
   ],
   approvers: [
     createFallbackApprover("coordinator_team", {
-      id: "fallback-coordinator-team",
+      id: FALLBACK_COORDINATOR_ID,
       scopeLabel: "KOORDINATOR TIM",
       officialName: "ARIS PEBRIANSYAH, S.STP, M.AP",
       officialNip: "199602102018081001",
     }),
     createFallbackApprover("division_head", {
-      id: "fallback-division-head",
+      id: FALLBACK_DIVISION_HEAD_ID,
       scopeLabel: "KEPALA BIDANG KEDARURATAN & LOGISTIK",
       officialName: "ANDY A SEMBIRING,.S.STP,.M.Si",
       officialTitle: "Pembina Utama Tkt I",

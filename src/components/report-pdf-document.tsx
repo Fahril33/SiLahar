@@ -47,12 +47,22 @@ export function ReportPdfDocument(props: { report: Report }) {
                   {activity.startTime} - {activity.endTime} WITA
                 </td>
                 <td className="proof-cell">
-                  {activity.photos[0] ? (
-                    <img
-                      src={activity.photos[0].publicUrl}
-                      alt={activity.photos[0].originalFileName}
-                      className="proof-image"
-                    />
+                  {activity.photos.length > 0 ? (
+                    <div className="proof-images-container">
+                      {activity.photos.map((photo) => (
+                        <img
+                          key={photo.id}
+                          src={photo.publicUrl}
+                          alt={photo.originalFileName}
+                          className="proof-image"
+                          loading="eager"
+                          decoding="sync"
+                          fetchPriority="high"
+                          crossOrigin="anonymous"
+                          referrerPolicy="no-referrer"
+                        />
+                      ))}
+                    </div>
                   ) : (
                     <span>-</span>
                   )}

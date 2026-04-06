@@ -4,6 +4,8 @@ import pdfStyles from "../styles/report-pdf.css?inline";
 import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
 
+const IMAGE_READY_TIMEOUT_MS = 12000;
+
 function sanitizeFileSegment(value: string) {
   return value
     .trim()
@@ -49,6 +51,14 @@ function waitForPaint() {
   });
 }
 
+function waitForImageDecode(image: HTMLImageElement) {
+  if (!("decode" in image) || typeof image.decode !== "function") {
+    return Promise.resolve();
+  }
+
+  return image.decode().catch(() => undefined);
+}
+
 async function waitForImages(container: HTMLElement) {
   const images = Array.from(container.querySelectorAll("img"));
 
@@ -56,14 +66,62 @@ async function waitForImages(container: HTMLElement) {
     images.map(
       (image) =>
         new Promise<void>((resolve) => {
-          if (image.complete) {
-            resolve();
+          const finish = () => {
+            window.clearTimeout(timeoutId);
+            void waitForImageDecode(image).finally(resolve);
+          };
+
+          const timeoutId = window.setTimeout(resolve, IMAGE_READY_TIMEOUT_MS);
+
+          image.loading = "eager";
+          image.decoding = "sync";
+
+          if (image.complete && image.currentSrc) {
+            finish();
             return;
           }
 
-          const complete = () => resolve();
-          image.addEventListener("load", complete, { once: true });
-          image.addEventListener("error", complete, { once: true });
+          image.addEventListener("load", finish, { once: true });
+          image.addEventListener("error", finish, { once: true });
+        }),
+    ),
+  );
+}
+
+async function preloadReportImages(report: Report) {
+  const sources = Array.from(
+    new Set(
+      report.activities.flatMap((activity) =>
+        activity.photos.map((photo) => photo.publicUrl).filter(Boolean),
+      ),
+    ),
+  );
+
+  await Promise.all(
+    sources.map(
+      (source) =>
+        new Promise<void>((resolve) => {
+          const image = new Image();
+          const finish = () => {
+            window.clearTimeout(timeoutId);
+            void waitForImageDecode(image).finally(resolve);
+          };
+
+          const timeoutId = window.setTimeout(resolve, IMAGE_READY_TIMEOUT_MS);
+          image.loading = "eager";
+          image.decoding = "sync";
+          image.fetchPriority = "high";
+          image.crossOrigin = "anonymous";
+          image.referrerPolicy = "no-referrer";
+          image.src = source;
+
+          if (image.complete && image.currentSrc) {
+            finish();
+            return;
+          }
+
+          image.addEventListener("load", finish, { once: true });
+          image.addEventListener("error", finish, { once: true });
         }),
     ),
   );
@@ -173,12 +231,13 @@ export async function printReportDocument(
 ) {
   const originalTitle = document.title;
   const container = createPdfContainer(report);
+  await preloadReportImages(report);
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "1px";
-  iframe.style.height = "1px";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "794px";
+  iframe.style.height = "1123px";
   iframe.style.opacity = "0";
   iframe.style.pointerEvents = "none";
   iframe.style.border = "0";
