@@ -661,6 +661,35 @@ export function useReportDashboard() {
     [loadedLocalDraftId, savedLocalDrafts],
   );
 
+  const loadedSourceOriginalName = useMemo(() => {
+    if (loadedSearchReportId) {
+      const source = reports.find((report) => report.id === loadedSearchReportId);
+      if (source) return source.nama;
+    }
+    if (loadedSearchSnapshot) {
+      try {
+        const parsed = JSON.parse(loadedSearchSnapshot) as { nama?: unknown };
+        return typeof parsed?.nama === "string" ? parsed.nama : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, [loadedSearchReportId, loadedSearchSnapshot, reports]);
+
+  const renameOverwriteWarningKey = useMemo(() => {
+    if (!loadedSearchReportId) return null;
+    return `${loadedSearchReportId}:${loadedSourceOriginalName ?? ""}`;
+  }, [loadedSearchReportId, loadedSourceOriginalName]);
+
+  const showRenameOverwriteWarning = useMemo(() => {
+    if (!loadedSearchReportId) return false;
+    if (!loadedSourceOriginalName) return false;
+    const nextName = draft.nama.trim();
+    const originalName = loadedSourceOriginalName.trim();
+    return nextName !== originalName;
+  }, [draft.nama, loadedSearchReportId, loadedSourceOriginalName]);
+
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
     if (key === "reportDate" && !adminSession && !reportRules.allowAnyReportDate) {
       setDraft(c => normalizeDraft({ ...c, reportDate: today }));
@@ -1472,6 +1501,7 @@ export function useReportDashboard() {
     hasDraftContent, draftSavedAt, draftCacheStatus, searchOpen, setSearchOpen,
     savedLocalDrafts, localDraftsLoading, showDraftsInHistory, setShowDraftsInHistory,
     localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
+    showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
     handleResetDraft, handleReloadDashboardData, handleExport, handlePrint, handleUnsupportedMobilePrint, saveReport,
