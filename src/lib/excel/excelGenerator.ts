@@ -47,7 +47,7 @@ function sanitizeExcelFileSegment(value: string) {
     .replace(/^_+|_+$/g, "");
 }
 
-function buildExcelFileName(report: Report) {
+export function buildExcelFileName(report: Report) {
   const nameSegment = sanitizeExcelFileSegment(report.nama || "LAPORAN");
   const dateSegment = sanitizeExcelFileSegment(
     report.tanggal || report.reportDate || "TANGGAL",

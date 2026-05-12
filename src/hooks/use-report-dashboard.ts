@@ -327,6 +327,7 @@ export function useReportDashboard() {
   >({});
   const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
   const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
+  const [bulkExporting, setBulkExporting] = useState(false);
   const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
@@ -1146,6 +1147,44 @@ export function useReportDashboard() {
     finally { setExcelExportingReportId(null); }
   }
 
+  async function handleBulkExport(reportsToExport: Report[]) {
+    if (reportsToExport.length === 0) return;
+    if (!activeExcelTemplate) { await showError("Template Excel belum tersedia", "Admin perlu menyiapkan template Excel."); return; }
+    
+    const confirmed = await askConfirmation(
+      "Export banyak laporan?",
+      `Sistem akan mengunduh ${reportsToExport.length} file Excel satu per satu. Pastikan browser mengizinkan multiple downloads.`,
+      "Mulai Export"
+    );
+    if (!confirmed) return;
+
+    setBulkExporting(true);
+    const toast = openProgressToast("Export banyak laporan", [{ id: "bulk", label: "Memproses" }]);
+
+    try {
+      for (let i = 0; i < reportsToExport.length; i++) {
+        const report = reportsToExport[i];
+        toast.update("bulk", `Mengunduh (${i + 1}/${reportsToExport.length}): ${report.nama}`);
+        
+        await generateDailyReportExcel({ 
+          report, 
+          template: activeExcelTemplate,
+        });
+
+        if (i < reportsToExport.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+        }
+      }
+      toast.close();
+      await showSuccess("Export selesai", `${reportsToExport.length} laporan berhasil diproses.`);
+    } catch (err) {
+      logSafeError(err, "Dashboard/BulkExport");
+      await showError("Export gagal", "Terjadi masalah saat export massal.");
+    } finally {
+      setBulkExporting(false);
+    }
+  }
+
   async function handlePrint(
     report: Report,
     format?: "a4" | "f4" | "legal" | "letter",
@@ -1458,7 +1497,7 @@ export function useReportDashboard() {
     view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
     activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
     excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
-    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, editLoadingReportId,
+    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, bulkExporting, editLoadingReportId,
     savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
     historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
@@ -1474,7 +1513,7 @@ export function useReportDashboard() {
     localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
     change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handlePrint, handleUnsupportedMobilePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,

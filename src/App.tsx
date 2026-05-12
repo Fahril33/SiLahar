@@ -240,7 +240,7 @@ export default function App() {
     if (!canMoveNavbar) return;
     const next = getNextNavbarPosition(navbarPosition);
     setNavbarMotion(getNavbarMotion(next));
-    setNavbarMotionKey((k) => k + 1);
+    setNavbarMotionKey((k: number) => k + 1);
     setNavbarPosition(next);
   }
 
@@ -523,6 +523,8 @@ export default function App() {
               dashboard.handleRenameReporterProfile
             }
             onHandleDeleteReporterTrace={dashboard.handleDeleteReporterTrace}
+            onHandleBulkExport={dashboard.handleBulkExport}
+            bulkExporting={dashboard.bulkExporting}
             isOnline={isOnline}
           />
         ) : null}

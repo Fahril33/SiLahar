@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { ReportRules } from "../config/report-rules";
 import type { AdminActiveAction } from "../hooks/use-report-dashboard";
-import { formatWitaDateTime } from "../lib/time";
+import { formatWitaDate, formatWitaDateTime } from "../lib/time";
 import type { AdminSessionState } from "../types/admin";
 import type {
   ExcelReportTemplate,
@@ -41,7 +41,7 @@ function SpinnerIcon(props: { className?: string }) {
   );
 }
 
-type AdminSection = "rules" | "reporters" | "templates" | "sounds";
+type AdminSection = "rules" | "reporters" | "templates" | "bulk-export" | "sounds";
 
 type AdminDashboardViewProps = {
   adminSession: AdminSessionState | null;
@@ -112,6 +112,8 @@ type AdminDashboardViewProps = {
   onHandleDeleteReporterTrace: (
     reporter: ReporterDirectoryProfile,
   ) => Promise<void>;
+  onHandleBulkExport: (reports: Report[]) => Promise<void>;
+  bulkExporting: boolean;
   isOnline: boolean;
 };
 
@@ -130,6 +132,7 @@ function AdminSectionTabs({
         { key: "rules" as const, label: "Aturan laporan" },
         { key: "reporters" as const, label: "Kelola pengguna" },
         { key: "templates" as const, label: "Template Excel" },
+        { key: "bulk-export" as const, label: "Bulk Export" },
         ...(includeSoundSettings
           ? [{ key: "sounds" as const, label: "Suara Alert" }]
           : []),
@@ -995,6 +998,226 @@ function SoundSettingsPanel(props: {
   );
 }
 
+function BulkExportPanel(props: {
+  reports: Report[];
+  bulkExporting: boolean;
+  onHandleBulkExport: (reports: Report[]) => Promise<void>;
+}) {
+  const [keyword, setKeyword] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const visibleReports = useMemo(() => {
+    const search = keyword.trim().toLowerCase();
+    return props.reports
+      .filter((report) => {
+        if (search && !report.nama.toLowerCase().includes(search)) {
+          return false;
+        }
+        if (dateFrom && report.reportDate < dateFrom) {
+          return false;
+        }
+        if (dateTo && report.reportDate > dateTo) {
+          return false;
+        }
+        return true;
+      })
+      .slice()
+      .sort((left, right) => {
+        const byDate = right.reportDate.localeCompare(left.reportDate);
+        if (byDate !== 0) {
+          return byDate;
+        }
+        return right.updatedAt.localeCompare(left.updatedAt);
+      });
+  }, [dateFrom, dateTo, keyword, props.reports]);
+
+  const selectedReports = useMemo(
+    () => visibleReports.filter((report) => selectedIds.includes(report.id)),
+    [selectedIds, visibleReports],
+  );
+
+  const groupedByDate = useMemo(
+    () =>
+      visibleReports.reduce<Record<string, Report[]>>((accumulator, report) => {
+        const current = accumulator[report.reportDate] ?? [];
+        current.push(report);
+        accumulator[report.reportDate] = current;
+        return accumulator;
+      }, {}),
+    [visibleReports],
+  );
+
+  function toggleSelect(reportId: string, checked: boolean) {
+    setSelectedIds((current) => {
+      if (checked) {
+        if (current.includes(reportId)) {
+          return current;
+        }
+        return [...current, reportId];
+      }
+      return current.filter((id) => id !== reportId);
+    });
+  }
+
+  function selectAllVisible() {
+    setSelectedIds(visibleReports.map((report) => report.id));
+  }
+
+  function clearSelection() {
+    setSelectedIds([]);
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="surface-card rounded-[24px] p-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <label className="space-y-2">
+            <span className="text-sm font-medium">Cari nama petugas</span>
+            <input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="mis. Andi"
+              className={inputClassName}
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-medium">Dari tanggal</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+              className={inputClassName}
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-medium">Sampai tanggal</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(event) => setDateTo(event.target.value)}
+              className={inputClassName}
+            />
+          </label>
+          <div className="grid gap-2">
+            <span className="text-sm font-medium">Aksi cepat</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={selectAllVisible}
+                className="btn-secondary h-[44px] px-4 text-sm"
+              >
+                Pilih terlihat
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="btn-secondary h-[44px] px-4 text-sm"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-[var(--text-muted)]">
+            Terfilter: {visibleReports.length} laporan | Terpilih:{" "}
+            {selectedReports.length} laporan
+          </p>
+          <button
+            type="button"
+            onClick={() => void props.onHandleBulkExport(selectedReports)}
+            disabled={props.bulkExporting || selectedReports.length === 0}
+            className="btn-primary h-[42px] px-5 text-sm disabled:opacity-60"
+          >
+            {props.bulkExporting ? <SpinnerIcon /> : "Export Terpilih"}
+          </button>
+        </div>
+      </div>
+
+      {Object.keys(groupedByDate).length === 0 ? (
+        <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)]">
+          Belum ada laporan pada filter saat ini.
+        </div>
+      ) : null}
+
+      {Object.entries(groupedByDate).map(([reportDate, reports]) => {
+        const selectedInDate = reports.filter((report) =>
+          selectedIds.includes(report.id),
+        ).length;
+        const allChecked = reports.length > 0 && selectedInDate === reports.length;
+
+        return (
+          <div key={reportDate} className="surface-card rounded-[24px] p-4 sm:p-5">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-[var(--text-primary)]">
+                  {formatWitaDate(reportDate)}
+                </h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  {selectedInDate}/{reports.length} terpilih
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (allChecked) {
+                    setSelectedIds((current) =>
+                      current.filter((id) => !reports.some((report) => report.id === id)),
+                    );
+                    return;
+                  }
+                  setSelectedIds((current) => {
+                    const next = [...current];
+                    reports.forEach((report) => {
+                      if (!next.includes(report.id)) {
+                        next.push(report.id);
+                      }
+                    });
+                    return next;
+                  });
+                }}
+                className="btn-secondary h-[38px] px-4 text-xs"
+              >
+                {allChecked ? "Lepas tanggal ini" : "Pilih tanggal ini"}
+              </button>
+            </div>
+
+            <div className="grid gap-2">
+              {reports.map((report) => (
+                <label
+                  key={report.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-3"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(report.id)}
+                    onChange={(event) =>
+                      toggleSelect(report.id, event.target.checked)
+                    }
+                    className="mt-1 h-4 w-4 accent-[var(--primary)]"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+                      {report.nama}
+                    </p>
+                    <p className="text-xs text-[var(--text-muted)]">
+                      Update {formatWitaDateTime(report.updatedAt)} |{" "}
+                      {report.activities.length} aktivitas
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AdminLoadingOverlay() {
   return (
     <div className="flex min-h-[300px] flex-col items-center justify-center space-y-4">
@@ -1034,7 +1257,8 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
       if (
         stored === "rules" ||
         stored === "reporters" ||
-        stored === "templates"
+        stored === "templates" ||
+        stored === "bulk-export"
       ) {
         return stored as AdminSection;
       }
@@ -1131,6 +1355,13 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
               ) : null}
               {activeSection === "templates" ? (
                 <ExcelTemplatePanel {...props} />
+              ) : null}
+              {activeSection === "bulk-export" ? (
+                <BulkExportPanel
+                  reports={props.reports}
+                  bulkExporting={props.bulkExporting}
+                  onHandleBulkExport={props.onHandleBulkExport}
+                />
               ) : null}
               {activeSection === "sounds" &&
               props.notificationSettings.showAdminSoundSettings ? (
