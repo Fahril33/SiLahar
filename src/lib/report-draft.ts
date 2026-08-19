@@ -57,6 +57,9 @@ export function normalizeDraft(draft: DraftReport): DraftReport {
       draft.approverCoordinator ?? defaultDraft.approverCoordinator,
     approverCoordinatorNip:
       draft.approverCoordinatorNip ?? defaultDraft.approverCoordinatorNip,
+    approverCoordinatorLabel:
+      draft.approverCoordinatorLabel ??
+      defaultDraft.approverCoordinatorLabel,
     approverDivisionHeadTemplateId:
       draft.approverDivisionHeadTemplateId ??
       defaultDraft.approverDivisionHeadTemplateId,
@@ -106,6 +109,8 @@ export function createEmptyDraft(
       coordinator?.officialName ?? defaultDraft.approverCoordinator,
     approverCoordinatorNip:
       coordinator?.officialNip ?? defaultDraft.approverCoordinatorNip,
+    approverCoordinatorLabel:
+      coordinator?.scopeLabel ?? defaultDraft.approverCoordinatorLabel,
     approverDivisionHeadTemplateId:
       divisionHead?.id ?? defaultDraft.approverDivisionHeadTemplateId,
     approverDivisionHead:
@@ -188,6 +193,13 @@ export function applyTemplateDefaultsToDraft(
     )
       ? (nextCoordinator?.officialNip ?? draft.approverCoordinatorNip)
       : draft.approverCoordinatorNip,
+    approverCoordinatorLabel: shouldReplace(
+      draft.approverCoordinatorLabel ?? "",
+      previousCoordinator?.scopeLabel,
+      fallbackCoordinator?.scopeLabel,
+    )
+      ? (nextCoordinator?.scopeLabel ?? draft.approverCoordinatorLabel ?? (draft.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"))
+      : draft.approverCoordinatorLabel ?? (draft.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"),
     approverDivisionHeadTemplateId: shouldReplace(
       draft.approverDivisionHead,
       previousDivisionHead?.officialName,

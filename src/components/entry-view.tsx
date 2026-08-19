@@ -1114,9 +1114,7 @@ export function EntryView(props: EntryViewProps) {
                               Pihak 1
                             </p>
                             <h4 className="text-lg font-bold">
-                              {props.draft.tim === "TRC"
-                                ? "Koordinator Tim TRC"
-                                : "Koordinator Tim PUSDALOPS"}
+                              {props.draft.approverCoordinatorLabel}
                             </h4>
                           </div>
                         </div>

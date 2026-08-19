@@ -30,6 +30,7 @@ export type Report = {
   approverCoordinatorTemplateId: string | null;
   approverCoordinator: string;
   approverCoordinatorNip: string;
+  approverCoordinatorLabel: string;
   approverDivisionHeadTemplateId: string | null;
   approverDivisionHead: string;
   approverDivisionHeadTitle: string;

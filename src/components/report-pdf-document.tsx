@@ -78,7 +78,7 @@ export function ReportPdfDocument(props: { report: Report }) {
         <div className="approval-grid">
           <section className="approval-column">
             <p className="approval-role">
-              {report.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"}
+              {report.approverCoordinatorLabel.toUpperCase()}
             </p>
             <div className="signature-space" />
             <p className="approval-name">{report.approverCoordinator || "-"}</p>

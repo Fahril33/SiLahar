@@ -136,6 +136,9 @@ export async function fetchReports() {
       template_approver_coordinator_id,
       approver_coordinator_name,
       approver_coordinator_nip,
+      approver_coordinator_role:template_approver_coordinator_id (
+        scope_label
+      ),
       template_approver_division_head_id,
       approver_division_head_name,
       approver_division_head_title,
