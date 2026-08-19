@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
 import type { ReportRules } from "../types/report-rules";

@@ -41,7 +41,7 @@ type ReportRow = {
   updated_by_label: string;
   daily_report_activities?: ActivityRow[];
   report_template_notes?: { note_order: number; note_text: string }[];
-  approver_coordinator_role?: { scope_label: string } | null;
+  approver_coordinator_role?: any;
 };
 
 function mapPhoto(row: PhotoRow): ReportActivityPhoto {
@@ -79,7 +79,9 @@ export function mapReportRow(row: ReportRow): Report {
     approverCoordinatorTemplateId: row.template_approver_coordinator_id,
     approverCoordinator: row.approver_coordinator_name ?? "",
     approverCoordinatorNip: row.approver_coordinator_nip ?? "",
-    approverCoordinatorLabel: row.approver_coordinator_role?.scope_label ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"),
+    approverCoordinatorLabel: (Array.isArray(row.approver_coordinator_role)
+      ? row.approver_coordinator_role[0]?.scope_label
+      : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"),
     approverDivisionHeadTemplateId: row.template_approver_division_head_id,
     approverDivisionHead: row.approver_division_head_name ?? "",
     approverDivisionHeadTitle: row.approver_division_head_title ?? "",

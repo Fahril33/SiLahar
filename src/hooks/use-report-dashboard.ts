@@ -1150,6 +1150,7 @@ export function useReportDashboard() {
       approverCoordinatorTemplateId: report.approverCoordinatorTemplateId,
       approverCoordinator: report.approverCoordinator,
       approverCoordinatorNip: report.approverCoordinatorNip,
+      approverCoordinatorLabel: report.approverCoordinatorLabel,
       approverDivisionHeadTemplateId: report.approverDivisionHeadTemplateId,
       approverDivisionHead: report.approverDivisionHead,
       approverDivisionHeadTitle: report.approverDivisionHeadTitle,
