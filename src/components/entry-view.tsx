@@ -544,8 +544,6 @@ export function EntryView(props: EntryViewProps) {
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   const [paperMenuOpen, setPaperMenuOpen] = useState(false);
   const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false);
-  const [patchNotesOpen, setPatchNotesOpen] = useState(false);
-  const [patchNotesContent, setPatchNotesContent] = useState("");
   const [renameOverwriteWarningDismissedKey, setRenameOverwriteWarningDismissedKey] =
     useState<string | null>(null);
   const [draftPreviewSettings, setDraftPreviewSettings] = useState(
@@ -558,8 +556,6 @@ export function EntryView(props: EntryViewProps) {
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   const paperMenuRef = useRef<HTMLDivElement | null>(null);
   const previewSettingsRef = useRef<HTMLDivElement | null>(null);
-  const patchNotesButtonRef = useRef<HTMLButtonElement | null>(null);
-  const patchNotesRef = useRef<HTMLDivElement | null>(null);
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
   const paperPreview = useMemo(
     () => getPaperPreview(props.paperFormat),
@@ -582,14 +578,7 @@ export function EntryView(props: EntryViewProps) {
   );
 
   useEffect(() => {
-    fetch("/docs/patch-notes.md")
-      .then((res) => res.text())
-      .then((text) => setPatchNotesContent(text))
-      .catch(() => setPatchNotesContent("Gagal memuat catatan rilis."));
-  }, []);
-
-  useEffect(() => {
-    if (!saveMenuOpen && !paperMenuOpen && !previewSettingsOpen && !patchNotesOpen) {
+    if (!saveMenuOpen && !paperMenuOpen && !previewSettingsOpen) {
       return;
     }
 
@@ -624,7 +613,7 @@ export function EntryView(props: EntryViewProps) {
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [paperMenuOpen, previewSettingsOpen, saveMenuOpen, patchNotesOpen]);
+  }, [paperMenuOpen, previewSettingsOpen, saveMenuOpen]);
 
   useEffect(() => {
     setRenameOverwriteWarningDismissedKey(null);
@@ -1237,140 +1226,7 @@ export function EntryView(props: EntryViewProps) {
 
         <div className="sticky-fade mt-auto border-t border-[var(--border-soft)] px-4 py-3 sm:px-5">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <button
-                ref={patchNotesButtonRef}
-                type="button"
-                onClick={() => setPatchNotesOpen(!patchNotesOpen)}
-                className={`flex h-9 w-9 items-center justify-center rounded-full transition-all ${
-                  patchNotesOpen
-                    ? "bg-[var(--primary)] text-white shadow-lg"
-                    : "bg-[var(--surface-elevated)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] border border-[var(--border-soft)] shadow-sm"
-                }`}
-                style={{ width: "38px", height: "38px" }}
-                aria-label="Informasi pembaruan"
-                title="Patch Notes"
-              >
-                <InfoIcon className="h-5 w-5" />
-              </button>
 
-              <AnimatePresence mode="wait">
-                {patchNotesOpen && (
-                  <motion.div
-                    ref={patchNotesRef}
-                    initial={{ opacity: 0, scale: 0.98, y: 8 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.98, y: 8 }}
-                    transition={{ duration: 0.08, ease: "easeOut" }}
-                    className="absolute bottom-full left-0 mb-4 z-[100] w-80 sm:w-[440px] overflow-hidden rounded-[32px] border border-[var(--border-soft)] shadow-[0_24px_54px_rgba(0,0,0,0.22)] backdrop-blur-3xl"
-                    style={{
-                      background: "color-mix(in srgb, var(--surface-panel-strong) 98%, var(--text-primary) 2%)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between border-b border-[var(--border-soft)]/60 px-6 py-1">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20">
-                          <InfoIcon className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-bold text-[var(--text-primary)] leading-none">
-                            Catatan Rilis
-                          </h3>
-                          <p className="mt-1 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
-                            Patch History & Updates
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setPatchNotesOpen(false)}
-                        className="rounded-full p-2 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-all active:scale-95"
-                      >
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="h-5 w-5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                        >
-                          <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                    <div className="max-h-[55vh] overflow-y-auto px-6 py-2 text-sm leading-relaxed text-[var(--text-muted)] custom-scrollbar">
-                      {patchNotesContent ? (
-                        <div className="divide-y divide-[var(--border-soft)]/40">
-                          {patchNotesContent
-                            .split("\n\n##")
-                            .map((section, sectionIndex) => {
-                              const lines = (sectionIndex === 0 ? section : "##" + section)
-                                .split("\n")
-                                .filter((line) => line.trim() && !line.startsWith("# "));
-                              
-                              return (
-                                <div key={sectionIndex} className="first:pt-4 last:pb-5">
-                                  {lines.map((line, i) => {
-                                    if (line.startsWith("## ")) {
-                                      return (
-                                        <div key={i} className="mb-4 flex items-center justify-between gap-3">
-                                          <h4 className="text-base font-bold text-[var(--text-primary)]">
-                                            {line.replace("## ", "")}
-                                          </h4>
-                                          {sectionIndex === 0 && (
-                                            <span className="rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-tight text-[var(--primary)]">
-                                              Terbaru
-                                            </span>
-                                          )}
-                                        </div>
-                                      );
-                                    }
-                                    if (line.startsWith("### ")) {
-                                      return (
-                                        <h5
-                                          key={i}
-                                          className="mt-4 mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--text-primary)] opacity-50"
-                                        >
-                                          {line.replace("### ", "")}
-                                        </h5>
-                                      );
-                                    }
-                                    if (line.startsWith("- ")) {
-                                      return (
-                                        <div key={i} className="mt-1.5 flex gap-3 text-[12.5px] leading-snug">
-                                          <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[var(--text-muted)] opacity-30" />
-                                          <span className="opacity-90">{line.replace("- ", "")}</span>
-                                        </div>
-                                      );
-                                    }
-                                    return (
-                                      <p key={i} className="mt-2 text-[12.5px] opacity-70">
-                                        {line}
-                                      </p>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            })}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="h-9 w-9 animate-spin rounded-full border-3 border-[var(--primary)] border-t-transparent" />
-                          <p className="mt-4 text-sm font-medium text-[var(--text-primary)]">
-                            Memuat catatan rilis...
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="bg-[var(--surface-muted)]/30 border-t border-[var(--border-soft)]/50 px-6 py-1 w-full flex items-center justify-center">
-                      <p className="text-[10.5px] font-medium leading-relaxed text-[var(--text-muted)] opacity-80 ">
-                        Digunakan untuk melihat versi rilis.
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
             <div className="ui-tooltip-group">
               {props.hasDraftContent ? (
                 props.draftCacheStatus === "saving" ? (

@@ -1,4 +1,3 @@
-
 ## 2026-08-19 - Pemisahan Tim (TRC / PUSDALOPS) & Penguatan Proteksi Aturan Tanggal
 
 ### Added

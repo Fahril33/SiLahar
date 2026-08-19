@@ -1,74 +1,72 @@
+## 2026-08-19 - Dukungan Tim TRC & PUSDALOPS serta Peningkatan Keamanan Tanggal
 
-## 2026-04-14 - Overwrite Warning dan Optimasi Komponen Anchored Warning
+### Fitur Baru
+- **Pilihan Tim Bertugas**: Petugas kini dapat memilih tim antara **PUSDALOPS** dan **TRC**. Nama pejabat koordinator yang menandatangani dokumen akan otomatis menyesuaikan dengan tim yang dipilih.
+- **Ikon Info Aturan Tanggal**: Ditambahkan ikon informasi interaktif di samping tanggal laporan untuk melihat status pembatasan pengisian secara langsung.
+- **Pengamanan Data Berlapis**: Penambahan proteksi otomatis pada sistem untuk memastikan laporan tersimpan dengan tanggal yang valid dan tertib.
 
-### Added
-- Peringatan kontekstual `AnchoredInlineWarning` pada tombol **Simpan** untuk mencegah tindakan *overwrite* laporan yang tidak disengaja saat pengguna mengganti nama.
-- Dukungan properti `placement` (left/right), `gap`, dan `maxWidth` pada komponen warning agar lebih modular dan adaptif terhadap posisi tombol induk.
-- Fitur Popover Patch Notes pada footer form (ikon Info) untuk memudahkan pengguna melihat riwayat pembaruan aplikasi secara langsung.
+### Pembaruan
+- **Penguncian Tanggal Laporan**: Pemilihan tanggal kini terkunci otomatis pada hari berjalan jika admin membatasi tanggal pengisian, sehingga mencegah salah input.
+- **Penyelarasan Pengaturan Langsung**: Pengaturan izin tanggal dan batas foto kini langsung terhubung dengan database pusat tanpa jeda.
+- **Tampilan Catatan Rilis Modern**: Tampilan riwayat pembaruan kini hadir dengan desain timeline yang lebih bersih, rapi, dan mudah dibaca khusus untuk Admin.
 
-### Changed
-- Refaktor UI `AnchoredInlineWarning`: mendukung 2 baris summary, teks "Lihat selengkapnya" tetap terlihat, dan proteksi *overflow*.
-- Pesan peringatan overwrite rename dibuat lebih sopan dan edukatif.
-- UI Patch Notes diperbarui agar lebih ringan, bersih, dan informatif dengan sistem pembagi antar sesi.
+### Perbaikan
+- **Akurasi Waktu WITA**: Memperbaiki pembaruan tanggal otomatis agar selalu tepat mengikuti pergantian hari waktu WITA meskipun aplikasi dibiarkan terbuka lama di browser.
+- **Penyelarasan Pejabat Koordinator**: Memastikan nama koordinator tim selalu tepat saat membuat laporan baru maupun saat membuka riwayat laporan lama.
 
-### Notes
-- Komponen warning menggunakan `fixed` positioning dengan proteksi *clamp* terhadap batas layar.
+## 2026-04-14 - Peringatan Ganti Nama dan Kenyamanan Formulir
 
-## 2026-04-06 - Draft Lokal Bertumpuk dan Normalisasi Nama
+### Fitur Baru
+- **Peringatan Timpa Laporan**: Sistem akan memberi pengingat ramah saat tombol simpan ditekan jika nama pelapor diubah, guna mencegah laporan tertimpa tanpa sengaja.
+- **Menu Catatan Rilis Cepat**: Kemudahan melihat riwayat pembaruan aplikasi langsung dari formulir laporan.
 
-### Added
-- Sistem `draft lokal` bertumpuk berbasis `IndexedDB` untuk menyimpan progres laporan secara manual, terpisah dari cache utama.
-- Antrean upload draft lokal ke database di background dengan notifikasi real-time.
+### Pembaruan
+- **Pesan Peringatan Lebih Jelas**: Teks petunjuk dan informasi dibuat lebih ringkas, mudah dipahami, dan nyaman dilihat.
+- **Tampilan Informasi Lebih Rapi**: Penataan dialog informasi disesuaikan agar tetap proporsional dan tidak menutupi area kerja utama.
 
-### Changed
-- Split button pada aksi `Simpan` dan `Print` untuk akses cepat ke fitur draf dan pilihan ukuran kertas.
-- Aturan nama pelapor diseleraskan: casing input terakhir dipertahankan untuk tampilan, namun pencarian tetap case-insensitive.
-- Header preview laporan disederhanakan pada tampilan mobile.
+## 2026-04-06 - Simpan Draft di Perangkat dan Pencarian Nama Lebih Mudah
 
-### Fixed
-- Pencegahan duplikasi laporan saat mengubah tanggal pada mode edit; perubahan kini diperlakukan sebagai pemindahan record.
-- Perbaikan keandalan Print preview agar selalu mematerialisasi gambar foto aktivitas.
+### Fitur Baru
+- **Penyimpanan Draft Mandiri**: Petugas dapat menyimpan salinan draft laporan langsung di perangkat (HP/Laptop) secara aman saat sedang menyusun laporan.
+- **Pengiriman Otomatis di Latar Belakang**: Draft yang disimpan dapat diunggah secara otomatis saat koneksi internet siap.
 
-## 2026-04-05 - Pejabat Default, UX Foto, dan Sinkronisasi Suara
+### Pembaruan
+- **Tombol Aksi Cepat**: Tombol Simpan dan Cetak dilengkapi menu pilihan cepat untuk menyimpan draft atau memilih ukuran kertas.
+- **Penulisan Nama Lebih Fleksibel**: Sistem tetap mengingat format huruf besar/kecil pada nama pelapor, namun pencarian nama tetap mudah ditemukan.
 
-### Added
-- Tabel `report_template_approvers` untuk menyimpan default pejabat per template laporan (Koordinator & Kasubag).
-- Tombol `restore` dan `kosongkan foto` pada form aktivitas untuk fleksibilitas pengelolaan dokumentasi.
-- Flag kontrol suara global (`show_admin_sound_settings` & `disable_sound_responses_for_all_users`).
+### Perbaikan
+- **Pencegahan Data Ganda**: Mengubah tanggal laporan pada mode edit tidak akan membuat data duplikat, melainkan memperbarui laporan yang sudah ada.
+- **Keandalan Cetak Dokumen**: Memastikan semua foto dokumentasi selalu muncul dengan tajam saat dicetak atau diunduh ke format PDF.
 
-### Changed
-- Form laporan mengambil data pejabat default langsung dari database, bukan lagi nilai statis di client.
-- Progress simpan laporan membedakan visualisasi antara upload foto baru dan memproses foto lama.
-- Toast SweetAlert kini bersifat non-blocking dan menampilkan progress bertahap yang lebih informatif.
+## 2026-04-05 - Data Pejabat Otomatis dan Pengelolaan Foto Lebih Leluasa
 
-### Fixed
-- Perbaikan relasi foto saat edit laporan: foto lama tetap dipertahankan jika tidak diubah oleh pengguna.
-- Sinkronisasi suara alert kini bersifat global untuk seluruh pengguna melalui konfigurasi di database.
-- Perbaikan error audit log (FK Conflict) saat menghapus laporan.
+### Fitur Baru
+- **Data Pejabat Terpusat**: Nama Koordinator dan Kasubag kini dikelola langsung dari sistem pusat, sehingga tidak perlu diketik berulang kali.
+- **Tombol Pulihkan & Hapus Foto**: Kemudahan untuk memulihkan foto dokumentasi sebelumnya atau mengosongkan foto pada formulir kegiatan.
+- **Pengaturan Suara Efek**: Opsi untuk mengaktifkan atau menonaktifkan suara notifikasi pada aplikasi.
 
-## 2026-04-04 - Export Excel Client-Side dan UX Admin
+### Pembaruan
+- **Status Proses Lebih Jelas**: Tampilan proses saat menyimpan laporan dan mengunggah foto kini menampilkan keterangan langkah demi langkah yang lebih informatif.
 
-### Added
-- Kerangka export Excel client-side berbasis `exceljs` dan `file-saver` menggunakan template master dari Supabase Storage.
-- Panel Admin `Template Excel` untuk mengelola file `.xlsx` dan aktivasi template utama.
-- Filter rentang waktu interaktif pada grafik aktivitas pengguna di dashboard admin.
+### Perbaikan
+- **Perlindungan Foto Lama**: Foto kegiatan lama tidak akan hilang atau terhapus saat petugas mengedit bagian teks laporan.
+- **Penyelarasan Suara Notifikasi**: Efek suara tersinkronisasi dengan baik untuk seluruh pengguna sesuai pengaturan pusat.
 
-### Changed
-- Sinkronisasi status halaman terakhir (`active-view`) ke local storage agar posisi user terjaga saat refresh.
-- Toolbar admin dioptimasi untuk perangkat mobile dengan sistem pencarian inline.
+## 2026-04-04 - Ekspor Excel Langsung dan Dashboard Statistik
 
-## 2026-04-03 - Real-Time Dashboard dan Fondasi Admin Rules
+### Fitur Baru
+- **Unduh Format Excel**: Petugas dan admin dapat langsung mengunduh laporan harian ke dalam format spreadsheet Excel (.xlsx).
+- **Pengelolaan Template Dokumen**: Admin dapat mengunggah dan memilih template master Excel resmi yang digunakan oleh dinas.
+- **Statistik Kegiatan Pelapor**: Grafik interaktif untuk memantau keaktifan pelaporan harian berdasarkan rentang waktu tertentu.
 
-### Added
-- Real-time subscription Supabase untuk semua tabel utama (Reports, Activities, Photos, Directory, Settings).
-- Badge `Baru ditambahkan` pada laporan histori yang masuk dalam 5 menit terakhir.
-- Panel aturan laporan awal: `allowAnyReportDate` dan `maxPhotosPerActivity`.
+### Pembaruan
+- **Penyimpanan Halaman Terakhir**: Aplikasi otomatis mengingat tab/halaman terakhir yang Anda buka, sehingga tidak perlu navigasi ulang saat halaman dimuat kembali.
 
-### Changed
-- input `Tanggal laporan` mendukung pemilihan tanggal lampau jika diizinkan oleh admin via database rules.
-- Mekanisme tab navbar menggunakan slider transisi yang mulus.
-- Tema `comfort` diperbarui menjadi `cheerfull` dengan palet warna yang lebih segar.
+## 2026-04-03 - Pembaruan Data Real-Time dan Tema Tampilan Baru
 
-### Fixed
-- Perbaikan rekursi RLS pada profil admin yang menyebabkan error stack depth.
-- RLS insert/update foto diperketat untuk mengikuti aturan tanggal publik.
+### Fitur Baru
+- **Sinkronisasi Langsung (Real-Time)**: Data laporan, foto, dan status kegiatan otomatis terhubung secara langsung tanpa perlu menyegarkan (refresh) halaman manual.
+- **Tanda Laporan Baru**: Laporan yang baru saja masuk dalam 5 menit terakhir akan diberi tanda khusus agar mudah dikenali oleh tim piket.
+
+### Pembaruan
+- **Pilihan Warna Tampilan**: Penambahan tema warna yang lebih segar, bersih, dan nyaman di mata untuk penggunaan dinas sehari-hari.
