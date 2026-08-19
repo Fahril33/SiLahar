@@ -22,6 +22,7 @@ export type ReportActivity = {
 export type Report = {
   id: string;
   templateId: string | null;
+  tim: string;
   nama: string;
   tanggal: string;
   reportDate: string;

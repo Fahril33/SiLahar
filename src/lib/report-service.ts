@@ -1,8 +1,9 @@
-import { DEFAULT_REPORT_RULES, normalizeReportRules, type ReportRules } from "../config/report-rules";
+import { type ReportRules, initialReportRules } from "../types/report-rules";
 import {
   fallbackReportTemplateConfig,
   FALLBACK_TEMPLATE_ID,
-  FALLBACK_COORDINATOR_ID,
+  FALLBACK_COORDINATOR_TRC_ID,
+  FALLBACK_COORDINATOR_PUSDALOPS_ID,
   FALLBACK_DIVISION_HEAD_ID,
 } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
@@ -129,6 +130,7 @@ export async function fetchReports() {
       id,
       template_id,
       reporter_name,
+      tim,
       display_date_text,
       report_date,
       template_approver_coordinator_id,
@@ -227,25 +229,38 @@ export async function fetchReporterDirectoryProfiles() {
   );
 }
 
-export async function fetchReportRules() {
+export async function fetchReportRules(): Promise<ReportRules> {
   if (!supabase) {
-    return DEFAULT_REPORT_RULES;
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+
+  const { data: settingData, error: settingError } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "report_rules")
+    .maybeSingle();
+
+  if (!settingError && settingData?.value) {
+    const val = settingData.value as { allow_any_report_date?: boolean; max_photos_per_activity?: number };
+    return {
+      allowAnyReportDate: Boolean(val.allow_any_report_date),
+      maxPhotosPerActivity: Math.max(1, Number(val.max_photos_per_activity) || 1),
+    };
   }
 
   const { data, error } = await supabase.rpc("get_report_rules");
 
   if (error) {
-    logSafeWarn("Gagal memuat report_rules dari database, memakai fallback lokal.", error);
-    return DEFAULT_REPORT_RULES;
+    throw error;
   }
 
   const row = Array.isArray(data) ? data[0] : data;
   const rules = row as ReportRulesRow | null;
 
-  return normalizeReportRules({
-    allowAnyReportDate: rules?.allow_any_report_date,
-    maxPhotosPerActivity: rules?.max_photos_per_activity,
-  });
+  return {
+    allowAnyReportDate: Boolean(rules?.allow_any_report_date),
+    maxPhotosPerActivity: Math.max(1, Number(rules?.max_photos_per_activity) || 1),
+  };
 }
 
 export async function fetchNotificationSettings() {
@@ -520,7 +535,10 @@ export async function saveReportRulesToDatabase(rules: ReportRules) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const normalizedRules = normalizeReportRules(rules);
+  const normalizedRules: ReportRules = {
+    allowAnyReportDate: rules.allowAnyReportDate ?? false,
+    maxPhotosPerActivity: Math.max(1, Number(rules.maxPhotosPerActivity) || 1),
+  };
   const { error } = await supabase.from("app_settings").upsert(
     {
       key: "report_rules",
@@ -688,10 +706,12 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
         : existingReport?.templateId ?? null,
     reporter_directory_id: reporterDirectoryId,
     reporter_name: formatReporterNameForDatabase(draft.nama),
+    tim: draft.tim ?? "PUSDALOPS",
     report_date: draft.reportDate,
     template_approver_coordinator_id:
       draft.approverCoordinatorTemplateId &&
-      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_ID
+      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_TRC_ID &&
+      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_PUSDALOPS_ID
         ? draft.approverCoordinatorTemplateId
         : null,
     approver_coordinator_name: draft.approverCoordinator,
@@ -742,7 +762,7 @@ export async function saveReportToDatabase(
   draft: DraftReport,
   pendingPhotos: PendingPhotoMap,
   existingReport: Report | null,
-  reportRules: ReportRules = DEFAULT_REPORT_RULES,
+  reportRules: ReportRules = initialReportRules,
   onStage?: (stageId: string, detail?: string) => void,
 ) {
   if (!supabase) {

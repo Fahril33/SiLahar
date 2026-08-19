@@ -1,5 +1,9 @@
 import { defaultDraft } from "../data/mock";
-import { getTemplateApproverByRole } from "./report-template-defaults";
+import {
+  FALLBACK_TEMPLATE_ID,
+  fallbackReportTemplateConfig,
+  getTemplateApproverByRole,
+} from "./report-template-defaults";
 import { getWitaDisplayDateUppercase, getWitaToday, nowIso } from "./time";
 import type { ReportTemplateConfig } from "../types/report-template";
 import type { DraftReport, Report } from "../types/report";
@@ -7,8 +11,7 @@ import type { DraftReport, Report } from "../types/report";
 export type PendingPhotoMap = Record<number, File[]>;
 export type PendingPreviewMap = Record<number, Array<{ name: string; url: string }>>;
 
-export const today = getWitaToday();
-export const todayDisplay = getWitaDisplayDateUppercase();
+// removed static today constants
 
 export function normalizeTimeValue(value: string, fallback: string) {
   const normalized = value.replace(".", ":").trim();
@@ -34,14 +37,15 @@ export function timeToMinutes(value: string) {
 }
 
 function normalizeReportDate(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : today;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : getWitaToday();
 }
 
 export function normalizeDraft(draft: DraftReport): DraftReport {
-  const reportDate = normalizeReportDate(draft.reportDate || today);
+  const reportDate = normalizeReportDate(draft.reportDate || getWitaToday());
 
   return {
     ...draft,
+    tim: draft.tim ?? "PUSDALOPS",
     templateId: draft.templateId ?? defaultDraft.templateId,
     nama: draft.nama ?? "",
     tanggal: getWitaDisplayDateUppercase(reportDate),
@@ -75,10 +79,14 @@ export function normalizeDraft(draft: DraftReport): DraftReport {
   };
 }
 
-export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
+export function createEmptyDraft(
+  templateConfig?: ReportTemplateConfig | null,
+  initialTim: string = "PUSDALOPS",
+) {
+  const defaultTim = initialTim || "PUSDALOPS";
   const coordinator = getTemplateApproverByRole(
     templateConfig,
-    "coordinator_team",
+    `coordinator_team_${defaultTim.toLowerCase()}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
   );
   const divisionHead = getTemplateApproverByRole(
     templateConfig,
@@ -87,9 +95,10 @@ export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
 
   return normalizeDraft({
     ...defaultDraft,
+    tim: defaultTim,
     templateId: templateConfig?.id ?? defaultDraft.templateId,
-    reportDate: today,
-    tanggal: todayDisplay,
+    reportDate: getWitaToday(),
+    tanggal: getWitaDisplayDateUppercase(getWitaToday()),
     notes: templateConfig?.notes ?? defaultDraft.notes,
     approverCoordinatorTemplateId:
       coordinator?.id ?? defaultDraft.approverCoordinatorTemplateId,
@@ -113,9 +122,12 @@ export function applyTemplateDefaultsToDraft(
   previousTemplate: ReportTemplateConfig | null,
   nextTemplate: ReportTemplateConfig | null,
 ) {
+  const currentTim = (draft.tim || "PUSDALOPS").toLowerCase();
+  const coordinatorRole = `coordinator_team_${currentTim}` as "coordinator_team_trc" | "coordinator_team_pusdalops";
+
   const previousCoordinator = getTemplateApproverByRole(
     previousTemplate,
-    "coordinator_team",
+    coordinatorRole,
   );
   const previousDivisionHead = getTemplateApproverByRole(
     previousTemplate,
@@ -123,69 +135,90 @@ export function applyTemplateDefaultsToDraft(
   );
   const nextCoordinator = getTemplateApproverByRole(
     nextTemplate,
-    "coordinator_team",
+    coordinatorRole,
   );
   const nextDivisionHead = getTemplateApproverByRole(
     nextTemplate,
     "division_head",
   );
 
-  function shouldReplace(currentValue: string, previousValue: string) {
-    return !currentValue.trim() || currentValue === previousValue;
+  const fallbackCoordinator = getTemplateApproverByRole(
+    fallbackReportTemplateConfig,
+    coordinatorRole,
+  );
+  const fallbackDivisionHead = getTemplateApproverByRole(
+    fallbackReportTemplateConfig,
+    "division_head",
+  );
+
+  function shouldReplace(currentValue: string, previousValue?: string, fallbackValue?: string) {
+    return (
+      !currentValue.trim() ||
+      (previousValue !== undefined && currentValue === previousValue) ||
+      (fallbackValue !== undefined && currentValue === fallbackValue)
+    );
   }
 
   return normalizeDraft({
     ...draft,
     templateId:
       !draft.templateId ||
+      draft.templateId === FALLBACK_TEMPLATE_ID ||
       (previousTemplate && draft.templateId === previousTemplate.id)
         ? (nextTemplate?.id ?? draft.templateId)
         : draft.templateId,
-    approverCoordinatorTemplateId:
-      shouldReplace(
-        draft.approverCoordinator,
-        previousCoordinator?.officialName ?? "",
-      )
-        ? (nextCoordinator?.id ?? draft.approverCoordinatorTemplateId)
-        : draft.approverCoordinatorTemplateId,
+    approverCoordinatorTemplateId: shouldReplace(
+      draft.approverCoordinator,
+      previousCoordinator?.officialName,
+      fallbackCoordinator?.officialName,
+    )
+      ? (nextCoordinator?.id ?? draft.approverCoordinatorTemplateId)
+      : draft.approverCoordinatorTemplateId,
     approverCoordinator: shouldReplace(
       draft.approverCoordinator,
-      previousCoordinator?.officialName ?? "",
+      previousCoordinator?.officialName,
+      fallbackCoordinator?.officialName,
     )
       ? (nextCoordinator?.officialName ?? draft.approverCoordinator)
       : draft.approverCoordinator,
     approverCoordinatorNip: shouldReplace(
       draft.approverCoordinatorNip,
-      previousCoordinator?.officialNip ?? "",
+      previousCoordinator?.officialNip,
+      fallbackCoordinator?.officialNip,
     )
       ? (nextCoordinator?.officialNip ?? draft.approverCoordinatorNip)
       : draft.approverCoordinatorNip,
     approverDivisionHeadTemplateId: shouldReplace(
       draft.approverDivisionHead,
-      previousDivisionHead?.officialName ?? "",
+      previousDivisionHead?.officialName,
+      fallbackDivisionHead?.officialName,
     )
       ? (nextDivisionHead?.id ?? draft.approverDivisionHeadTemplateId)
       : draft.approverDivisionHeadTemplateId,
     approverDivisionHead: shouldReplace(
       draft.approverDivisionHead,
-      previousDivisionHead?.officialName ?? "",
+      previousDivisionHead?.officialName,
+      fallbackDivisionHead?.officialName,
     )
       ? (nextDivisionHead?.officialName ?? draft.approverDivisionHead)
       : draft.approverDivisionHead,
     approverDivisionHeadTitle: shouldReplace(
       draft.approverDivisionHeadTitle,
-      previousDivisionHead?.officialTitle ?? "",
+      previousDivisionHead?.officialTitle,
+      fallbackDivisionHead?.officialTitle,
     )
       ? (nextDivisionHead?.officialTitle ?? draft.approverDivisionHeadTitle)
       : draft.approverDivisionHeadTitle,
     approverDivisionHeadNip: shouldReplace(
       draft.approverDivisionHeadNip,
-      previousDivisionHead?.officialNip ?? "",
+      previousDivisionHead?.officialNip,
+      fallbackDivisionHead?.officialNip,
     )
       ? (nextDivisionHead?.officialNip ?? draft.approverDivisionHeadNip)
       : draft.approverDivisionHeadNip,
     notes:
-      JSON.stringify(draft.notes) === JSON.stringify(previousTemplate?.notes ?? [])
+      JSON.stringify(draft.notes) === JSON.stringify(previousTemplate?.notes ?? []) ||
+      JSON.stringify(draft.notes) === JSON.stringify(fallbackReportTemplateConfig.notes)
         ? (nextTemplate?.notes ?? draft.notes)
         : draft.notes,
   });

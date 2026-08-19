@@ -5,7 +5,8 @@ import type {
 } from "../types/report-template";
 
 export const FALLBACK_TEMPLATE_ID = "fallback-bpbd-trc-harian-2026";
-export const FALLBACK_COORDINATOR_ID = "fallback-coordinator-team";
+export const FALLBACK_COORDINATOR_TRC_ID = "fallback-coordinator-team-trc";
+export const FALLBACK_COORDINATOR_PUSDALOPS_ID = "fallback-coordinator-team-pusdalops";
 export const FALLBACK_DIVISION_HEAD_ID = "fallback-division-head";
 
 const now = new Date().toISOString();
@@ -48,9 +49,15 @@ export const fallbackReportTemplateConfig: ReportTemplateConfig = {
     "LAPORAN DI KUMPULKAN DENGAN MAP SNEILHEKTER YANG TELAH DI BERIKAN NAMA MASING2.",
   ],
   approvers: [
-    createFallbackApprover("coordinator_team", {
-      id: FALLBACK_COORDINATOR_ID,
+    createFallbackApprover("coordinator_team_trc", {
+      id: FALLBACK_COORDINATOR_TRC_ID,
       scopeLabel: "KOORDINATOR TIM",
+      officialName: "ARIS PEBRIANSYAH, S.STP, M.AP",
+      officialNip: "199602102018081001",
+    }),
+    createFallbackApprover("coordinator_team_pusdalops", {
+      id: FALLBACK_COORDINATOR_PUSDALOPS_ID,
+      scopeLabel: "KOORDINATOR PUSDALOPS",
       officialName: "ARIS PEBRIANSYAH, S.STP, M.AP",
       officialNip: "199602102018081001",
     }),
@@ -69,9 +76,23 @@ export function getTemplateApproverByRole(
   role: ReportTemplateApproverRole,
 ) {
   const source = template ?? fallbackReportTemplateConfig;
+  const match = source.approvers?.find(
+    (approver) =>
+      (approver.approverRole === role ||
+        (role === "coordinator_team_trc" &&
+          (approver.approverRole as string) === "coordinator_team")) &&
+      approver.isActive,
+  );
+  if (match) return match;
+
   return (
-    source.approvers.find(
-      (approver) => approver.approverRole === role && approver.isActive,
+    fallbackReportTemplateConfig.approvers.find(
+      (approver) =>
+        (approver.approverRole === role ||
+          (role === "coordinator_team_trc" &&
+            (approver.approverRole as string) === "coordinator_team")) &&
+        approver.isActive,
     ) ?? null
   );
 }
+

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { ReportRules } from "../config/report-rules";
+import type { ReportRules } from "../types/report-rules";
 import type { AdminActiveAction } from "../hooks/use-report-dashboard";
 import { formatWitaDate, formatWitaDateTime } from "../lib/time";
 import type { AdminSessionState } from "../types/admin";
@@ -425,13 +425,26 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
 
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <TemplateApproverCard
-            roleLabel="Koordinator Tim"
+            roleLabel="Koordinator Tim TRC"
             accentClassName="bg-[var(--info-soft)] text-[var(--info)]"
-            draft={props.adminTemplateApproverDrafts.coordinator_team}
+            draft={props.adminTemplateApproverDrafts.coordinator_team_trc}
             hideOfficialTitle
             onChange={(key, value) =>
               props.onChangeAdminTemplateApproverDraft(
-                "coordinator_team",
+                "coordinator_team_trc",
+                key,
+                value,
+              )
+            }
+          />
+          <TemplateApproverCard
+            roleLabel="Koordinator Tim PUSDALOPS"
+            accentClassName="bg-[var(--success-soft)] text-[var(--success)]"
+            draft={props.adminTemplateApproverDrafts.coordinator_team_pusdalops}
+            hideOfficialTitle
+            onChange={(key, value) =>
+              props.onChangeAdminTemplateApproverDraft(
+                "coordinator_team_pusdalops",
                 key,
                 value,
               )

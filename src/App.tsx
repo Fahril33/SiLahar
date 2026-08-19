@@ -7,7 +7,7 @@ import { StatusView } from "./components/status-view";
 import { ConnectivityBanner } from "./components/connectivity-banner";
 import { useConnectivity } from "./hooks/useConnectivity";
 import { useReportDashboard } from "./hooks/use-report-dashboard";
-import { today } from "./lib/report-draft";
+import { getWitaToday } from "./lib/time";
 import { showSuccess, showInfo } from "./lib/alerts";
 
 type ThemeMode = "light" | "dark" | "cheerfull";
@@ -371,6 +371,7 @@ export default function App() {
             nameExistsInDirectory={dashboard.nameExistsInDirectory}
             reportRules={dashboard.reportRules}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
+            isAdmin={dashboard.canManageReports}
             activityTimeIssues={dashboard.activityTimeIssues}
             activityCompletionStates={dashboard.activityCompletionStates}
             duplicateReport={dashboard.duplicateReport}
@@ -446,7 +447,7 @@ export default function App() {
             editLoadingReportId={dashboard.editLoadingReportId}
             activeLocalDraftId={dashboard.activeLocalDraftId}
             localDraftCount={dashboard.localDraftCount}
-            today={today}
+            today={getWitaToday()}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             canManageReports={dashboard.canManageReports}
             onReload={dashboard.handleReloadDashboardData}

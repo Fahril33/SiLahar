@@ -22,6 +22,7 @@ type ActivityRow = {
 type ReportRow = {
   id: string;
   template_id: string | null;
+  tim?: string;
   reporter_name: string;
   display_date_text: string;
   report_date: string;
@@ -69,6 +70,7 @@ export function mapReportRow(row: ReportRow): Report {
   return {
     id: row.id,
     templateId: row.template_id,
+    tim: row.tim ?? "PUSDALOPS",
     nama: row.reporter_name,
     tanggal: row.display_date_text.toUpperCase(),
     reportDate: row.report_date,

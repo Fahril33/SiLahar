@@ -1,4 +1,7 @@
-import { fallbackReportTemplateConfig } from "./report-template-defaults";
+import {
+  fallbackReportTemplateConfig,
+  getTemplateApproverByRole,
+} from "./report-template-defaults";
 import { supabase } from "./supabase";
 import type {
   ReportTemplateApprover,
@@ -78,11 +81,7 @@ export function createApproverDraftFromTemplate(
   template: ReportTemplateConfig | null | undefined,
   role: ReportTemplateApproverRole,
 ): ReportTemplateApproverDraft {
-  const source = template ?? fallbackReportTemplateConfig;
-  const approver =
-    source.approvers.find(
-      (item) => item.approverRole === role && item.isActive,
-    ) ?? null;
+  const approver = getTemplateApproverByRole(template, role);
 
   return {
     scopeLabel: approver?.scopeLabel ?? "",
@@ -159,8 +158,12 @@ export async function saveTemplateApproverDefaults(
   const payload = (
     [
       {
-        approverRole: "coordinator_team",
+        approverRole: "coordinator_team_trc",
         defaultScopeLabel: "KOORDINATOR TIM",
+      },
+      {
+        approverRole: "coordinator_team_pusdalops",
+        defaultScopeLabel: "KOORDINATOR PUSDALOPS",
       },
       {
         approverRole: "division_head",
@@ -177,7 +180,7 @@ export async function saveTemplateApproverDefaults(
         draft.scopeLabel.trim().toUpperCase() || defaultScopeLabel,
       official_name: draft.officialName.trim().toUpperCase(),
       official_title:
-        approverRole === "coordinator_team"
+        approverRole === "coordinator_team_trc" || approverRole === "coordinator_team_pusdalops"
           ? null
           : draft.officialTitle.trim().toUpperCase() || null,
       official_nip: draft.officialNip.trim() || null,

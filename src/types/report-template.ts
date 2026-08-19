@@ -1,5 +1,6 @@
 export type ReportTemplateApproverRole =
-  | "coordinator_team"
+  | "coordinator_team_trc"
+  | "coordinator_team_pusdalops"
   | "division_head";
 
 export type ReportTemplateApprover = {

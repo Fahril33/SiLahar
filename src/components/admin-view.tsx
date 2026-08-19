@@ -1,4 +1,4 @@
-import type { ReportRules } from "../config/report-rules";
+import type { ReportRules } from "../types/report-rules";
 import type { AdminSessionState } from "../types/admin";
 
 const inputClassName = "field-input";

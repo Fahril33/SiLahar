@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
-import type { ReportRules } from "../config/report-rules";
+import type { ReportRules } from "../types/report-rules";
 import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { DraftReport, Report } from "../types/report";
 import { AnchoredInlineWarning } from "./anchored-inline-warning";
@@ -234,6 +234,7 @@ type EntryViewProps = {
   nameExistsInDirectory: boolean | null;
   reportRules: ReportRules;
   canUseAnyReportDate: boolean;
+  isAdmin?: boolean;
   activityTimeIssues: Array<{
     startAfterMorning: boolean;
     endBeforeStart: boolean;
@@ -782,38 +783,54 @@ export function EntryView(props: EntryViewProps) {
                     }
                   />
                 </div>
-                {props.canUseAnyReportDate ? (
-                  <label className="space-y-2">
+                <label className="space-y-2">
+                  <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium">Tanggal laporan</span>
-                    <input
-                      type="date"
-                      value={props.draft.reportDate}
-                      onChange={(event) =>
-                        props.onChange("reportDate", event.target.value)
-                      }
-                      className={inputClassName}
-                    />
-                  </label>
-                ) : null}
-                <label
-                  className={`space-y-2 ${props.canUseAnyReportDate ? "" : "md:col-span-2"}`}
-                >
-                  <span className="text-sm font-medium">
-                    Hari / Tanggal dokumen
-                  </span>
+                    {!props.reportRules.allowAnyReportDate ? (
+                      <div
+                        tabIndex={0}
+                        className="ui-tooltip-group relative inline-flex items-center text-[var(--text-muted)] hover:text-[var(--info)] focus:outline-none cursor-pointer"
+                      >
+                        <InfoIcon className="h-4 w-4" />
+                        <div className="ui-tooltip ui-tooltip-left min-w-[220px]">
+                          {props.isAdmin ? (
+                            <span>
+                              <strong className="font-semibold">Mode Admin:</strong> Aturan pemilihan tanggal bebas saat ini dimatikan untuk pengguna umum. Anda dapat mengubah tanggal karena login sebagai admin.
+                            </span>
+                          ) : (
+                            "Admin saat ini membatasi pengisian laporan hanya untuk hari berjalan."
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <input
-                    value={props.draft.tanggal}
-                    disabled
-                    className={`${inputClassName} cursor-not-allowed opacity-90`}
+                    type="date"
+                    value={props.draft.reportDate}
+                    disabled={!props.canUseAnyReportDate}
+                    onChange={(event) =>
+                      props.onChange("reportDate", event.target.value)
+                    }
+                    className={`${inputClassName} ${!props.canUseAnyReportDate ? "cursor-not-allowed opacity-75 bg-[var(--surface-muted)]" : ""}`}
                   />
                 </label>
-                {!props.canUseAnyReportDate ? (
-                  <div className="inline-note inline-note-info md:col-span-2">
-                    Admin saat ini membatasi pengisian laporan hanya untuk hari
-                    berjalan.
-                  </div>
-                ) : null}
+                <label className="space-y-2">
+                  <span className="text-sm font-medium">Tim</span>
+                  <select
+                    value={props.draft.tim}
+                    onChange={(event) =>
+                      props.onChange("tim", event.target.value)
+                    }
+                    className={inputClassName}
+                  >
+                    <option value="PUSDALOPS">PUSDALOPS</option>
+                    <option value="TRC">TRC</option>
+                  </select>
+                </label>
               </div>
+              <div className="text-xs text-[var(--text-muted)] mt-1 flex-1">
+                    Hari / Tanggal dokumen: <span className="font-semibold">{props.draft.tanggal}</span>
+                  </div>
             </section>
 
             <section className="surface-card rounded-[15px] overflow-hidden">
@@ -1094,15 +1111,23 @@ export function EntryView(props: EntryViewProps) {
                     <div className="grid gap-3 xl:grid-cols-1">
                       <div className="surface-muted rounded-[24px] p-4">
                         <div className="mb-4 flex items-center gap-3">
-                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--info-soft)] text-sm font-bold text-[var(--info)]">
-                            KT
+                          <div
+                            className={`flex h-11 w-11 items-center justify-center rounded-2xl text-sm font-bold ${
+                              props.draft.tim === "TRC"
+                                ? "bg-[var(--info-soft)] text-[var(--info)]"
+                                : "bg-[var(--success-soft)] text-[var(--success)]"
+                            }`}
+                          >
+                            {props.draft.tim === "TRC" ? "TRC" : "KP"}
                           </div>
                           <div>
                             <p className="text-sm font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
                               Pihak 1
                             </p>
                             <h4 className="text-lg font-bold">
-                              Koordinator Tim
+                              {props.draft.tim === "TRC"
+                                ? "Koordinator Tim TRC"
+                                : "Koordinator Tim PUSDALOPS"}
                             </h4>
                           </div>
                         </div>
@@ -1119,7 +1144,11 @@ export function EntryView(props: EntryViewProps) {
                                   event.target.value,
                                 )
                               }
-                              placeholder="Nama koordinator tim"
+                              placeholder={
+                                props.draft.tim === "TRC"
+                                  ? "Nama koordinator tim TRC"
+                                  : "Nama koordinator tim PUSDALOPS"
+                              }
                               className={inputClassName}
                             />
                           </label>

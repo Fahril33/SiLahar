@@ -10,11 +10,7 @@ import {
   showSuccess,
 } from "../lib/alerts";
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
-import {
-  DEFAULT_REPORT_RULES,
-  normalizeReportRules,
-  type ReportRules,
-} from "../config/report-rules";
+import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
@@ -47,6 +43,7 @@ import {
   fetchActiveReportTemplateConfig,
   saveTemplateApproverDefaults,
 } from "../lib/report-template-service";
+import { getTemplateApproverByRole } from "../lib/report-template-defaults";
 import {
   applyTemplateDefaultsToDraft,
   createEmptyDraft,
@@ -54,7 +51,6 @@ import {
   normalizeDraft,
   revokePreviews,
   timeToMinutes,
-  today,
   type PendingPhotoMap,
   type PendingPreviewMap,
 } from "../lib/report-draft";
@@ -94,7 +90,7 @@ import {
   saveCachedReporterNames,
   saveCachedReports,
 } from "../lib/storage";
-import { isWitaFriday } from "../lib/time";
+import { getWitaToday, isWitaFriday } from "../lib/time";
 import { optimizeReportImages } from "../lib/image-optimizer";
 import type { AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
@@ -143,7 +139,8 @@ function buildTemplateVersionId(template: ReportTemplateConfig | null) {
 
 function createDefaultApproverDraftMap(template: ReportTemplateConfig | null) {
   return {
-    coordinator_team: createApproverDraftFromTemplate(template, "coordinator_team"),
+    coordinator_team_trc: createApproverDraftFromTemplate(template, "coordinator_team_trc"),
+    coordinator_team_pusdalops: createApproverDraftFromTemplate(template, "coordinator_team_pusdalops"),
     division_head: createApproverDraftFromTemplate(template, "division_head"),
   } satisfies Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>;
 }
@@ -268,7 +265,7 @@ function validateDraftBeforeDatabaseSave(
     return "Nama petugas wajib diisi.";
   }
 
-  if (!canUseAnyReportDate && draft.reportDate !== today) {
+  if (!canUseAnyReportDate && draft.reportDate !== getWitaToday()) {
     return "Hanya laporan hari berjalan yang diizinkan.";
   }
 
@@ -316,8 +313,8 @@ export function useReportDashboard() {
   const [excelTemplates, setExcelTemplates] = useState<ExcelReportTemplate[]>([]);
   const [excelTemplateDraft, setExcelTemplateDraft] =
     useState<ExcelTemplateUploadDraft>({
-      templateName: buildAutoExcelTemplateName("v1", today),
-      templateDate: today,
+      templateName: buildAutoExcelTemplateName("v1", getWitaToday()),
+      templateDate: getWitaToday(),
       cacheVersion: "v1",
     });
   const [selectedExcelTemplateFile, setSelectedExcelTemplateFile] =
@@ -332,9 +329,9 @@ export function useReportDashboard() {
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
   const [historyName, setHistoryName] = useState("");
-  const [historyDate, setHistoryDate] = useState(today);
+  const [historyDate, setHistoryDate] = useState(() => getWitaToday());
   const [searchName, setSearchName] = useState("");
-  const [searchDate, setSearchDate] = useState(today);
+  const [searchDate, setSearchDate] = useState(() => getWitaToday());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState<PendingPhotoMap>({});
@@ -344,14 +341,15 @@ export function useReportDashboard() {
   >({});
   const [nameCheckLoading, setNameCheckLoading] = useState(false);
   const [nameExistsInDirectory, setNameExistsInDirectory] = useState<boolean | null>(null);
-  const [reportRules, setReportRules] = useState<ReportRules>(DEFAULT_REPORT_RULES);
+  const [reportRules, setReportRules] = useState<ReportRules>(initialReportRules);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
   const [adminSession, setAdminSession] = useState<AdminSessionState | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminAuthLoading, setAdminAuthLoading] = useState(true);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
   const [adminActiveAction, setAdminActiveAction] = useState<AdminActiveAction>(null);
-  const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(DEFAULT_REPORT_RULES);
+  const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(initialReportRules);
   const [adminTemplateApproverDrafts, setAdminTemplateApproverDrafts] =
     useState<Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>>(
       () => createDefaultApproverDraftMap(null),
@@ -474,8 +472,9 @@ export function useReportDashboard() {
   }, []);
 
   useEffect(() => {
-    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === today) return;
-    setDraft((current) => normalizeDraft({ ...current, reportDate: today }));
+    const currentToday = getWitaToday();
+    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === currentToday) return;
+    setDraft((current) => normalizeDraft({ ...current, reportDate: currentToday }));
   }, [adminSession, draft.reportDate, reportRules.allowAnyReportDate]);
 
   useEffect(() => {
@@ -486,6 +485,7 @@ export function useReportDashboard() {
       templateVersionRef.current = nextId;
       templatePreviousConfigRef.current = activeReportTemplateConfig;
       if (typeof window !== "undefined") window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextId);
+      setDraft(c => applyTemplateDefaultsToDraft(c, null, activeReportTemplateConfig));
       return;
     }
     if (nextId === templateVersionRef.current) {
@@ -588,6 +588,7 @@ export function useReportDashboard() {
       setExcelTemplates(dbET);
       setReporterNames(dbRN);
       setReportRules(dbRules);
+      setRulesLoaded(true);
       setAdminRuleDraft(dbRules);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(dbATC));
       setAdminReporterDraftNames(c => Object.fromEntries(dbRP.map(r => [r.id, c[r.id] ?? r.fullName])));
@@ -606,10 +607,9 @@ export function useReportDashboard() {
       }));
       saveCachedReports(dbR);
       saveCachedReporterNames(dbRN);
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(dbATC));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? applyTemplateDefaultsToDraft(c, null, dbATC) : createEmptyDraft(dbATC, c.tim));
     } catch (err) {
       logSafeError(err, "Dashboard/LoadData");
-      setReportRules(DEFAULT_REPORT_RULES);
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
         await showError("Database belum tersedia", "Data database belum bisa dimuat.");
       }
@@ -692,11 +692,27 @@ export function useReportDashboard() {
   }, [draft.nama, loadedSearchReportId, loadedSourceOriginalName]);
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
-    if (key === "reportDate" && !adminSession && !reportRules.allowAnyReportDate) {
-      setDraft(c => normalizeDraft({ ...c, reportDate: today }));
+    if (key === "reportDate" && !adminSession && (!rulesLoaded || !reportRules.allowAnyReportDate)) {
+      setDraft(c => normalizeDraft({ ...c, reportDate: getWitaToday() }));
       return;
     }
-    setDraft(c => normalizeDraft({ ...c, [key]: value }));
+    
+    setDraft(c => {
+      const updated = { ...c, [key]: value };
+      if (key === "tim") {
+        const nextTim = ((value as string) || "PUSDALOPS").toLowerCase();
+        const coordinator = getTemplateApproverByRole(
+          activeReportTemplateConfig,
+          `coordinator_team_${nextTim}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
+        );
+        if (coordinator) {
+          updated.approverCoordinatorTemplateId = coordinator.id;
+          updated.approverCoordinator = coordinator.officialName;
+          updated.approverCoordinatorNip = coordinator.officialNip;
+        }
+      }
+      return normalizeDraft(updated);
+    });
   }
 
   function changeActivity(index: number, key: "description" | "startTime" | "endTime", value: string) {
@@ -1118,7 +1134,7 @@ export function useReportDashboard() {
     setLoadedSearchSnapshot(null);
     setLoadedLocalDraftId(null);
     clearDraft();
-    setDraft(createEmptyDraft(activeReportTemplateConfig));
+    setDraft(createEmptyDraft(activeReportTemplateConfig, draft.tim));
     setDraftSavedAt(null);
     setDraftCacheStatus("idle");
   }
@@ -1126,6 +1142,7 @@ export function useReportDashboard() {
   function loadReportIntoDraft(report: Report) {
     const d = normalizeDraft({
       templateId: report.templateId,
+      tim: report.tim,
       nama: report.nama,
       tanggal: report.tanggal,
       reportDate: report.reportDate,
@@ -1150,7 +1167,7 @@ export function useReportDashboard() {
   }
 
   async function handleLoadEdit(report: Report) {
-    if (!adminSession && !reportRules.allowAnyReportDate && report.reportDate !== today) {
+    if (!adminSession && !reportRules.allowAnyReportDate && report.reportDate !== getWitaToday()) {
       await showError("Edit belum diizinkan", "Hanya laporan hari berjalan yang bisa diedit publik.");
       return;
     }
@@ -1389,7 +1406,7 @@ export function useReportDashboard() {
   }
 
   function changeAdminRule<K extends keyof ReportRules>(key: K, value: ReportRules[K]) {
-    setAdminRuleDraft(c => normalizeReportRules({ ...c, [key]: value }));
+    setAdminRuleDraft(c => ({ ...c, [key]: value }));
   }
 
   function changeAdminReporterDraftName(reporterId: string, value: string) {
@@ -1495,7 +1512,7 @@ export function useReportDashboard() {
       const next = await saveTemplateApproverDefaults(activeReportTemplateConfig.id, adminTemplateApproverDrafts);
       setActiveReportTemplateConfig(next);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(next));
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(next));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? applyTemplateDefaultsToDraft(c, activeReportTemplateConfig, next) : createEmptyDraft(next, c.tim));
       await loadDashboardData();
       await showSuccess("Pejabat diperbarui", "Berhasil disimpan.");
     } catch (err) { logSafeError(err, "Dashboard/SaveApprovers"); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }
@@ -1533,7 +1550,7 @@ export function useReportDashboard() {
     reportRules, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
     adminAuthLoading, adminSubmitting, adminActiveAction, adminActiveItemId, adminRuleDraft,
     adminTemplateApproverDrafts, adminReporterDraftNames,
-    canUseAnyReportDate: Boolean(adminSession) || reportRules.allowAnyReportDate,
+    canUseAnyReportDate: Boolean(adminSession) || (rulesLoaded && reportRules.allowAnyReportDate),
     canManageReports: Boolean(adminSession),
     duplicateReport, activityTimeIssues, activityCompletionStates, preview, historyResults,
     historyLocalDrafts, searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,

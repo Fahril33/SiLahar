@@ -7,7 +7,7 @@ import type { DraftReport, Report } from "../types/report";
 
 const fallbackCoordinator = getTemplateApproverByRole(
   fallbackReportTemplateConfig,
-  "coordinator_team",
+  "coordinator_team_pusdalops",
 );
 const fallbackDivisionHead = getTemplateApproverByRole(
   fallbackReportTemplateConfig,
@@ -16,6 +16,7 @@ const fallbackDivisionHead = getTemplateApproverByRole(
 
 export const defaultDraft: DraftReport = {
   templateId: fallbackReportTemplateConfig.id,
+  tim: "PUSDALOPS",
   nama: "",
   tanggal: "RABU, 01 APRIL 2026",
   reportDate: getWitaToday(),
@@ -42,6 +43,7 @@ export const seededReports: Report[] = [
   {
     id: "RPT-001",
     templateId: fallbackReportTemplateConfig.id,
+    tim: "PUSDALOPS",
     nama: "MUHAMMAD FAHRIL, S.KOM.",
     tanggal: "RABU, 01 APRIL 2026",
     reportDate: getWitaToday(),
