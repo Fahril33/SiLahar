@@ -227,7 +227,7 @@ function writeApprovalSection(
   mergeRangeAndSetValue(
     worksheet,
     `B${labelRow}:G${labelRow}`,
-    "KOORDINATOR TIM",
+    report.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS",
   );
   mergeRangeAndSetValue(
     worksheet,
