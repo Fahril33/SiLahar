@@ -8,6 +8,8 @@ import {
   showError,
   showInfo,
   showSuccess,
+  showProcessingToast,
+  closeProcessingToast,
 } from "../lib/alerts";
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
@@ -773,13 +775,22 @@ export function useReportDashboard() {
       void showInfo("Batas foto aktivitas", replace ? `Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan ${max} foto.` : `Sistem hanya mengambil file sesuai sisa kapasitas (${slots}).`);
     }
     if (limited.length === 0) return;
-    const next = await optimizeReportImages(limited);
-    if (replace) setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
-    setPendingPhotos(c => ({ ...c, [activityNo]: next }));
-    setPendingPreviews(c => {
-      (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url));
-      return { ...c, [activityNo]: next.map(f => ({ name: f.name, url: URL.createObjectURL(f) })) };
-    });
+
+    showProcessingToast("Memproses Gambar", "Mengompresi dan menyesuaikan format gambar...");
+    try {
+      const next = await optimizeReportImages(limited);
+      if (replace) setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
+      setPendingPhotos(c => ({ ...c, [activityNo]: next }));
+      setPendingPreviews(c => {
+        (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url));
+        return { ...c, [activityNo]: next.map(f => ({ name: f.name, url: URL.createObjectURL(f) })) };
+      });
+    } catch (e) {
+      console.error(e);
+      void showError("Gagal memproses gambar", "Gagal memproses file gambar yang dipilih.");
+    } finally {
+      closeProcessingToast();
+    }
   }
 
   function resolveSaveTargetReport(sourceReportId: string | null, targetDraft: DraftReport) {

@@ -695,14 +695,14 @@ async function upsertReporterDirectory(name: string) {
   return data as string;
 }
 
-async function upsertReportRow(draft: DraftReport, existingReport: Report | null) {
+async function upsertReportRow(draft: DraftReport, existingReport: Report | null, reportId: string) {
   if (!supabase) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
   const reporterDirectoryId = await upsertReporterDirectory(draft.nama);
 
-  const payload = {
+  const payload: any = {
     template_id:
       draft.templateId && draft.templateId !== FALLBACK_TEMPLATE_ID
         ? draft.templateId
@@ -748,6 +748,7 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
     return data.id as string;
   }
 
+  payload.id = reportId;
   const { data, error } = await supabase
     .from("daily_reports")
     .insert(payload)
@@ -761,6 +762,17 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
   return data.id as string;
 }
 
+function generateUUID() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export async function saveReportToDatabase(
   draft: DraftReport,
   pendingPhotos: PendingPhotoMap,
@@ -772,6 +784,53 @@ export async function saveReportToDatabase(
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
+  const reportId = existingReport?.id ?? generateUUID();
+
+  // 1. Generate client-side UUIDs for each activity
+  const activityIds = draft.activities.map(() => generateUUID());
+
+  // 2. Upload all pending photos to Supabase Storage first (before making any database changes)
+  const newUploadedPaths: string[] = [];
+  const uploadsByActivityNo: Record<number, Array<{ storagePath: string; publicUrl: string; originalFileName: string }>> = {};
+
+  try {
+    for (const [index, activity] of draft.activities.entries()) {
+      const files = (pendingPhotos[activity.no] ?? []).slice(0, reportRules.maxPhotosPerActivity);
+      if (files.length > 0) {
+        onStage?.("photos", `Mengunggah foto aktivitas ke-${activity.no}.`);
+        const activityId = activityIds[index];
+        const uploadedList = [];
+
+        for (const [fileIndex, file] of files.entries()) {
+          const storagePath = `${reportId}/${activityId}/${Date.now()}-${fileIndex}-${sanitizeFileName(file.name)}`;
+          const { error: uploadError } = await supabase.storage
+            .from(PROOF_BUCKET)
+            .upload(storagePath, file, { upsert: false });
+
+          if (uploadError) {
+            throw uploadError;
+          }
+          newUploadedPaths.push(storagePath);
+
+          const { data: publicUrlData } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(storagePath);
+          uploadedList.push({
+            storagePath,
+            publicUrl: publicUrlData.publicUrl,
+            originalFileName: file.name,
+          });
+        }
+        uploadsByActivityNo[activity.no] = uploadedList;
+      }
+    }
+  } catch (err) {
+    // If any file upload fails, clean up successfully uploaded files in this session
+    if (newUploadedPaths.length > 0) {
+      await supabase.storage.from(PROOF_BUCKET).remove(newUploadedPaths).catch(console.error);
+    }
+    throw err;
+  }
+
+  // 3. Database operations (only executed if all storage uploads succeeded)
   onStage?.("prepare", "Memeriksa draft dan sinkronisasi data pelapor.");
 
   if (existingReport) {
@@ -795,10 +854,13 @@ export async function saveReportToDatabase(
     await removeExistingAssets(existingReport);
   }
 
-  const reportId = await upsertReportRow(draft, existingReport);
+  // Insert or update the report row
+  await upsertReportRow(draft, existingReport, reportId);
 
+  // Insert the new activities
   onStage?.("activities", "Mencatat detail aktivitas ke database.");
-  const activityPayload = draft.activities.map((activity) => ({
+  const activityPayload = draft.activities.map((activity, index) => ({
+    id: activityIds[index],
     report_id: reportId,
     activity_order: activity.no,
     activity_description: activity.description,
@@ -806,79 +868,56 @@ export async function saveReportToDatabase(
     end_time_text: activity.endTime,
   }));
 
-  const { data: insertedActivities, error: activitiesError } = await supabase
+  const { error: activitiesError } = await supabase
     .from("daily_report_activities")
-    .insert(activityPayload)
-    .select("id, activity_order");
+    .insert(activityPayload);
 
   if (activitiesError) {
     throw activitiesError;
   }
 
-  for (const activity of insertedActivities ?? []) {
-    const sourceActivity = draft.activities.find((item) => item.no === activity.activity_order);
-    const keptExistingPhotos = (sourceActivity?.photos ?? []).slice(0, reportRules.maxPhotosPerActivity);
-    const files = (pendingPhotos[activity.activity_order] ?? []).slice(
-      0,
-      reportRules.maxPhotosPerActivity,
-    );
-    const photoRows: Array<{
-      activity_id: string;
-      storage_path: string;
-      public_url: string;
-      original_file_name: string;
-      sort_order: number;
-    }> = [];
+  // Insert the photos
+  const photoRows: Array<{
+    activity_id: string;
+    storage_path: string;
+    public_url: string;
+    original_file_name: string;
+    sort_order: number;
+  }> = [];
 
-    if (files.length > 0) {
-      onStage?.("photos", `Mengunggah foto aktivitas ke-${activity.activity_order}.`);
-    } else if (keptExistingPhotos.length > 0) {
-      onStage?.(
-        "photos",
-        `Mempertahankan foto aktivitas ke-${activity.activity_order} tanpa kompresi ulang.`,
-      );
-    }
+  for (const [index, activity] of draft.activities.entries()) {
+    const activityId = activityIds[index];
+    const keptExistingPhotos = (activity.photos ?? []).slice(0, reportRules.maxPhotosPerActivity);
+    const newUploads = uploadsByActivityNo[activity.no] ?? [];
 
-    for (const [index, photo] of keptExistingPhotos.entries()) {
+    for (const [photoIndex, photo] of keptExistingPhotos.entries()) {
       photoRows.push({
-        activity_id: activity.id,
+        activity_id: activityId,
         storage_path: photo.storagePath,
         public_url: photo.publicUrl,
         original_file_name: photo.originalFileName,
-        sort_order: index + 1,
+        sort_order: photoIndex + 1,
       });
     }
 
-    for (const [index, file] of files.entries()) {
-      const storagePath = `${reportId}/${activity.id}/${Date.now()}-${index}-${sanitizeFileName(file.name)}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from(PROOF_BUCKET)
-        .upload(storagePath, file, { upsert: false });
-
-      if (uploadError) {
-        throw uploadError;
-      }
-
-      const { data: publicUrlData } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(storagePath);
-
+    for (const [photoIndex, upload] of newUploads.entries()) {
       photoRows.push({
-        activity_id: activity.id,
-        storage_path: storagePath,
-        public_url: publicUrlData.publicUrl,
-        original_file_name: file.name,
-        sort_order: keptExistingPhotos.length + index + 1,
+        activity_id: activityId,
+        storage_path: upload.storagePath,
+        public_url: upload.publicUrl,
+        original_file_name: upload.originalFileName,
+        sort_order: keptExistingPhotos.length + photoIndex + 1,
       });
     }
+  }
 
-    if (photoRows.length > 0) {
-      const { error: photoInsertError } = await supabase
-        .from("daily_report_activity_photos")
-        .insert(photoRows);
+  if (photoRows.length > 0) {
+    const { error: photoInsertError } = await supabase
+      .from("daily_report_activity_photos")
+      .insert(photoRows);
 
-      if (photoInsertError) {
-        throw photoInsertError;
-      }
+    if (photoInsertError) {
+      throw photoInsertError;
     }
   }
 

@@ -315,3 +315,25 @@ export async function askPdfPaperSize(): Promise<"a4" | "f4" | "legal" | "letter
   }
   return null;
 }
+
+export function showProcessingToast(title: string, text: string) {
+  void Swal.fire({
+    title,
+    text,
+    allowOutsideClick: false,
+    allowEscapeKey: false,
+    showConfirmButton: false,
+    customClass: {
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+    },
+    didOpen: () => {
+      Swal.showLoading();
+    },
+  });
+}
+
+export function closeProcessingToast() {
+  Swal.close();
+}

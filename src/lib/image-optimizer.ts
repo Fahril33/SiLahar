@@ -32,13 +32,56 @@ async function canvasToBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-export async function optimizeReportImage(file: File) {
-  if (!file.type.startsWith("image/") || file.size < MIN_SIZE_TO_OPTIMIZE_BYTES) {
+let heic2anyLoader: any = null;
+
+async function convertHeicToJpeg(file: File): Promise<File> {
+  if (typeof window === "undefined") {
     return file;
+  }
+  if (!heic2anyLoader) {
+    const mod = await import("heic2any");
+    heic2anyLoader = mod.default || mod;
+  }
+  const result = await heic2anyLoader({
+    blob: file,
+    toType: "image/jpeg",
+    quality: 0.82,
+  });
+  const blob = Array.isArray(result) ? result[0] : result;
+  const newName = file.name.replace(/\.[^.]+$/, "") + ".jpeg";
+  return new File([blob], newName, {
+    type: "image/jpeg",
+    lastModified: file.lastModified,
+  });
+}
+
+export async function optimizeReportImage(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const isHeic =
+    extension === "heic" ||
+    extension === "heif" ||
+    file.type === "image/heic" ||
+    file.type === "image/heif";
+
+  let workingFile = file;
+  if (isHeic) {
+    try {
+      workingFile = await convertHeicToJpeg(file);
+    } catch (e) {
+      console.error("Gagal melakukan konversi HEIC ke JPEG:", e);
+    }
+  }
+
+  if (!workingFile.type.startsWith("image/")) {
+    return workingFile;
+  }
+
+  if (workingFile.size < MIN_SIZE_TO_OPTIMIZE_BYTES) {
+    return workingFile;
   }
 
   try {
-    const image = await loadImageFromFile(file);
+    const image = await loadImageFromFile(workingFile);
     const scale = Math.min(
       1,
       MAX_IMAGE_EDGE_PX / Math.max(image.naturalWidth, image.naturalHeight, 1),
@@ -56,7 +99,7 @@ export async function optimizeReportImage(file: File) {
     });
 
     if (!context) {
-      return file;
+      return workingFile;
     }
 
     context.fillStyle = "#ffffff";
@@ -65,17 +108,17 @@ export async function optimizeReportImage(file: File) {
 
     const optimizedBlob = await canvasToBlob(canvas);
 
-    if (!optimizedBlob || optimizedBlob.size >= file.size) {
-      return file;
+    if (!optimizedBlob || optimizedBlob.size >= workingFile.size) {
+      return workingFile;
     }
 
-    return new File([optimizedBlob], toOptimizedFileName(file.name), {
+    return new File([optimizedBlob], toOptimizedFileName(workingFile.name), {
       type: optimizedBlob.type || TARGET_MIME_TYPE,
-      lastModified: file.lastModified,
+      lastModified: workingFile.lastModified,
     });
   } catch (error) {
     console.error(error);
-    return file;
+    return workingFile;
   }
 }
 
