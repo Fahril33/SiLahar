@@ -385,6 +385,8 @@ export default function App() {
             localDraftCount={dashboard.localDraftCount}
             queuedLocalDraftCount={dashboard.queuedLocalDraftCount}
             loadedLocalDraftSummary={dashboard.loadedLocalDraftSummary}
+            showRenameOverwriteWarning={dashboard.showRenameOverwriteWarning}
+            renameOverwriteWarningKey={dashboard.renameOverwriteWarningKey}
             searchOpen={dashboard.searchOpen}
             onChange={dashboard.change}
             onChangeActivity={dashboard.changeActivity}
