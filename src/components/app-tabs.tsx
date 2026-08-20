@@ -27,11 +27,12 @@ function HistoryTabIcon() {
   );
 }
 
-function StatusTabIcon() {
+function RekapTabIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 11l2 2 4-5" />
-      <path d="M21 12a9 9 0 1 1-9-9 8.8 8.8 0 0 1 5.3 1.75" />
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   );
 }
@@ -48,7 +49,7 @@ function AdminTabIcon() {
 const TABS: Array<{ key: View; label: string; icon: JSX.Element }> = [
   { key: "entry", label: "Laporan", icon: <ReportTabIcon /> },
   { key: "history", label: "Histori", icon: <HistoryTabIcon /> },
-  { key: "status", label: "Status", icon: <StatusTabIcon /> },
+  { key: "rekap", label: "Rekap", icon: <RekapTabIcon /> },
   { key: "admin", label: "Admin", icon: <AdminTabIcon /> },
 ];
 

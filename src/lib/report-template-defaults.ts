@@ -76,23 +76,9 @@ export function getTemplateApproverByRole(
   role: ReportTemplateApproverRole,
 ) {
   const source = template ?? fallbackReportTemplateConfig;
-  const match = source.approvers?.find(
-    (approver) =>
-      (approver.approverRole === role ||
-        (role === "coordinator_team_trc" &&
-          (approver.approverRole as string) === "coordinator_team")) &&
-      approver.isActive,
-  );
-  if (match) return match;
-
   return (
-    fallbackReportTemplateConfig.approvers.find(
-      (approver) =>
-        (approver.approverRole === role ||
-          (role === "coordinator_team_trc" &&
-            (approver.approverRole as string) === "coordinator_team")) &&
-        approver.isActive,
+    source.approvers.find(
+      (approver) => approver.approverRole === role && approver.isActive,
     ) ?? null
   );
 }
-

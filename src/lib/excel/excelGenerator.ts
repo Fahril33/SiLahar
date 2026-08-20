@@ -227,7 +227,7 @@ function writeApprovalSection(
   mergeRangeAndSetValue(
     worksheet,
     `B${labelRow}:G${labelRow}`,
-    report.approverCoordinatorLabel.toUpperCase(),
+    "KOORDINATOR TIM",
   );
   mergeRangeAndSetValue(
     worksheet,

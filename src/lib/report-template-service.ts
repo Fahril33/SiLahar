@@ -1,7 +1,4 @@
-import {
-  fallbackReportTemplateConfig,
-  getTemplateApproverByRole,
-} from "./report-template-defaults";
+import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import { supabase } from "./supabase";
 import type {
   ReportTemplateApprover,
@@ -81,7 +78,11 @@ export function createApproverDraftFromTemplate(
   template: ReportTemplateConfig | null | undefined,
   role: ReportTemplateApproverRole,
 ): ReportTemplateApproverDraft {
-  const approver = getTemplateApproverByRole(template, role);
+  const source = template ?? fallbackReportTemplateConfig;
+  const approver =
+    source.approvers.find(
+      (item) => item.approverRole === role && item.isActive,
+    ) ?? null;
 
   return {
     scopeLabel: approver?.scopeLabel ?? "",

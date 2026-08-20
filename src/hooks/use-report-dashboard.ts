@@ -8,8 +8,6 @@ import {
   showError,
   showInfo,
   showSuccess,
-  showProcessingToast,
-  closeProcessingToast,
 } from "../lib/alerts";
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
@@ -117,7 +115,7 @@ import type {
   LocalReportDraftSummary,
 } from "../types/local-draft";
 
-export type View = "entry" | "history" | "status" | "admin";
+export type View = "entry" | "history" | "rekap" | "admin";
 export type DraftCacheStatus = "idle" | "saving" | "saved";
 export type AdminActiveAction =
   | null
@@ -298,7 +296,7 @@ export function useReportDashboard() {
   const [view, setView] = useState<View>(() => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("silahar:active-view");
-      if (stored === "entry" || stored === "history" || stored === "status" || stored === "admin") {
+      if (stored === "entry" || stored === "history" || stored === "rekap" || stored === "admin") {
         return stored as View;
       }
     }
@@ -396,7 +394,7 @@ export function useReportDashboard() {
   }, [view]);
 
   useEffect(() => {
-    if (previousViewRef.current !== view && (view === "history" || view === "status")) {
+    if (previousViewRef.current !== view && (view === "history" || view === "rekap")) {
       void loadDashboardData();
     }
     previousViewRef.current = view;
@@ -487,7 +485,6 @@ export function useReportDashboard() {
       templateVersionRef.current = nextId;
       templatePreviousConfigRef.current = activeReportTemplateConfig;
       if (typeof window !== "undefined") window.sessionStorage.setItem(ACTIVE_TEMPLATE_VERSION_KEY, nextId);
-      setDraft(c => applyTemplateDefaultsToDraft(c, null, activeReportTemplateConfig));
       return;
     }
     if (nextId === templateVersionRef.current) {
@@ -609,7 +606,7 @@ export function useReportDashboard() {
       }));
       saveCachedReports(dbR);
       saveCachedReporterNames(dbRN);
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? applyTemplateDefaultsToDraft(c, null, dbATC) : createEmptyDraft(dbATC, c.tim));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(dbATC));
     } catch (err) {
       logSafeError(err, "Dashboard/LoadData");
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
@@ -702,10 +699,9 @@ export function useReportDashboard() {
     setDraft(c => {
       const updated = { ...c, [key]: value };
       if (key === "tim") {
-        const nextTim = ((value as string) || "PUSDALOPS").toLowerCase();
         const coordinator = getTemplateApproverByRole(
           activeReportTemplateConfig,
-          `coordinator_team_${nextTim}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
+          `coordinator_team_${(value as string).toLowerCase()}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
         );
         if (coordinator) {
           updated.approverCoordinatorTemplateId = coordinator.id;
@@ -775,22 +771,13 @@ export function useReportDashboard() {
       void showInfo("Batas foto aktivitas", replace ? `Foto lama otomatis diganti agar aktivitas ini tetap hanya menyimpan ${max} foto.` : `Sistem hanya mengambil file sesuai sisa kapasitas (${slots}).`);
     }
     if (limited.length === 0) return;
-
-    showProcessingToast("Memproses Gambar", "Mengompresi dan menyesuaikan format gambar...");
-    try {
-      const next = await optimizeReportImages(limited);
-      if (replace) setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
-      setPendingPhotos(c => ({ ...c, [activityNo]: next }));
-      setPendingPreviews(c => {
-        (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url));
-        return { ...c, [activityNo]: next.map(f => ({ name: f.name, url: URL.createObjectURL(f) })) };
-      });
-    } catch (e) {
-      console.error(e);
-      void showError("Gagal memproses gambar", "Gagal memproses file gambar yang dipilih.");
-    } finally {
-      closeProcessingToast();
-    }
+    const next = await optimizeReportImages(limited);
+    if (replace) setDraft(c => normalizeDraft({ ...c, activities: c.activities.map(a => a.no === activityNo ? { ...a, photos: [] } : a) }));
+    setPendingPhotos(c => ({ ...c, [activityNo]: next }));
+    setPendingPreviews(c => {
+      (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url));
+      return { ...c, [activityNo]: next.map(f => ({ name: f.name, url: URL.createObjectURL(f) })) };
+    });
   }
 
   function resolveSaveTargetReport(sourceReportId: string | null, targetDraft: DraftReport) {
@@ -1145,7 +1132,7 @@ export function useReportDashboard() {
     setLoadedSearchSnapshot(null);
     setLoadedLocalDraftId(null);
     clearDraft();
-    setDraft(createEmptyDraft(activeReportTemplateConfig, draft.tim));
+    setDraft(createEmptyDraft(activeReportTemplateConfig));
     setDraftSavedAt(null);
     setDraftCacheStatus("idle");
   }
@@ -1524,7 +1511,7 @@ export function useReportDashboard() {
       const next = await saveTemplateApproverDefaults(activeReportTemplateConfig.id, adminTemplateApproverDrafts);
       setActiveReportTemplateConfig(next);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(next));
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? applyTemplateDefaultsToDraft(c, activeReportTemplateConfig, next) : createEmptyDraft(next, c.tim));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(next));
       await loadDashboardData();
       await showSuccess("Pejabat diperbarui", "Berhasil disimpan.");
     } catch (err) { logSafeError(err, "Dashboard/SaveApprovers"); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }

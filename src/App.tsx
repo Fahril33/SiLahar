@@ -3,7 +3,7 @@ import { AdminDashboardView } from "./components/admin-dashboard-view";
 import { AppTabs } from "./components/app-tabs";
 import { EntryView } from "./components/entry-view";
 import { HistoryView } from "./components/history-view";
-import { StatusView } from "./components/status-view";
+import { RekapView } from "./components/rekap-view";
 import { ConnectivityBanner } from "./components/connectivity-banner";
 import { useConnectivity } from "./hooks/useConnectivity";
 import { useReportDashboard } from "./hooks/use-report-dashboard";
@@ -426,39 +426,26 @@ export default function App() {
         {dashboard.view === "history" ? (
           <HistoryView
             loading={dashboard.loading}
-            localDraftsLoading={dashboard.localDraftsLoading}
-            historyName={dashboard.historyName}
-            setHistoryName={dashboard.setHistoryName}
             historyDate={dashboard.historyDate}
             setHistoryDate={dashboard.setHistoryDate}
             historyResults={dashboard.historyResults}
-            historyLocalDrafts={dashboard.historyLocalDrafts}
-            showDraftsInHistory={dashboard.showDraftsInHistory}
-            setShowDraftsInHistory={dashboard.setShowDraftsInHistory}
             onHandleLoadEdit={dashboard.handleLoadEdit}
-            onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
-            onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
-            onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
             onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
-            onHandleDeleteReport={dashboard.handleDeleteReport}
             excelExportingReportId={dashboard.excelExportingReportId}
             editLoadingReportId={dashboard.editLoadingReportId}
-            activeLocalDraftId={dashboard.activeLocalDraftId}
-            localDraftCount={dashboard.localDraftCount}
             today={getWitaToday()}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
-            canManageReports={dashboard.canManageReports}
             onReload={dashboard.handleReloadDashboardData}
+            statusRows={dashboard.statusRows}
           />
         ) : null}
 
-        {dashboard.view === "status" ? (
-          <StatusView
-            historyDate={dashboard.historyDate}
-            setHistoryDate={dashboard.setHistoryDate}
-            statusRows={dashboard.statusRows}
+        {dashboard.view === "rekap" ? (
+          <RekapView
+            reports={dashboard.reports}
+            reporterNames={dashboard.reporterNames}
             loading={dashboard.loading}
             onReload={dashboard.handleReloadDashboardData}
           />

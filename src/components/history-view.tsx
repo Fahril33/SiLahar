@@ -1,12 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
-import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { Report } from "../types/report";
-import { SearchFilterInput } from "./search-filter-input";
 
-const inputClassName = "field-input";
-const NEW_REPORT_WINDOW_MS = 5 * 60 * 1000;
 
 function ReloadIcon() {
   return (
@@ -44,7 +40,7 @@ function SpinnerIcon() {
   );
 }
 
-function ChevronDownIcon(props: { className?: string }) {
+function SearchIcon(props: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -55,7 +51,76 @@ function ChevronDownIcon(props: { className?: string }) {
       strokeLinejoin="round"
       className={props.className || "h-4 w-4"}
     >
-      <polyline points="6 9 12 15 18 9" />
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function CalendarIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function ClockIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-3.5 w-3.5"}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <polyline points="9 18 15 12 9 6" />
     </svg>
   );
 }
@@ -113,140 +178,107 @@ function PencilIcon(props: { className?: string }) {
   );
 }
 
-function EyeIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function UploadIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <path d="M12 3v12" />
-      <path d="m17 8-5-5-5 5" />
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-    </svg>
-  );
-}
-
-function TrashIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <line x1="10" y1="11" x2="10" y2="17" />
-      <line x1="14" y1="11" x2="14" y2="17" />
-    </svg>
-  );
-}
-
-function isRecentlyCreated(createdAt: string) {
-  return Date.now() - new Date(createdAt).getTime() <= NEW_REPORT_WINDOW_MS;
-}
-
-function getLocalDraftStatusLabel(status: LocalReportDraftSummary["uploadStatus"]) {
-  if (status === "queued") return "Antre upload";
-  if (status === "uploading") return "Sedang upload";
-  if (status === "uploaded") return "Sudah sinkron";
-  if (status === "failed") return "Perlu dicek";
-  return "Draft lokal";
-}
-
 export function HistoryView(props: {
   loading: boolean;
-  localDraftsLoading: boolean;
-  historyName: string;
-  setHistoryName: (value: string) => void;
   historyDate: string;
   setHistoryDate: (value: string) => void;
   historyResults: Report[];
-  historyLocalDrafts: LocalReportDraftSummary[];
-  showDraftsInHistory: boolean;
-  setShowDraftsInHistory: (value: boolean) => void;
   onHandleLoadEdit: (report: Report) => Promise<void>;
-  onHandleLoadLocalDraft: (draftId: string) => Promise<void>;
-  onHandleQueueLocalDraftUpload: (draftId: string) => Promise<void>;
-  onHandleDeleteLocalDraft: (draftId: string) => Promise<void>;
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (
     report: Report,
     format?: "a4" | "f4" | "legal" | "letter",
   ) => Promise<void>;
   onHandleUnsupportedMobilePrint: () => Promise<void>;
-  onHandleDeleteReport: (report: Report) => Promise<void>;
   excelExportingReportId: string | null;
   editLoadingReportId: string | null;
-  activeLocalDraftId: string | null;
-  localDraftCount: number;
   today: string;
   canUseAnyReportDate: boolean;
-  canManageReports: boolean;
   onReload: () => Promise<void>;
+  statusRows: Array<{
+    name: string;
+    done: boolean;
+    report: Report | null;
+  }>;
 }) {
   const {
     loading,
-    localDraftsLoading,
-    historyName,
-    setHistoryName,
     historyDate,
     setHistoryDate,
     historyResults,
-    historyLocalDrafts,
-    showDraftsInHistory,
-    setShowDraftsInHistory,
     onHandleLoadEdit,
-    onHandleLoadLocalDraft,
-    onHandleQueueLocalDraftUpload,
-    onHandleDeleteLocalDraft,
     onHandleExport,
     onHandlePrint,
     onHandleUnsupportedMobilePrint,
-    onHandleDeleteReport,
     excelExportingReportId,
     editLoadingReportId,
-    activeLocalDraftId,
-    localDraftCount,
     today,
     canUseAnyReportDate,
-    canManageReports,
     onReload,
+    statusRows,
   } = props;
-  const printFormats: Array<"a4" | "f4" | "legal" | "letter"> = [
-    "a4",
-    "f4",
-    "legal",
-    "letter",
-  ];
   const [openPrintMenuId, setOpenPrintMenuId] = useState<string | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
+
+  const [statusSearchQuery, setStatusSearchQuery] = useState("");
+  const [expandedCardNames, setExpandedCardNames] = useState<Record<string, boolean>>({});
+  const [showSearchCapsule, setShowSearchCapsule] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (showSearchCapsule && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [showSearchCapsule]);
+
+  const toggleExpand = (name: string) => {
+    setExpandedCardNames((prev) => ({
+      ...prev,
+      [name]: !prev[name],
+    }));
+  };
+
+  const handleAdjustDay = (amount: number) => {
+    const parts = historyDate.split("-");
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      
+      const date = new Date(year, month, day);
+      date.setDate(date.getDate() + amount);
+      
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, "0");
+      const dd = String(date.getDate()).padStart(2, "0");
+      setHistoryDate(`${yyyy}-${mm}-${dd}`);
+    }
+  };
+
+  const submissionStats = useMemo(() => {
+    const total = statusRows.length;
+    const done = statusRows.filter(r => r.done).length;
+    const pending = total - done;
+    return { total, done, pending };
+  }, [statusRows]);
+
+  const filteredStatusRows = useMemo(() => {
+    const filtered = statusRows.filter((row) =>
+      row.name.toLowerCase().includes(statusSearchQuery.toLowerCase())
+    );
+    return [...filtered].sort((a, b) => {
+      if (a.done !== b.done) {
+        return a.done ? -1 : 1;
+      }
+      if (a.done && a.report && b.report) {
+        const timeA = new Date(a.report.updatedAt).getTime();
+        const timeB = new Date(b.report.updatedAt).getTime();
+        return timeB - timeA;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  }, [statusRows, statusSearchQuery]);
 
   useEffect(() => {
     if (!openPrintMenuId) {
@@ -275,230 +307,408 @@ export function HistoryView(props: {
   }, [openPrintMenuId]);
 
   return (
-    <section className="space-y-4">
-      <div className="panel-glass rounded-[28px] p-5">
-        <div className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_auto]">
-          <SearchFilterInput
-            value={historyName}
-            onChange={setHistoryName}
-            placeholder="FILTER NAMA"
-          />
-          <input type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className={inputClassName} />
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setShowDraftsInHistory(!showDraftsInHistory)}
-              className={`h-[52px] rounded-2xl px-4 text-sm font-semibold transition ${
-                showDraftsInHistory
-                  ? "bg-[var(--primary)] text-white"
-                  : "border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] text-[var(--text-primary)]"
-              }`}
-            >
-              {showDraftsInHistory
-                ? `Sembunyikan draft lokal (${localDraftCount})`
-                : `Tampilkan draft lokal (${localDraftCount})`}
-            </button>
-          </div>
-          <div className="surface-muted rounded-2xl px-2 text-sm text-[var(--text-muted)] flex items-center gap-2 ">
-            <button 
-              type="button"
-              onClick={() => void onReload()}
-              disabled={loading}
-              className="h-[24px] w-[24px] shrink-0 p-0 disabled:opacity-60 flex items-center justify-center hover:bg-[var(--primary)] hover:text-white rounded-full"
-              aria-label="Muat ulang data histori"
-              title="Muat ulang data histori"
-            >
-              {loading ? <SpinnerIcon /> : <ReloadIcon />}
-            </button>
-            <p>{loading ? `Menampilkan ${historyResults.length} laporan${showDraftsInHistory ? ` dan ${historyLocalDrafts.length} draft lokal.` : "."}` : `Menampilkan ${historyResults.length} laporan${showDraftsInHistory ? ` dan ${historyLocalDrafts.length} draft lokal.` : "."}`}</p>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <p className="text-sm text-[var(--text-muted)]">
-            Draft lokal cocok dipakai saat koneksi kurang stabil atau saat ingin review dulu sebelum upload.
-          </p>
-        </div>
-      </div>
-      {showDraftsInHistory ? (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Draft Lokal</h2>
-            <p className="text-sm text-[var(--text-muted)]">
-              {localDraftsLoading ? "Memuat draft..." : `${historyLocalDrafts.length} draft cocok dengan filter.`}
-            </p>
-          </div>
-          {historyLocalDrafts.map((draft) => (
-            <article key={draft.id} className="surface-card rounded-[24px] p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xl font-bold text-[var(--text-primary)]">{draft.title}</h3>
-                    <span className="rounded-full bg-[var(--warning-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--warning)]">
-                      {getLocalDraftStatusLabel(draft.uploadStatus)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm text-[var(--text-muted)]">
-                    {draft.displayDate} | {draft.activityCount} aktivitas | {draft.pendingPhotoCount} foto lokal | diperbarui {formatWitaDateTime(draft.updatedAt)}
-                  </p>
-                  {draft.uploadError ? (
-                    <p className="mt-2 text-sm text-[var(--danger)]">{draft.uploadError}</p>
-                  ) : null}
-                </div>
-                <div className="flex flex-nowrap justify-end gap-2 overflow-x-auto overflow-y-visible lg:flex-wrap lg:overflow-visible">
-                  <button
-                    type="button"
-                    onClick={() => void onHandleLoadLocalDraft(draft.id)}
-                    disabled={activeLocalDraftId === draft.id}
-                    className="btn-secondary shrink-0 px-3 py-2 text-sm disabled:opacity-60 sm:px-4"
-                    aria-label={`Tinjau draft ${draft.title}`}
-                  >
-                    {activeLocalDraftId === draft.id ? <SpinnerIcon /> : <EyeIcon className="h-4 w-4" />}
-                    <span className="hidden sm:inline">Tinjau draft</span>
-                  </button>
-                  {draft.uploadStatus !== "uploaded" ? (
-                    <button
-                      type="button"
-                      onClick={() => void onHandleQueueLocalDraftUpload(draft.id)}
-                      disabled={draft.uploadStatus === "queued" || draft.uploadStatus === "uploading"}
-                      className="btn-secondary shrink-0 px-3 py-2 text-sm disabled:opacity-60 sm:px-4"
-                      aria-label={`Upload background draft ${draft.title}`}
-                    >
-                      {draft.uploadStatus === "uploading" ? <SpinnerIcon /> : <UploadIcon className="h-4 w-4" />}
-                      <span className="hidden sm:inline">Upload</span>
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => void onHandleDeleteLocalDraft(draft.id)}
-                    className="btn-danger shrink-0 px-3 py-2 text-sm sm:px-4"
-                    aria-label={`Hapus draft ${draft.title}`}
-                  >
-                    <TrashIcon className="h-4 w-4" />
-                    <span className="hidden sm:inline">Hapus draft</span>
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
-        </section>
-      ) : null}
-      {historyResults.map((report) => (
-        <article key={report.id} className="surface-card rounded-[24px] p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-xl font-bold text-[var(--text-primary)]">{report.nama}</h3>
-                {isRecentlyCreated(report.createdAt) ? (
-                  <span className="rounded-full bg-[var(--info-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--info)]">
-                    Baru ditambahkan
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">{report.tanggal} | {report.activities.length} aktivitas | diperbarui {formatWitaDateTime(report.updatedAt)}</p>
-              <ul className="mt-2 space-y-1 text-sm text-[var(--text-primary)]">{report.activities.slice(0, 3).map((activity) => <li key={`${report.id}-${activity.no}`}>{activity.no}. {activity.description} ({activity.startTime} - {activity.endTime} WITA)</li>)}</ul>
+    <section className="space-y-4 animate-fadeIn">
+      {/* Desktop & Tablet Filter Panels */}
+      <div className="hidden md:block w-full animate-fadeIn">
+        <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
+          {/* Top Row: Stats Capsule & Search/Date Pill */}
+          <div className="flex md:flex-row md:items-center md:justify-between gap-4">
+            {/* Stats Capsule */}
+            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
+              <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
+              <span className="mx-3 text-[var(--border-soft)]">|</span>
+              <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
+              <span className="mx-3 text-[var(--border-soft)]">|</span>
+              <span>Total {submissionStats.total}</span>
             </div>
-            <div className="flex flex-nowrap justify-end gap-2 overflow-x-auto overflow-y-visible lg:flex-wrap lg:overflow-visible">
-              {report.reportDate === today || canUseAnyReportDate ? (
-                <button
-                  type="button"
-                  onClick={() => void onHandleLoadEdit(report)}
-                  disabled={editLoadingReportId === report.id}
-                  className="btn-secondary shrink-0 px-3 py-2 text-sm disabled:opacity-60 sm:px-4"
-                  aria-label={`Edit laporan ${report.nama}`}
-                >
-                  {editLoadingReportId === report.id ? <SpinnerIcon /> : <PencilIcon className="h-4 w-4" />}
-                  <span className="hidden sm:inline">Edit</span>
-                </button>
-              ) : null}
+
+            {/* Unified Search Pill */}
+            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
+              {/* Desktop Inline Search (Visible on large screens lg and above) */}
+              <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
+                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                <input
+                  type="text"
+                  value={statusSearchQuery}
+                  onChange={(e) => setStatusSearchQuery(e.target.value)}
+                  placeholder="Cari petugas..."
+                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-[120px] focus:ring-0 p-0"
+                />
+              </div>
+
+              {/* Desktop-only Divider */}
+              <span className="hidden lg:block h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+              {/* Tablet-only Search Toggle Button (Visible only on md screens, hidden on lg screens) */}
               <button
                 type="button"
-                onClick={() => void onHandleExport(report)}
-                disabled={excelExportingReportId === report.id}
-                className="btn-secondary shrink-0 px-3 py-2 text-sm disabled:opacity-60 sm:px-4"
-                aria-label={`Download Excel untuk ${report.nama}`}
+                onClick={() => setShowSearchCapsule((prev) => !prev)}
+                className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+                  showSearchCapsule 
+                    ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
+                    : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                }`}
+                title="Cari Petugas"
               >
-                {excelExportingReportId === report.id ? (
-                  <SpinnerIcon />
-                ) : (
-                  <>
-                    <DownloadIcon className="h-4 w-4" />
-                    <span className="hidden sm:inline">Excel</span>
-                  </>
-                )}
+                <SearchIcon className="h-4 w-4" />
               </button>
-              <div
-                ref={openPrintMenuId === report.id ? printMenuRef : null}
-                className="relative flex items-stretch"
-              >
+
+              {/* Tablet-only Divider */}
+              <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+              {/* Date Picker with Prev/Next Day buttons */}
+              <div className="flex items-center gap-1 shrink-0">
+                {/* Decrement Day */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setOpenPrintMenuId(null);
-                    if (isMobileOrTablet) {
-                      void onHandleUnsupportedMobilePrint();
-                      return;
-                    }
-                    void onHandlePrint(report, "a4");
-                  }}
-                  className={`btn-secondary shrink-0 px-3 py-2 text-sm sm:px-4 ${
-                    isMobileOrTablet ? "" : "rounded-r-none"
-                  } ${isMobileOrTablet ? "cursor-not-allowed opacity-60" : ""}`}
-                  aria-label={`Print A4 untuk ${report.nama}`}
-                  aria-disabled={isMobileOrTablet}
+                  onClick={() => handleAdjustDay(-1)}
+                  className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                  title="Hari Sebelumnya"
                 >
-                  <PrintIcon className="h-4 w-4" />
-                  <span className="hidden sm:inline">A4</span>
+                  <ChevronLeftIcon className="h-3.5 w-3.5" />
                 </button>
-                {!isMobileOrTablet ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setOpenPrintMenuId((current) =>
-                        current === report.id ? null : report.id,
-                      )
-                    }
-                    className="btn-secondary ml-[2px] rounded-l-none px-2 py-2 text-sm"
-                    aria-label={`Pilih ukuran kertas print untuk ${report.nama}`}
-                  >
-                    <ChevronDownIcon className="h-4 w-4" />
-                  </button>
-                ) : null}
-                {!isMobileOrTablet && openPrintMenuId === report.id ? (
-                  <div className="absolute right-0 top-[calc(100%+8px)] z-20 min-w-[156px] rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel)] p-2 shadow-2xl">
-                    {printFormats.map((format) => (
-                      <button
-                        key={format}
-                        type="button"
-                        onClick={() => {
-                          setOpenPrintMenuId(null);
-                          void onHandlePrint(report, format);
-                        }}
-                        className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm uppercase text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
-                      >
-                        <span>{format}</span>
-                        {format === "a4" ? (
-                          <span className="text-xs text-[var(--text-muted)]">default</span>
-                        ) : null}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
+
+                <div className="flex items-center gap-1.5 px-0.5">
+                  <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                  <input
+                    type="date"
+                    value={historyDate}
+                    onChange={(e) => setHistoryDate(e.target.value)}
+                    className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
+                  />
+                </div>
+
+                {/* Increment Day */}
+                <button
+                  type="button"
+                  onClick={() => handleAdjustDay(1)}
+                  className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                  title="Hari Berikutnya"
+                >
+                  <ChevronRightIcon className="h-3.5 w-3.5" />
+                </button>
               </div>
-              {canManageReports ? (
-                <button
-                  type="button"
-                  onClick={() => void onHandleDeleteReport(report)}
-                  className="btn-danger shrink-0 px-3 py-2 text-sm sm:px-4"
-                  aria-label={`Hapus laporan ${report.nama}`}
-                >
-                  <TrashIcon className="h-4 w-4" />
-                  <span className="hidden sm:inline">Delete</span>
-                </button>
-              ) : null}
+
+              {/* Vertical Divider */}
+              <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+              {/* Reload Button */}
+              <button
+                type="button"
+                onClick={() => void onReload()}
+                disabled={loading}
+                className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
+                title="Muat ulang data"
+              >
+                {loading ? <SpinnerIcon /> : <ReloadIcon />}
+              </button>
             </div>
           </div>
-        </article>
-      ))}
+
+          {/* Tablet Collapsible Search Capsule (rendered INSIDE the panel-glass container, filling width below) */}
+          {showSearchCapsule && (
+            <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={statusSearchQuery}
+                onChange={(e) => setStatusSearchQuery(e.target.value)}
+                placeholder="Cari petugas..."
+                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+
+      {/* Mobile Filter Panel */}
+      <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
+        {/* Row 1: Stats Capsule */}
+        <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
+          <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
+          <span className="mx-2.5 text-[var(--border-soft)]">|</span>
+          <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
+          <span className="mx-2.5 text-[var(--border-soft)]">|</span>
+          <span>Total {submissionStats.total}</span>
+        </div>
+
+        {/* Row 2: Date Picker & Reload Capsule */}
+        <div className="flex items-center justify-between h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm w-full">
+          {/* Search Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setShowSearchCapsule((prev) => !prev)}
+            className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+              showSearchCapsule 
+                ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
+                : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            }`}
+            title="Cari Petugas"
+          >
+            <SearchIcon className="h-4 w-4" />
+          </button>
+
+          {/* Vertical Divider */}
+          <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+          {/* Date Selector with Prev/Next buttons */}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Decrement Day */}
+            <button
+              type="button"
+              onClick={() => handleAdjustDay(-1)}
+              className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+              title="Hari Sebelumnya"
+            >
+              <ChevronLeftIcon className="h-3.5 w-3.5" />
+            </button>
+
+            <div className="flex items-center gap-1.5 px-0.5">
+              <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+              <input
+                type="date"
+                value={historyDate}
+                onChange={(e) => setHistoryDate(e.target.value)}
+                className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
+              />
+            </div>
+
+            {/* Increment Day */}
+            <button
+              type="button"
+              onClick={() => handleAdjustDay(1)}
+              className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+              title="Hari Berikutnya"
+            >
+              <ChevronRightIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Vertical Divider */}
+          <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+          {/* Reload Button */}
+          <button
+            type="button"
+            onClick={() => void onReload()}
+            disabled={loading}
+            className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
+            title="Muat ulang data"
+          >
+            {loading ? <SpinnerIcon /> : <ReloadIcon />}
+          </button>
+        </div>
+
+        {/* Row 3: Collapsible Search Capsule (rendered below the filter capsule) */}
+        {showSearchCapsule && (
+          <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+            <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={statusSearchQuery}
+              onChange={(e) => setStatusSearchQuery(e.target.value)}
+              placeholder="Cari petugas..."
+              className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Submission Status List Grid */}
+      <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
+        {filteredStatusRows.map((row) => {
+          const isExpanded = expandedCardNames[row.name] || false;
+          const reportsCount = historyResults.filter(r => r.nama === row.name).length;
+          return (
+            <div 
+              key={row.name} 
+              onClick={() => row.done && toggleExpand(row.name)}
+              className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all ${
+                row.done ? "cursor-pointer hover:bg-[var(--surface-muted)]/30" : ""
+              }`}
+            >
+              <div>
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                      row.done 
+                        ? "bg-emerald-500/10 text-emerald-500" 
+                        : "bg-red-500/10 text-red-500"
+                    }`}>
+                      {row.name.substring(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-[var(--text-primary)] truncate text-sm">{row.name}</p>
+                      {row.done && row.report ? (
+                        <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
+                          {reportsCount} Laporan • {row.report.updatedAt !== row.report.createdAt 
+                            ? `Diperbarui ${formatWitaDateTime(row.report.updatedAt)}`
+                            : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`
+                          }
+                        </p>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)] mt-0.5 font-semibold">
+                          Belum ada aktivitas
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Right side container: only contains 'Belum isi' status pill OR the actions (raised for md+) */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    {!row.done && (
+                      <span className="status-pill status-pill-danger shrink-0 hidden md:inline-block">
+                        Belum isi
+                      </span>
+                    )}
+
+                    {row.done && row.report && (
+                      <div 
+                        className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)]/60 gap-2" 
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Edit Button */}
+                        {(row.report.reportDate === today || canUseAnyReportDate) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onHandleLoadEdit(row.report!);
+                            }}
+                            disabled={editLoadingReportId === row.report.id}
+                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                            title="Edit Laporan"
+                          >
+                            {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                            <span>Edit</span>
+                          </button>
+                        )}
+
+                        {/* Excel Export */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onHandleExport(row.report!);
+                          }}
+                          disabled={excelExportingReportId === row.report.id}
+                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          title="Download Excel"
+                        >
+                          {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                          <span>Excel</span>
+                        </button>
+
+                        {/* Print PDF Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isMobileOrTablet) {
+                              void onHandleUnsupportedMobilePrint();
+                            } else {
+                              void onHandlePrint(row.report!, "a4");
+                            }
+                          }}
+                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          title="Cetak PDF"
+                        >
+                          <PrintIcon className="h-3.5 w-3.5" />
+                          <span>Print</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Collapsible Activity List */}
+                {row.done && row.report && isExpanded && (
+                  <div className="mt-2 pt-1 border-t border-[var(--border-soft)]/50 space-y-2 animate-fadeIn" onClick={(e) => e.stopPropagation()}>
+                    <ul className="divide-y divide-[var(--border-soft)]/30 text-xs text-[var(--text-primary)]">
+                      {row.report.activities.map((activity) => (
+                        <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
+                          <div className="font-semibold text-[var(--text-primary)]">{activity.no}. {activity.description}</div>
+                          <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
+                            <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                            <span>{activity.startTime} - {activity.endTime} WITA</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Mobile Actions Row */}
+              {row.done && row.report ? (
+                <div 
+                  className="md:hidden border-t border-[var(--border-soft)]/60 mt-2 pt-3 flex items-center justify-end gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Edit Button */}
+                  {(row.report.reportDate === today || canUseAnyReportDate) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onHandleLoadEdit(row.report!);
+                      }}
+                      disabled={editLoadingReportId === row.report.id}
+                      className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                      title="Edit Laporan"
+                    >
+                      {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                      <span>Edit</span>
+                    </button>
+                  )}
+
+                  {/* Excel Export */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onHandleExport(row.report!);
+                    }}
+                    disabled={excelExportingReportId === row.report.id}
+                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                    title="Download Excel"
+                  >
+                    {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                    <span>Excel</span>
+                  </button>
+
+                  {/* Print PDF Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isMobileOrTablet) {
+                        void onHandleUnsupportedMobilePrint();
+                      } else {
+                        void onHandlePrint(row.report!, "a4");
+                      }
+                    }}
+                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                    title="Cetak PDF"
+                  >
+                    <PrintIcon className="h-3.5 w-3.5" />
+                    <span>Print</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {filteredStatusRows.length === 0 && (
+        <div className="surface-card rounded-[28px] p-16 text-center text-[var(--text-muted)]">
+          <p className="text-lg">Tidak ada petugas yang cocok dengan pencarian.</p>
+        </div>
+      )}
     </section>
   );
 }
