@@ -897,8 +897,8 @@ export function EntryView(props: EntryViewProps) {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3 sm:max-w-xs">
-                        <label className="space-y-1.5">
+                      <div className="grid grid-cols-2 gap-3 min-w-0 sm:max-w-xs">
+                        <label className="space-y-1.5 min-w-0">
                           <span className="text-xs font-medium text-[var(--text-muted)]">
                             Jam mulai
                           </span>
@@ -912,10 +912,10 @@ export function EntryView(props: EntryViewProps) {
                                 event.target.value,
                               )
                             }
-                            className={`${inputClassName} py-2.5 text-sm`}
+                            className={`${inputClassName} py-2.5 text-sm min-w-0`}
                           />
                         </label>
-                        <label className="space-y-1.5">
+                        <label className="space-y-1.5 min-w-0">
                           <span className="text-xs font-medium text-[var(--text-muted)]">
                             Jam selesai
                           </span>
@@ -929,7 +929,7 @@ export function EntryView(props: EntryViewProps) {
                                 event.target.value,
                               )
                             }
-                            className={`${inputClassName} py-2.5 text-sm`}
+                            className={`${inputClassName} py-2.5 text-sm min-w-0`}
                           />
                         </label>
                       </div>
