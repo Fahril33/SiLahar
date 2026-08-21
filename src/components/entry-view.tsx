@@ -247,6 +247,7 @@ type EntryViewProps = {
   submitting: boolean;
   isEditLoading: boolean;
   excelExportingReportId: string | null;
+  pdfExportingReportId: string | null;
   hasDraftContent: boolean;
   draftSavedAt: string | null;
   draftCacheStatus: "idle" | "saving" | "saved";
@@ -279,6 +280,7 @@ type EntryViewProps = {
 
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (report: Report) => Promise<void>;
+  onHandleSaveAsPdf: (report: Report) => Promise<void>;
   onHandleUnsupportedMobilePrint: () => Promise<void>;
   onHandleResetDraft: () => Promise<void>;
   onSaveReport: () => Promise<void>;
@@ -342,6 +344,25 @@ function DownloadIcon(props: { className?: string }) {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function FileDownIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M12 18v-6" />
+      <path d="m9 15 3 3 3-3" />
     </svg>
   );
 }
@@ -1720,6 +1741,21 @@ export function EntryView(props: EntryViewProps) {
                         </div>
                       ) : null}
                     </div>
+                    {/* Save as PDF Button */}
+                    <button
+                      type="button"
+                      onClick={() => void props.onHandleSaveAsPdf(props.preview)}
+                      disabled={props.pdfExportingReportId === props.preview.id}
+                      className="btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
+                      aria-label="Save PDF"
+                    >
+                      {props.pdfExportingReportId === props.preview.id ? (
+                        <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                      ) : (
+                        <FileDownIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      )}
+                      <span className="hidden sm:inline">PDF</span>
+                    </button>
                   <div ref={saveMenuRef} className="relative flex items-stretch">
                     <AnchoredInlineWarning
                       open={

@@ -380,6 +380,7 @@ export default function App() {
             submitting={dashboard.submitting}
             isEditLoading={dashboard.isEditLoading}
             excelExportingReportId={dashboard.excelExportingReportId}
+            pdfExportingReportId={dashboard.pdfExportingReportId}
             hasDraftContent={dashboard.hasDraftContent}
             draftSavedAt={dashboard.draftSavedAt}
             draftCacheStatus={dashboard.draftCacheStatus}
@@ -400,6 +401,7 @@ export default function App() {
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandleSaveAsPdf={dashboard.handleSaveAsPdf}
             onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
             onHandleResetDraft={dashboard.handleResetDraft}
             onSaveReport={dashboard.saveReport}
@@ -432,8 +434,10 @@ export default function App() {
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandleSaveAsPdf={dashboard.handleSaveAsPdf}
             onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
             excelExportingReportId={dashboard.excelExportingReportId}
+            pdfExportingReportId={dashboard.pdfExportingReportId}
             editLoadingReportId={dashboard.editLoadingReportId}
             today={getWitaToday()}
             canUseAnyReportDate={dashboard.canUseAnyReportDate}

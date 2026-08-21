@@ -383,7 +383,22 @@ async function fetchExcelImage(
       return await compressImageBlobForExcel(localFile);
     }
 
-    const response = await fetch(resolveOptimizedPhotoUrl(imagePatch.photo));
+    const optimizedUrl = resolveOptimizedPhotoUrl(imagePatch.photo);
+    let response: Response;
+
+    try {
+      response = await fetch(optimizedUrl);
+      
+      // If the optimized URL failed (e.g. 400/404 because Supabase transformation is disabled),
+      // fallback to the direct publicUrl.
+      if (!response.ok && optimizedUrl !== imagePatch.photo.publicUrl) {
+        console.warn(`Optimized image fetch failed (${response.status}). Falling back to raw publicUrl.`);
+        response = await fetch(imagePatch.photo.publicUrl);
+      }
+    } catch (fetchError) {
+      console.warn("Optimized image fetch threw an error, falling back to raw publicUrl:", fetchError);
+      response = await fetch(imagePatch.photo.publicUrl);
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -424,6 +439,17 @@ export async function generateDailyReportExcel({
   mappedReport.textCells.forEach((cellPatch) => {
     worksheet.getCell(cellPatch.cell).value = cellPatch.value;
   });
+
+  // Enable wrapText for the activity description cells (Column C)
+  for (let index = 0; index < report.activities.length; index++) {
+    const rowNumber = EXCEL_TEMPLATE_LAYOUT.activityTemplateRow + index;
+    const descCell = worksheet.getCell(`${EXCEL_TEMPLATE_LAYOUT.activityDescriptionColumn}${rowNumber}`);
+    descCell.alignment = {
+      ...descCell.alignment,
+      wrapText: true,
+      vertical: "middle",
+    };
+  }
 
   writeApprovalSection(worksheet, report, dynamicRowOffset);
   writeNotesSection(worksheet, mappedReport.notes, dynamicRowOffset);

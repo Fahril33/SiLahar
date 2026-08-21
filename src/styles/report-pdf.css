@@ -1,7 +1,6 @@
 @page {
   size: A4 portrait;
   margin: 20mm 18mm 20mm 20mm;
-  transform: scale(0.9);
 }
 
 .pdf-report-shell {
@@ -32,6 +31,9 @@
   margin: 0 0 4px;
 }
 
+.pdf-report-identity {
+  margin-bottom: 10px;
+}
 
 .pdf-report-identity table {
   width: 100%;
@@ -54,14 +56,27 @@
 
 .pdf-report-main-table table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
+  border-top: 1px solid #000000;
+  border-left: 1px solid #000000;
 }
 
 .pdf-report-main-table th,
 .pdf-report-main-table td {
-  border: 1px solid #000000;
-  padding: 12px 7px 12px;
+  border-right: 1px solid #000000;
+  border-bottom: 1px solid #000000;
+  border-top: none;
+  border-left: none;
+  padding: 8px 7px;
+  vertical-align: middle;
+  box-sizing: border-box;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.pdf-report-main-table tr {
   page-break-inside: avoid;
   break-inside: avoid;
 }
@@ -69,23 +84,24 @@
 .pdf-report-main-table th {
   font-weight: 700;
   text-align: center;
-  vertical-align: middle;
+  line-height: 1.2;
 }
 
 .pdf-report-main-table td {
-  vertical-align: middle;
+  line-height: 1.25;
 }
+
 
 .pdf-report-main-table .col-no {
   width: 8%;
 }
 
 .pdf-report-main-table .col-detail {
-  width: 52%;
+  width: 50%;
 }
 
 .pdf-report-main-table .col-time {
-  width: 24%;
+  width: 22%;
 }
 
 .pdf-report-main-table .col-proof {
@@ -96,27 +112,37 @@
   text-align: center;
 }
 
+.pdf-report-main-table .time-cell {
+  text-align: center;
+}
+
 .pdf-report-main-table .detail-cell {
-  white-space: pre-wrap;
+  white-space: pre-line;
   word-break: break-word;
   overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .pdf-report-main-table .proof-cell {
   padding: 6px;
+  text-align: center;
 }
 
 .pdf-report-main-table .proof-images-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
 }
 
 .pdf-report-main-table .proof-image {
   display: block;
   height: auto;
-  width: 100%;
+  max-width: 100%;
   object-fit: contain;
+  margin: 0 auto;
 }
 
 .pdf-report-approval {

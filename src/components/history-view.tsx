@@ -161,6 +161,25 @@ function PrintIcon(props: { className?: string }) {
   );
 }
 
+function FileDownIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M12 18v-6" />
+      <path d="m9 15 3 3 3-3" />
+    </svg>
+  );
+}
+
 function PencilIcon(props: { className?: string }) {
   return (
     <svg
@@ -189,8 +208,10 @@ export function HistoryView(props: {
     report: Report,
     format?: "a4" | "f4" | "legal" | "letter",
   ) => Promise<void>;
+  onHandleSaveAsPdf: (report: Report) => Promise<void>;
   onHandleUnsupportedMobilePrint: () => Promise<void>;
   excelExportingReportId: string | null;
+  pdfExportingReportId: string | null;
   editLoadingReportId: string | null;
   today: string;
   canUseAnyReportDate: boolean;
@@ -205,12 +226,13 @@ export function HistoryView(props: {
     loading,
     historyDate,
     setHistoryDate,
-    historyResults,
     onHandleLoadEdit,
     onHandleExport,
     onHandlePrint,
+    onHandleSaveAsPdf,
     onHandleUnsupportedMobilePrint,
     excelExportingReportId,
+    pdfExportingReportId,
     editLoadingReportId,
     today,
     canUseAnyReportDate,
@@ -521,7 +543,6 @@ export function HistoryView(props: {
       <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
         {filteredStatusRows.map((row) => {
           const isExpanded = expandedCardNames[row.name] || false;
-          const reportsCount = historyResults.filter(r => r.nama === row.name).length;
           return (
             <div 
               key={row.name} 
@@ -544,7 +565,7 @@ export function HistoryView(props: {
                       <p className="font-bold text-[var(--text-primary)] truncate text-sm">{row.name}</p>
                       {row.done && row.report ? (
                         <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
-                          {reportsCount} Laporan • {row.report.updatedAt !== row.report.createdAt 
+                          {row.report.activities.length} Aktivitas • {row.report.updatedAt !== row.report.createdAt 
                             ? `Diperbarui ${formatWitaDateTime(row.report.updatedAt)}`
                             : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`
                           }
@@ -619,14 +640,40 @@ export function HistoryView(props: {
                           <PrintIcon className="h-3.5 w-3.5" />
                           <span>Print</span>
                         </button>
+
+                        {/* Save as PDF Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onHandleSaveAsPdf(row.report!);
+                          }}
+                          disabled={pdfExportingReportId === row.report.id}
+                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          title="Save PDF"
+                        >
+                          {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                          <span>PDF</span>
+                        </button>
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* Collapsible Activity List */}
-                {row.done && row.report && isExpanded && (
-                  <div className="mt-2 pt-1 border-t border-[var(--border-soft)]/50 space-y-2 animate-fadeIn" onClick={(e) => e.stopPropagation()}>
+                {row.done && row.report && (
+                  <div 
+                    className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]/50"
+                    style={{
+                      maxHeight: isExpanded ? "1000px" : "0px",
+                      opacity: isExpanded ? 1 : 0,
+                      marginTop: isExpanded ? "8px" : "0px",
+                      paddingTop: isExpanded ? "4px" : "0px",
+                      borderTopColor: isExpanded ? "var(--border-soft)" : "transparent",
+                      borderTopWidth: isExpanded ? "1px" : "0px"
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <ul className="divide-y divide-[var(--border-soft)]/30 text-xs text-[var(--text-primary)]">
                       {row.report.activities.map((activity) => (
                         <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
@@ -696,6 +743,21 @@ export function HistoryView(props: {
                   >
                     <PrintIcon className="h-3.5 w-3.5" />
                     <span>Print</span>
+                  </button>
+
+                  {/* Save as PDF Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onHandleSaveAsPdf(row.report!);
+                    }}
+                    disabled={pdfExportingReportId === row.report.id}
+                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                    title="Save PDF"
+                  >
+                    {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                    <span>PDF</span>
                   </button>
                 </div>
               ) : null}

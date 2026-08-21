@@ -22,7 +22,7 @@ import {
   updateExcelReportTemplateMetadata,
   uploadExcelReportTemplate,
 } from "../lib/excel-template-service";
-import { printReportDocument } from "../lib/exporters";
+import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
   formatReporterNameForDatabase,
@@ -324,6 +324,7 @@ export function useReportDashboard() {
   >({});
   const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
   const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
+  const [pdfExportingReportId, setPdfExportingReportId] = useState<string | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
   const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
@@ -1246,6 +1247,29 @@ export function useReportDashboard() {
     }
   }
 
+  async function handleSaveAsPdf(report: Report) {
+    setPdfExportingReportId(report.id);
+    const toast = openProgressToast("Export Dokumen PDF", [
+      { id: "images", label: "Optimasi" },
+      { id: "render", label: "Render" },
+      { id: "download", label: "Unduh" },
+    ]);
+    try {
+      await exportReportAsPdf(
+        report,
+        paperFormat,
+        report.id === "preview" ? pendingPhotos : undefined,
+        (stageId, detail) => toast.update(stageId, detail),
+      );
+      toast.close();
+    } catch (err) {
+      logSafeError(err, "Dashboard/SaveAsPdf");
+      await showError("Save PDF gagal", "Terjadi masalah saat membuat file PDF.");
+    } finally {
+      setPdfExportingReportId(null);
+    }
+  }
+
   async function handleUnsupportedMobilePrint() {
     await askAcknowledge(
       "Print belum didukung",
@@ -1542,7 +1566,7 @@ export function useReportDashboard() {
     view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
     activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
     excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
-    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, bulkExporting, editLoadingReportId,
+    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, bulkExporting, editLoadingReportId,
     savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
     historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
@@ -1559,7 +1583,7 @@ export function useReportDashboard() {
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleUnsupportedMobilePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,

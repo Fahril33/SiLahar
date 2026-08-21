@@ -6,6 +6,8 @@ import type { Report } from "../types/report";
 import type { PendingPhotoMap } from "./report-draft";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
+const PDF_IMAGE_MAX_EDGE_PX = 1080;
+const PDF_IMAGE_JPEG_QUALITY = 0.80;
 
 function sanitizeFileSegment(value: string) {
   return value
@@ -29,7 +31,7 @@ function buildPdfFileName(report: Report) {
   return `${buildDocumentTitle(report)}.pdf`;
 }
 
-function blobToDataUrl(blob: Blob) {
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ""));
@@ -38,8 +40,45 @@ function blobToDataUrl(blob: Blob) {
   });
 }
 
-function fileToDataUrl(file: File) {
-  return blobToDataUrl(file);
+async function compressImageBlobToDataUrl(blob: Blob): Promise<string> {
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(
+      1,
+      PDF_IMAGE_MAX_EDGE_PX / Math.max(bitmap.width, bitmap.height, 1),
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return await blobToDataUrl(blob);
+    }
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+
+    const jpegBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/jpeg", PDF_IMAGE_JPEG_QUALITY);
+    });
+
+    bitmap.close();
+
+    if (jpegBlob) {
+      return await blobToDataUrl(jpegBlob);
+    }
+    return await blobToDataUrl(blob);
+  } catch {
+    return await blobToDataUrl(blob);
+  }
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return compressImageBlobToDataUrl(file);
 }
 
 function renderReportMarkup(report: Report) {
@@ -195,7 +234,7 @@ async function materializeReportImages(
               throw new Error(`HTTP ${response.status}`);
             }
 
-            const dataUrl = await blobToDataUrl(await response.blob());
+            const dataUrl = await compressImageBlobToDataUrl(await response.blob());
             cache.set(source, dataUrl);
             return { ...photo, publicUrl: dataUrl };
           } catch {
@@ -234,7 +273,7 @@ function getPdfOptions(
   return {
     margin: [20, 0, 20, 0], // Hanya top dan bottom yang ditangani library agar lebar canvas asli 210mm tidak terdistorsi
     filename: buildPdfFileName(report),
-    image: { type: "jpeg", quality: 0.98 },
+    image: { type: "jpeg", quality: 0.85 },
     html2canvas: {
       scale: 2,
       useCORS: true,
@@ -302,14 +341,54 @@ async function buildPdfBlob(
 export async function exportReportAsPdf(
   report: Report,
   paperFormat: "a4" | "f4" | "legal" | "letter",
+  pendingPhotos?: PendingPhotoMap,
+  onStage?: (stageId: string, detail?: string) => void,
 ) {
-  const blob = await buildPdfBlob(report, paperFormat);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = buildPdfFileName(report);
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  onStage?.("images", "Mengompresi dan memproses foto dokumentasi...");
+  const pdfReadyReport = await materializeReportImages(report, pendingPhotos);
+
+  onStage?.("render", "Merender dokumen PDF di server...");
+  try {
+    const response = await fetch("/api/generate-pdf", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        report: pdfReadyReport,
+        paperFormat,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      throw new Error(`Server returned status ${response.status}: ${errText}`);
+    }
+
+    onStage?.("download", "Menyiapkan file unduhan...");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = buildPdfFileName(report);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  } catch (error) {
+    console.warn("Server-side PDF generation error, trying client-side fallback:", error);
+    onStage?.("render", "Membuat PDF via browser...");
+    const blob = await buildPdfBlob(pdfReadyReport, paperFormat);
+    onStage?.("download", "Menyiapkan file unduhan...");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = buildPdfFileName(report);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 }
 
 export async function printReportDocument(

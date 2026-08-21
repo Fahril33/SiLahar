@@ -42,8 +42,8 @@ export function ReportPdfDocument(props: { report: Report }) {
             {report.activities.map((activity) => (
               <tr key={activity.no}>
                 <td className="no-cell">{activity.no}</td>
-                <td className="detail-cell">{activity.description || "-"}</td>
-                <td>
+                <td className="detail-cell">{activity.description?.trim() || "-"}</td>
+                <td className="time-cell">
                   {activity.startTime} - {activity.endTime} WITA
                 </td>
                 <td className="proof-cell">
