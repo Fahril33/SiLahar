@@ -1,6 +1,8 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import type { Report } from "../types/report";
+import { getWitaToday, formatWitaDate } from "../lib/time";
+import { isSameReporterName, includesReporterName } from "../lib/reporter-name";
 
 type RekapViewProps = {
   reports: Report[];
@@ -160,39 +162,26 @@ function fmtDate(d: Date): string {
 /* ── Main Component ── */
 
 export function RekapView({ reports, reporterNames }: RekapViewProps) {
-  // ── Filter state ──
-  const nowWita = new Date(Date.now() + 8 * 60 * 60000);
-  const todayStr = fmtDate(nowWita);
+  // ── Filter state: Always anchor to official WITA today ──
+  const todayWita = getWitaToday();
+  const [currentYear, currentMonthNum] = todayWita.split("-").map(Number);
+  const currentMonth = currentMonthNum - 1;
 
   const [filterMode, setFilterMode] = useState<FilterMode>("harian");
   const [searchTerm, setSearchTerm] = useState("");
-  const [dailyDate, setDailyDate] = useState(todayStr);
-  const [monthlyMonth, setMonthlyMonth] = useState(nowWita.getMonth());
-  const [monthlyYear, setMonthlyYear] = useState(nowWita.getFullYear());
+  const [dailyDate, setDailyDate] = useState(todayWita);
+  const [monthlyMonth, setMonthlyMonth] = useState(currentMonth);
+  const [monthlyYear, setMonthlyYear] = useState(currentYear);
   const [monthlyWeek, setMonthlyWeek] = useState<number>(-1); // -1 = all weeks
-  const [yearlyYear, setYearlyYear] = useState(nowWita.getFullYear());
-  const [hasInitializedDate, setHasInitializedDate] = useState(false);
-
-  useEffect(() => {
-    if (reports.length > 0 && !hasInitializedDate) {
-      const sorted = [...reports].sort((a, b) => b.reportDate.localeCompare(a.reportDate));
-      const latestDate = sorted[0].reportDate;
-      setDailyDate(latestDate);
-      
-      const parts = latestDate.split("-");
-      if (parts.length === 3) {
-        setMonthlyMonth(parseInt(parts[1], 10) - 1);
-        setMonthlyYear(parseInt(parts[0], 10));
-        setYearlyYear(parseInt(parts[0], 10));
-      }
-      setHasInitializedDate(true);
-    }
-  }, [reports, hasInitializedDate]);
+  const [yearlyYear, setYearlyYear] = useState(currentYear);
 
   const handleAdjustDay = useCallback((amount: number) => {
     const parts = dailyDate.split("-");
     if (parts.length === 3) {
-      const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(year, month, day);
       d.setDate(d.getDate() + amount);
       setDailyDate(fmtDate(d));
     }
@@ -201,7 +190,13 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
   // ── Compute date range from filter ──
   const dateRange = useMemo(() => {
     if (filterMode === "harian") {
-      return { start: dailyDate, end: dailyDate, totalDays: 1, label: dailyDate };
+      const isToday = dailyDate === todayWita;
+      return { 
+        start: dailyDate, 
+        end: dailyDate, 
+        totalDays: 1, 
+        label: isToday ? `Hari Ini (${formatWitaDate(dailyDate)})` : formatWitaDate(dailyDate) 
+      };
     }
     if (filterMode === "bulanan") {
       const weeks = getWeeksInMonth(monthlyYear, monthlyMonth);
@@ -223,75 +218,130 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
     const last = new Date(yearlyYear, 11, 31);
     const days = Math.floor((last.getTime() - first.getTime()) / 86400000) + 1;
     return { start: fmtDate(first), end: fmtDate(last), totalDays: days, label: `Tahun ${yearlyYear}` };
-  }, [filterMode, dailyDate, monthlyMonth, monthlyYear, monthlyWeek, yearlyYear]);
+  }, [filterMode, dailyDate, monthlyMonth, monthlyYear, monthlyWeek, yearlyYear, todayWita]);
 
   const weeksForMonth = useMemo(() => getWeeksInMonth(monthlyYear, monthlyMonth), [monthlyYear, monthlyMonth]);
 
   // ── Stats computation ──
   const stats = useMemo(() => {
     // 1. Filter reports by dateRange
-    let filteredReports = reports.filter(r => r.reportDate >= dateRange.start && r.reportDate <= dateRange.end);
+    let filteredReports = reports.filter(
+      (r) => r.reportDate >= dateRange.start && r.reportDate <= dateRange.end,
+    );
 
     // 2. Filter reports by searchTerm
     if (searchTerm.trim() !== "") {
-      filteredReports = filteredReports.filter(r => r.nama.toLowerCase().includes(searchTerm.toLowerCase()));
+      filteredReports = filteredReports.filter((r) =>
+        includesReporterName(r.nama, searchTerm),
+      );
     }
 
     const totalReports = filteredReports.length;
 
     // Filter reporterNames by searchTerm
-    const filteredReporterNames = reporterNames.filter(name =>
-      name.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredReporterNames = reporterNames.filter((name) =>
+      searchTerm.trim() === "" ? true : includesReporterName(name, searchTerm),
     );
     const totalReporters = filteredReporterNames.length;
 
-    const tzOffset = 8 * 60;
-    const localTime = new Date(Date.now() + tzOffset * 60000);
-    const todayStrCalc = localTime.toISOString().split("T")[0];
+    // targetDateStr: in Harian mode use dailyDate, in Bulanan/Tahunan mode use todayWita
+    const targetDateStr = filterMode === "harian" ? dailyDate : todayWita;
+    const isTargetToday = targetDateStr === todayWita;
 
-    // targetDateStr: dailyDate for daily filter, today for monthly/yearly
-    const targetDateStr = filterMode === "harian" ? dailyDate : todayStrCalc;
-
-    // submittedToday filtered by name if searchTerm is active, matching targetDateStr
-    const submittedToday = reports.filter(r => 
-      r.reportDate === targetDateStr &&
-      (searchTerm.trim() === "" || r.nama.toLowerCase().includes(searchTerm.toLowerCase()))
+    // Submitted reports on target date for active reporters
+    const submittedOnTargetDate = reports.filter(
+      (r) =>
+        r.reportDate === targetDateStr &&
+        (searchTerm.trim() === "" || includesReporterName(r.nama, searchTerm)) &&
+        filteredReporterNames.some((name) => isSameReporterName(r.nama, name)),
     );
 
-    const complianceRate = totalReporters > 0
-      ? Math.round((submittedToday.length / totalReporters) * 100)
-      : 0;
+    // Unique count of submitting reporters
+    const uniqueSubmittingNames = new Set(
+      submittedOnTargetDate.map((r) => {
+        const match = filteredReporterNames.find((name) =>
+          isSameReporterName(r.nama, name),
+        );
+        return match || r.nama;
+      }),
+    );
 
-    const notSubmittedCount = Math.max(0, totalReporters - submittedToday.length);
+    const submittedCount = uniqueSubmittingNames.size;
+    const notSubmittedCount = Math.max(0, totalReporters - submittedCount);
 
-    const totalActivities = filteredReports.reduce((acc, curr) => acc + curr.activities.length, 0);
-    const trcCount = filteredReports.filter(r => r.tim === "TRC").length;
-    const pusdalopsCount = filteredReports.filter(r => r.tim === "PUSDALOPS").length;
+    const complianceRate =
+      totalReporters > 0 ? Math.round((submittedCount / totalReporters) * 100) : 0;
 
-    const sortedReports = [...reports].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    const totalActivities = filteredReports.reduce(
+      (acc, curr) => acc + (curr.activities?.length || 0),
+      0,
+    );
+    const trcCount = filteredReports.filter((r) => r.tim === "TRC").length;
+    const pusdalopsCount = filteredReports.filter((r) => r.tim === "PUSDALOPS").length;
+
+    const sortedReports = [...reports].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
     const latestActivities = sortedReports
-      .flatMap(r => r.activities.map(act => ({
-        reporterName: r.nama, tim: r.tim, tanggal: r.tanggal, updatedAt: r.updatedAt,
-        activityNo: act.no, description: act.description, startTime: act.startTime, endTime: act.endTime,
-      })))
+      .flatMap((r) =>
+        (r.activities || []).map((act) => ({
+          reporterName: r.nama,
+          tim: r.tim,
+          tanggal: r.tanggal,
+          updatedAt: r.updatedAt,
+          activityNo: act.no,
+          description: act.description,
+          startTime: act.startTime,
+          endTime: act.endTime,
+        })),
+      )
       .slice(0, 5);
 
     // Member stats filtered by dateRange & searchTerm
-    const memberStats = filteredReporterNames.map(name => {
-      const memberReports = filteredReports.filter(r => r.nama === name);
-      const uniqueDays = new Set(memberReports.map(r => r.reportDate)).size;
-      const memberActivities = memberReports.reduce((acc, r) => acc + r.activities.length, 0);
-      const pct = dateRange.totalDays > 0 ? Math.min(100, Math.round((uniqueDays / dateRange.totalDays) * 100)) : 0;
+    const memberStats = filteredReporterNames
+      .map((name) => {
+        const memberReports = filteredReports.filter((r) =>
+          isSameReporterName(r.nama, name),
+        );
+        const uniqueDays = new Set(memberReports.map((r) => r.reportDate)).size;
+        const memberActivities = memberReports.reduce(
+          (acc, r) => acc + (r.activities?.length || 0),
+          0,
+        );
+        const pct =
+          dateRange.totalDays > 0
+            ? Math.min(100, Math.round((uniqueDays / dateRange.totalDays) * 100))
+            : 0;
 
-      return { name, totalReports: memberReports.length, percentage: pct, totalActivities: memberActivities };
-    }).sort((a, b) => b.totalReports - a.totalReports);
+        return {
+          name,
+          totalReports: memberReports.length,
+          percentage: pct,
+          totalActivities: memberActivities,
+        };
+      })
+      .sort((a, b) => {
+        if (b.totalReports !== a.totalReports) {
+          return b.totalReports - a.totalReports;
+        }
+        return a.name.localeCompare(b.name);
+      });
 
     return {
-      totalReports, totalReporters, submittedTodayCount: submittedToday.length,
-      notSubmittedCount, complianceRate, totalActivities, trcCount, pusdalopsCount,
-      latestActivities, memberStats,
+      totalReports,
+      totalReporters,
+      submittedTodayCount: submittedCount,
+      notSubmittedCount,
+      complianceRate,
+      totalActivities,
+      trcCount,
+      pusdalopsCount,
+      latestActivities,
+      memberStats,
+      targetDateStr,
+      isTargetToday,
     };
-  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate]);
+  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate, todayWita]);
 
   const totalCount = stats.trcCount + stats.pusdalopsCount;
   const hasData = totalCount > 0;
@@ -313,10 +363,41 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       ];
 
   const metricItems = [
-    { label: "Petugas", value: stats.totalReporters, icon: <UsersIcon />, color: "text-purple-500", bg: "bg-purple-500/10" },
-    { label: "Total Laporan", value: stats.totalReports, icon: <FileTextIcon />, color: "text-[var(--info)]", bg: "bg-[var(--info-soft)]" },
-    { label: "Terisi", value: `${stats.complianceRate}%`, sub: `${stats.submittedTodayCount}/${stats.totalReporters}`, icon: <ShieldCheckIcon />, color: "text-[var(--success)]", bg: "bg-[var(--success-soft)]" },
-    { label: "Aktivitas", value: stats.totalActivities, icon: <ZapIcon />, color: "text-amber-500", bg: "bg-amber-500/10" },
+    {
+      label: "Petugas",
+      value: stats.totalReporters,
+      icon: <UsersIcon />,
+      color: "text-purple-500",
+      bg: "bg-purple-500/10",
+    },
+    {
+      label: "Total Laporan",
+      value: stats.totalReports,
+      icon: <FileTextIcon />,
+      color: "text-[var(--info)]",
+      bg: "bg-[var(--info-soft)]",
+    },
+    {
+      label: "Terisi",
+      value: `${stats.complianceRate}%`,
+      sub: `${stats.submittedTodayCount}/${stats.totalReporters} ${
+        filterMode === "harian"
+          ? stats.isTargetToday
+            ? "petugas hari ini"
+            : "petugas terisi"
+          : "petugas hari ini"
+      }`,
+      icon: <ShieldCheckIcon />,
+      color: "text-[var(--success)]",
+      bg: "bg-[var(--success-soft)]",
+    },
+    {
+      label: "Aktivitas",
+      value: stats.totalActivities,
+      icon: <ZapIcon />,
+      color: "text-amber-500",
+      bg: "bg-amber-500/10",
+    },
   ];
 
   const filterModes: { key: FilterMode; label: string }[] = [
@@ -326,7 +407,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
   ];
 
   // Year range for selectors
-  const years = Array.from({ length: 5 }, (_, i) => nowWita.getFullYear() - 2 + i);
+  const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
   return (
     <section className="space-y-5 animate-fadeIn">
@@ -457,7 +538,13 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                 marginTop: filterMode === "harian" ? "8px" : "0px",
               }}
             >
-              <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Kepatuhan Hari Ini</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                {filterMode === "harian"
+                  ? stats.isTargetToday
+                    ? "Kepatuhan Hari Ini"
+                    : `Kepatuhan (${dailyDate})`
+                  : "Kepatuhan Hari Ini"}
+              </span>
               {[
                 { label: "Sudah Mengisi", count: stats.submittedTodayCount, pct: stats.complianceRate, color: "bg-[var(--success)]" },
                 { label: "Belum Mengisi", count: stats.notSubmittedCount, pct: 100 - stats.complianceRate, color: "bg-[var(--danger)]" },
@@ -536,6 +623,16 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                   <button type="button" onClick={() => handleAdjustDay(1)} className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0" title="Hari Berikutnya">
                     <ChevronRightIcon className="h-3.5 w-3.5" />
                   </button>
+                  {dailyDate !== todayWita && (
+                    <button
+                      type="button"
+                      onClick={() => setDailyDate(todayWita)}
+                      className="text-[10px] font-bold text-[var(--primary)] hover:underline ml-1 px-1.5 py-0.5 rounded bg-[var(--primary)]/10 shrink-0"
+                      title="Kembali ke Hari Ini"
+                    >
+                      Hari ini
+                    </button>
+                  )}
                 </div>
               )}
 
