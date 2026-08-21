@@ -366,7 +366,7 @@ export function useReportDashboard() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [savedLocalDrafts, setSavedLocalDrafts] = useState<LocalReportDraftSummary[]>([]);
   const [localDraftsLoading, setLocalDraftsLoading] = useState(true);
-  const [showDraftsInHistory, setShowDraftsInHistory] = useState(false);
+  const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [activeLocalDraftId, setActiveLocalDraftId] = useState<string | null>(null);
   const [loadedLocalDraftId, setLoadedLocalDraftId] = useState<string | null>(null);
 
@@ -1120,8 +1120,7 @@ export function useReportDashboard() {
   }
 
   function openSavedDraftHistory() {
-    setShowDraftsInHistory(true);
-    setView("history");
+    setShowDraftsModal(true);
   }
 
   function resetDraftState() {
@@ -1578,7 +1577,7 @@ export function useReportDashboard() {
     duplicateReport, activityTimeIssues, activityCompletionStates, preview, historyResults,
     historyLocalDrafts, searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,
     hasDraftContent, draftSavedAt, draftCacheStatus, searchOpen, setSearchOpen,
-    savedLocalDrafts, localDraftsLoading, showDraftsInHistory, setShowDraftsInHistory,
+    savedLocalDrafts, localDraftsLoading, showDraftsModal, setShowDraftsModal,
     localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,

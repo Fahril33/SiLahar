@@ -2,7 +2,81 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
 import type { Report } from "../types/report";
+import type { LocalReportDraftSummary } from "../types/local-draft";
+import { LocalDraftsModal } from "./local-drafts-modal";
 
+function TrashIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+    </svg>
+  );
+}
+
+function UploadIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+
+function FileTextIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </svg>
+  );
+}
+
+function XIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
 
 function ReloadIcon() {
   return (
@@ -221,6 +295,12 @@ export function HistoryView(props: {
     done: boolean;
     report: Report | null;
   }>;
+  savedLocalDrafts?: LocalReportDraftSummary[];
+  activeLocalDraftId?: string | null;
+  onHandleLoadLocalDraft?: (draftId: string) => Promise<void>;
+  onHandleDeleteLocalDraft?: (draftId: string) => Promise<void>;
+  onHandleQueueLocalDraftUpload?: (draftId: string) => Promise<void>;
+  onOpenSavedDrafts?: () => void;
 }) {
   const {
     loading,
@@ -238,12 +318,20 @@ export function HistoryView(props: {
     canUseAnyReportDate,
     onReload,
     statusRows,
+    savedLocalDrafts = [],
+    activeLocalDraftId,
+    onHandleLoadLocalDraft,
+    onHandleDeleteLocalDraft,
+    onHandleQueueLocalDraftUpload,
+    onOpenSavedDrafts,
   } = props;
   const [openPrintMenuId, setOpenPrintMenuId] = useState<string | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
 
+  const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [statusSearchQuery, setStatusSearchQuery] = useState("");
+  const [draftSearchQuery, setDraftSearchQuery] = useState("");
   const [expandedCardNames, setExpandedCardNames] = useState<Record<string, boolean>>({});
   const [showSearchCapsule, setShowSearchCapsule] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -253,6 +341,31 @@ export function HistoryView(props: {
       searchInputRef.current.focus();
     }
   }, [showSearchCapsule]);
+
+  useEffect(() => {
+    if (!showDraftsModal) return;
+
+    const originalBodyOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    
+    // Prevent background scrolling when modal is open
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowDraftsModal(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalBodyOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showDraftsModal]);
 
   const toggleExpand = (name: string) => {
     setExpandedCardNames((prev) => ({
@@ -302,6 +415,18 @@ export function HistoryView(props: {
     });
   }, [statusRows, statusSearchQuery]);
 
+  const filteredDrafts = useMemo(() => {
+    if (!draftSearchQuery.trim()) return savedLocalDrafts;
+    const query = draftSearchQuery.toLowerCase();
+    return savedLocalDrafts.filter(
+      (d) =>
+        d.title.toLowerCase().includes(query) ||
+        d.reporterName.toLowerCase().includes(query) ||
+        d.reportDate.toLowerCase().includes(query) ||
+        d.displayDate.toLowerCase().includes(query),
+    );
+  }, [draftSearchQuery, savedLocalDrafts]);
+
   useEffect(() => {
     if (!openPrintMenuId) {
       return;
@@ -330,42 +455,135 @@ export function HistoryView(props: {
 
   return (
     <section className="space-y-4 animate-fadeIn">
-      {/* Desktop & Tablet Filter Panels */}
-      <div className="hidden md:block w-full animate-fadeIn">
-        <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
-          {/* Top Row: Stats Capsule & Search/Date Pill */}
-          <div className="flex md:flex-row md:items-center md:justify-between gap-4">
-            {/* Stats Capsule */}
-            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
+          {/* Desktop & Tablet Filter Panels */}
+          <div className="hidden md:block w-full animate-fadeIn">
+            <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
+              {/* Top Row: Stats Capsule & Search/Date Pill */}
+              <div className="flex md:flex-row md:items-center md:justify-between gap-4">
+                {/* Stats Capsule */}
+                <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
+                  <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
+                  <span className="mx-3 text-[var(--border-soft)]">|</span>
+                  <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
+                  <span className="mx-3 text-[var(--border-soft)]">|</span>
+                  <span>Total {submissionStats.total}</span>
+                </div>
+
+                {/* Unified Search Pill */}
+                <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
+                  {/* Desktop Inline Search */}
+                  <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
+                    <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                    <input
+                      type="text"
+                      value={statusSearchQuery}
+                      onChange={(e) => setStatusSearchQuery(e.target.value)}
+                      placeholder="Cari petugas..."
+                      className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-[120px] focus:ring-0 p-0"
+                    />
+                  </div>
+
+                  {/* Desktop-only Divider */}
+                  <span className="hidden lg:block h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+                  {/* Tablet-only Search Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowSearchCapsule((prev) => !prev)}
+                    className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+                      showSearchCapsule 
+                        ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
+                        : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                    title="Cari Petugas"
+                  >
+                    <SearchIcon className="h-4 w-4" />
+                  </button>
+
+                  {/* Tablet-only Divider */}
+                  <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+                  {/* Date Picker with Prev/Next Day buttons */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustDay(-1)}
+                      className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                      title="Hari Sebelumnya"
+                    >
+                      <ChevronLeftIcon className="h-3.5 w-3.5" />
+                    </button>
+
+                    <div className="flex items-center gap-1.5 px-0.5">
+                      <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                      <input
+                        type="date"
+                        value={historyDate}
+                        onChange={(e) => setHistoryDate(e.target.value)}
+                        className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAdjustDay(1)}
+                      className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                      title="Hari Berikutnya"
+                    >
+                      <ChevronRightIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Vertical Divider */}
+                  <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+                  {/* Reload Button */}
+                  <button
+                    type="button"
+                    onClick={() => void onReload()}
+                    disabled={loading}
+                    className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
+                    title="Muat ulang data"
+                  >
+                    {loading ? <SpinnerIcon /> : <ReloadIcon />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Tablet Collapsible Search Capsule */}
+              {showSearchCapsule && (
+                <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+                  <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={statusSearchQuery}
+                    onChange={(e) => setStatusSearchQuery(e.target.value)}
+                    placeholder="Cari petugas..."
+                    className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Mobile Filter Panel */}
+          <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
+            {/* Row 1: Stats Capsule */}
+            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
               <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
-              <span className="mx-3 text-[var(--border-soft)]">|</span>
+              <span className="mx-2.5 text-[var(--border-soft)]">|</span>
               <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
-              <span className="mx-3 text-[var(--border-soft)]">|</span>
+              <span className="mx-2.5 text-[var(--border-soft)]">|</span>
               <span>Total {submissionStats.total}</span>
             </div>
 
-            {/* Unified Search Pill */}
-            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
-              {/* Desktop Inline Search (Visible on large screens lg and above) */}
-              <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
-                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-                <input
-                  type="text"
-                  value={statusSearchQuery}
-                  onChange={(e) => setStatusSearchQuery(e.target.value)}
-                  placeholder="Cari petugas..."
-                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-[120px] focus:ring-0 p-0"
-                />
-              </div>
-
-              {/* Desktop-only Divider */}
-              <span className="hidden lg:block h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-              {/* Tablet-only Search Toggle Button (Visible only on md screens, hidden on lg screens) */}
+            {/* Row 2: Date Picker & Reload Capsule */}
+            <div className="flex items-center justify-between h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm w-full">
               <button
                 type="button"
                 onClick={() => setShowSearchCapsule((prev) => !prev)}
-                className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+                className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
                   showSearchCapsule 
                     ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
                     : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
@@ -375,12 +593,9 @@ export function HistoryView(props: {
                 <SearchIcon className="h-4 w-4" />
               </button>
 
-              {/* Tablet-only Divider */}
-              <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+              <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
 
-              {/* Date Picker with Prev/Next Day buttons */}
               <div className="flex items-center gap-1 shrink-0">
-                {/* Decrement Day */}
                 <button
                   type="button"
                   onClick={() => handleAdjustDay(-1)}
@@ -400,7 +615,6 @@ export function HistoryView(props: {
                   />
                 </div>
 
-                {/* Increment Day */}
                 <button
                   type="button"
                   onClick={() => handleAdjustDay(1)}
@@ -411,10 +625,8 @@ export function HistoryView(props: {
                 </button>
               </div>
 
-              {/* Vertical Divider */}
               <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
 
-              {/* Reload Button */}
               <button
                 type="button"
                 onClick={() => void onReload()}
@@ -425,351 +637,290 @@ export function HistoryView(props: {
                 {loading ? <SpinnerIcon /> : <ReloadIcon />}
               </button>
             </div>
+
+            {/* Row 3: Mobile Search Capsule */}
+            {showSearchCapsule && (
+              <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={statusSearchQuery}
+                  onChange={(e) => setStatusSearchQuery(e.target.value)}
+                  placeholder="Cari petugas..."
+                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+                />
+              </div>
+            )}
           </div>
 
-          {/* Tablet Collapsible Search Capsule (rendered INSIDE the panel-glass container, filling width below) */}
-          {showSearchCapsule && (
-            <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={statusSearchQuery}
-                onChange={(e) => setStatusSearchQuery(e.target.value)}
-                placeholder="Cari petugas..."
-                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
-
-      {/* Mobile Filter Panel */}
-      <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
-        {/* Row 1: Stats Capsule */}
-        <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
-          <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
-          <span className="mx-2.5 text-[var(--border-soft)]">|</span>
-          <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
-          <span className="mx-2.5 text-[var(--border-soft)]">|</span>
-          <span>Total {submissionStats.total}</span>
-        </div>
-
-        {/* Row 2: Date Picker & Reload Capsule */}
-        <div className="flex items-center justify-between h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm w-full">
-          {/* Search Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setShowSearchCapsule((prev) => !prev)}
-            className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
-              showSearchCapsule 
-                ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
-                : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-            }`}
-            title="Cari Petugas"
-          >
-            <SearchIcon className="h-4 w-4" />
-          </button>
-
-          {/* Vertical Divider */}
-          <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-          {/* Date Selector with Prev/Next buttons */}
-          <div className="flex items-center gap-1 shrink-0">
-            {/* Decrement Day */}
-            <button
-              type="button"
-              onClick={() => handleAdjustDay(-1)}
-              className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-              title="Hari Sebelumnya"
-            >
-              <ChevronLeftIcon className="h-3.5 w-3.5" />
-            </button>
-
-            <div className="flex items-center gap-1.5 px-0.5">
-              <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                type="date"
-                value={historyDate}
-                onChange={(e) => setHistoryDate(e.target.value)}
-                className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
-              />
-            </div>
-
-            {/* Increment Day */}
-            <button
-              type="button"
-              onClick={() => handleAdjustDay(1)}
-              className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-              title="Hari Berikutnya"
-            >
-              <ChevronRightIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          {/* Vertical Divider */}
-          <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-          {/* Reload Button */}
-          <button
-            type="button"
-            onClick={() => void onReload()}
-            disabled={loading}
-            className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
-            title="Muat ulang data"
-          >
-            {loading ? <SpinnerIcon /> : <ReloadIcon />}
-          </button>
-        </div>
-
-        {/* Row 3: Collapsible Search Capsule (rendered below the filter capsule) */}
-        {showSearchCapsule && (
-          <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-            <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={statusSearchQuery}
-              onChange={(e) => setStatusSearchQuery(e.target.value)}
-              placeholder="Cari petugas..."
-              className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Submission Status List Grid */}
-      <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
-        {filteredStatusRows.map((row) => {
-          const isExpanded = expandedCardNames[row.name] || false;
-          return (
-            <div 
-              key={row.name} 
-              onClick={() => row.done && toggleExpand(row.name)}
-              className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all ${
-                row.done ? "cursor-pointer hover:bg-[var(--surface-muted)]/30" : ""
-              }`}
-            >
-              <div>
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
-                      row.done 
-                        ? "bg-emerald-500/10 text-emerald-500" 
-                        : "bg-red-500/10 text-red-500"
-                    }`}>
-                      {row.name.substring(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-[var(--text-primary)] truncate text-sm">{row.name}</p>
-                      {row.done && row.report ? (
-                        <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
-                          {row.report.activities.length} Aktivitas • {row.report.updatedAt !== row.report.createdAt 
-                            ? `Diperbarui ${formatWitaDateTime(row.report.updatedAt)}`
-                            : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`
-                          }
-                        </p>
-                      ) : (
-                        <p className="text-xs text-[var(--text-muted)] mt-0.5 font-semibold">
-                          Belum ada aktivitas
-                        </p>
-                      )}
-                    </div>
+          {/* Submission Status List Grid */}
+          <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
+            {savedLocalDrafts.length > 0 && (
+              <div className="surface-card rounded-[20px] p-3.5 border border-amber-500/30 bg-amber-500/5 shadow-sm flex items-center justify-between gap-3 text-xs mb-1">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="h-8 w-8 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                    <FileTextIcon className="h-4 w-4" />
                   </div>
-                  
-                  {/* Right side container: only contains 'Belum isi' status pill OR the actions (raised for md+) */}
-                  <div className="flex items-center gap-3 shrink-0">
-                    {!row.done && (
-                      <span className="status-pill status-pill-danger shrink-0 hidden md:inline-block">
-                        Belum isi
-                      </span>
-                    )}
-
-                    {row.done && row.report && (
-                      <div 
-                        className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)]/60 gap-2" 
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {/* Edit Button */}
-                        {(row.report.reportDate === today || canUseAnyReportDate) && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void onHandleLoadEdit(row.report!);
-                            }}
-                            disabled={editLoadingReportId === row.report.id}
-                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                            title="Edit Laporan"
-                          >
-                            {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
-                            <span>Edit</span>
-                          </button>
+                  <div className="min-w-0">
+                    <p className="font-bold text-[var(--text-primary)] truncate">
+                      Ada {savedLocalDrafts.length} draft tersimpan di perangkat ini
+                    </p>
+                    <p className="text-[10px] text-[var(--text-muted)] truncate">
+                      Draft lokal dapat dilanjutkan atau diunggah kembali kapan saja
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => (onOpenSavedDrafts ? onOpenSavedDrafts() : setShowDraftsModal(true))}
+                  className="btn-secondary text-xs px-3 py-1.5 shrink-0 hover:border-amber-500/40"
+                >
+                  Lihat Draft
+                </button>
+              </div>
+            )}
+            {filteredStatusRows.map((row) => {
+              const isExpanded = expandedCardNames[row.name] || false;
+              return (
+                <div 
+                  key={row.name} 
+                  onClick={() => row.done && toggleExpand(row.name)}
+                  className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all ${
+                    row.done ? "cursor-pointer hover:bg-[var(--surface-muted)]/30" : ""
+                  }`}
+                >
+                  <div>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                          row.done 
+                            ? "bg-emerald-500/10 text-emerald-500" 
+                            : "bg-red-500/10 text-red-500"
+                        }`}>
+                          {row.name.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-[var(--text-primary)] truncate text-sm">{row.name}</p>
+                          {row.done && row.report ? (
+                            <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
+                              {row.report.activities.length} Aktivitas • {row.report.updatedAt !== row.report.createdAt 
+                                ? `Diperbarui ${formatWitaDateTime(row.report.updatedAt)}`
+                                : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`
+                              }
+                            </p>
+                          ) : (
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5 font-semibold">
+                              Belum ada aktivitas
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Right side container */}
+                      <div className="flex items-center gap-3 shrink-0">
+                        {!row.done && (
+                          <span className="status-pill status-pill-danger shrink-0 hidden md:inline-block">
+                            Belum isi
+                          </span>
                         )}
 
-                        {/* Excel Export */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void onHandleExport(row.report!);
-                          }}
-                          disabled={excelExportingReportId === row.report.id}
-                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                          title="Download Excel"
-                        >
-                          {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
-                          <span>Excel</span>
-                        </button>
+                        {row.done && row.report && (
+                          <div 
+                            className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)]/60 gap-2" 
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* Edit Button */}
+                            {(row.report.reportDate === today || canUseAnyReportDate) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onHandleLoadEdit(row.report!);
+                                }}
+                                disabled={editLoadingReportId === row.report.id}
+                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                title="Edit Laporan"
+                              >
+                                {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                                <span>Edit</span>
+                              </button>
+                            )}
 
-                        {/* Print PDF Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isMobileOrTablet) {
-                              void onHandleUnsupportedMobilePrint();
-                            } else {
-                              void onHandlePrint(row.report!, "a4");
-                            }
-                          }}
-                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                          title="Cetak PDF"
-                        >
-                          <PrintIcon className="h-3.5 w-3.5" />
-                          <span>Print</span>
-                        </button>
+                            {/* Excel Export */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onHandleExport(row.report!);
+                              }}
+                              disabled={excelExportingReportId === row.report.id}
+                              className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                              title="Download Excel"
+                            >
+                              {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                              <span>Excel</span>
+                            </button>
 
-                        {/* Save as PDF Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void onHandleSaveAsPdf(row.report!);
-                          }}
-                          disabled={pdfExportingReportId === row.report.id}
-                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                          title="Save PDF"
-                        >
-                          {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
-                          <span>PDF</span>
-                        </button>
+                            {/* Print PDF Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isMobileOrTablet) {
+                                  void onHandleUnsupportedMobilePrint();
+                                } else {
+                                  void onHandlePrint(row.report!, "a4");
+                                }
+                              }}
+                              className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                              title="Cetak PDF"
+                            >
+                              <PrintIcon className="h-3.5 w-3.5" />
+                              <span>Print</span>
+                            </button>
+
+                            {/* Save as PDF Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onHandleSaveAsPdf(row.report!);
+                              }}
+                              disabled={pdfExportingReportId === row.report.id}
+                              className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                              title="Save PDF"
+                            >
+                              {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                              <span>PDF</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Collapsible Activity List */}
+                    {row.done && row.report && (
+                      <div 
+                        className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]/50"
+                        style={{
+                          maxHeight: isExpanded ? "1000px" : "0px",
+                          opacity: isExpanded ? 1 : 0,
+                          marginTop: isExpanded ? "8px" : "0px",
+                          paddingTop: isExpanded ? "4px" : "0px",
+                          borderTopColor: isExpanded ? "var(--border-soft)" : "transparent",
+                          borderTopWidth: isExpanded ? "1px" : "0px"
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ul className="divide-y divide-[var(--border-soft)]/30 text-xs text-[var(--text-primary)]">
+                          {row.report.activities.map((activity) => (
+                            <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
+                              <div className="font-semibold text-[var(--text-primary)]">{activity.no}. {activity.description}</div>
+                              <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
+                                <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                                <span>{activity.startTime} - {activity.endTime} WITA</span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>
-                </div>
 
-                {/* Collapsible Activity List */}
-                {row.done && row.report && (
-                  <div 
-                    className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]/50"
-                    style={{
-                      maxHeight: isExpanded ? "1000px" : "0px",
-                      opacity: isExpanded ? 1 : 0,
-                      marginTop: isExpanded ? "8px" : "0px",
-                      paddingTop: isExpanded ? "4px" : "0px",
-                      borderTopColor: isExpanded ? "var(--border-soft)" : "transparent",
-                      borderTopWidth: isExpanded ? "1px" : "0px"
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <ul className="divide-y divide-[var(--border-soft)]/30 text-xs text-[var(--text-primary)]">
-                      {row.report.activities.map((activity) => (
-                        <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
-                          <div className="font-semibold text-[var(--text-primary)]">{activity.no}. {activity.description}</div>
-                          <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
-                            <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
-                            <span>{activity.startTime} - {activity.endTime} WITA</span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-
-              {/* Mobile Actions Row */}
-              {row.done && row.report ? (
-                <div 
-                  className="md:hidden border-t border-[var(--border-soft)]/60 mt-2 pt-3 flex items-center justify-end gap-2"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {/* Edit Button */}
-                  {(row.report.reportDate === today || canUseAnyReportDate) && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onHandleLoadEdit(row.report!);
-                      }}
-                      disabled={editLoadingReportId === row.report.id}
-                      className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                      title="Edit Laporan"
+                  {/* Mobile Actions Row */}
+                  {row.done && row.report ? (
+                    <div 
+                      className="md:hidden border-t border-[var(--border-soft)]/60 mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
-                      <span>Edit</span>
-                    </button>
-                  )}
+                      {/* Edit Button */}
+                      {(row.report.reportDate === today || canUseAnyReportDate) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onHandleLoadEdit(row.report!);
+                          }}
+                          disabled={editLoadingReportId === row.report.id}
+                          className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                          title="Edit Laporan"
+                        >
+                          {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                          <span>Edit</span>
+                        </button>
+                      )}
 
-                  {/* Excel Export */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onHandleExport(row.report!);
-                    }}
-                    disabled={excelExportingReportId === row.report.id}
-                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                    title="Download Excel"
-                  >
-                    {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
-                    <span>Excel</span>
-                  </button>
+                      {/* Excel Export */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onHandleExport(row.report!);
+                        }}
+                        disabled={excelExportingReportId === row.report.id}
+                        className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                        title="Download Excel"
+                      >
+                        {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                        <span>Excel</span>
+                      </button>
 
-                  {/* Print PDF Button */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isMobileOrTablet) {
-                        void onHandleUnsupportedMobilePrint();
-                      } else {
-                        void onHandlePrint(row.report!, "a4");
-                      }
-                    }}
-                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                    title="Cetak PDF"
-                  >
-                    <PrintIcon className="h-3.5 w-3.5" />
-                    <span>Print</span>
-                  </button>
+                      {/* Print PDF Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isMobileOrTablet) {
+                            void onHandleUnsupportedMobilePrint();
+                          } else {
+                            void onHandlePrint(row.report!, "a4");
+                          }
+                        }}
+                        className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                        title="Cetak PDF"
+                      >
+                        <PrintIcon className="h-3.5 w-3.5" />
+                        <span>Print</span>
+                      </button>
 
-                  {/* Save as PDF Button */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onHandleSaveAsPdf(row.report!);
-                    }}
-                    disabled={pdfExportingReportId === row.report.id}
-                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                    title="Save PDF"
-                  >
-                    {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
-                    <span>PDF</span>
-                  </button>
+                      {/* Save as PDF Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onHandleSaveAsPdf(row.report!);
+                        }}
+                        disabled={pdfExportingReportId === row.report.id}
+                        className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                        title="Save PDF"
+                      >
+                        {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                        <span>PDF</span>
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+            {filteredStatusRows.length === 0 && (
+              <div className="surface-card rounded-[28px] p-16 text-center text-[var(--text-muted)]">
+                <p className="text-lg">Tidak ada petugas yang cocok dengan pencarian.</p>
+              </div>
+            )}
+          </div>
 
-      {filteredStatusRows.length === 0 && (
-        <div className="surface-card rounded-[28px] p-16 text-center text-[var(--text-muted)]">
-          <p className="text-lg">Tidak ada petugas yang cocok dengan pencarian.</p>
-        </div>
+      {/* Drafts Modal Fallback */}
+      {!onOpenSavedDrafts && (
+        <LocalDraftsModal
+          isOpen={showDraftsModal}
+          onClose={() => setShowDraftsModal(false)}
+          savedLocalDrafts={savedLocalDrafts}
+          activeLocalDraftId={activeLocalDraftId}
+          onHandleLoadLocalDraft={onHandleLoadLocalDraft}
+          onHandleDeleteLocalDraft={onHandleDeleteLocalDraft}
+          onHandleQueueLocalDraftUpload={onHandleQueueLocalDraftUpload}
+        />
       )}
     </section>
   );

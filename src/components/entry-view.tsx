@@ -1653,7 +1653,7 @@ export function EntryView(props: EntryViewProps) {
                   <div className="flex items-center gap-1.5 sm:gap-2">
                     <div
                       ref={paperMenuRef}
-                      className="relative flex items-stretch"
+                      className="relative hidden items-stretch lg:flex"
                     >
                       <button
                         type="button"
@@ -1758,7 +1758,7 @@ export function EntryView(props: EntryViewProps) {
                       ) : (
                         <>
                           <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                          <span className="hidden whitespace-nowrap sm:inline">
+                          <span className="whitespace-nowrap inline">
                             Simpan
                           </span>
                         </>

@@ -4,6 +4,7 @@ import { AppTabs } from "./components/app-tabs";
 import { EntryView } from "./components/entry-view";
 import { HistoryView } from "./components/history-view";
 import { RekapView } from "./components/rekap-view";
+import { LocalDraftsModal } from "./components/local-drafts-modal";
 import { ConnectivityBanner } from "./components/connectivity-banner";
 import { useConnectivity } from "./hooks/useConnectivity";
 import { useReportDashboard } from "./hooks/use-report-dashboard";
@@ -443,6 +444,12 @@ export default function App() {
             canUseAnyReportDate={dashboard.canUseAnyReportDate}
             onReload={dashboard.handleReloadDashboardData}
             statusRows={dashboard.statusRows}
+            savedLocalDrafts={dashboard.savedLocalDrafts}
+            activeLocalDraftId={dashboard.activeLocalDraftId}
+            onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
+            onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
+            onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
+            onOpenSavedDrafts={() => dashboard.setShowDraftsModal(true)}
           />
         ) : null}
 
@@ -522,6 +529,17 @@ export default function App() {
             isOnline={isOnline}
           />
         ) : null}
+
+        {/* Global Local Drafts Modal */}
+        <LocalDraftsModal
+          isOpen={dashboard.showDraftsModal}
+          onClose={() => dashboard.setShowDraftsModal(false)}
+          savedLocalDrafts={dashboard.savedLocalDrafts}
+          activeLocalDraftId={dashboard.activeLocalDraftId}
+          onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
+          onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
+          onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
+        />
       </div>
     </div>
   );

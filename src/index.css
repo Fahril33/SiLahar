@@ -228,6 +228,10 @@ select:focus {
   }
 }
 
+.swal2-container {
+  z-index: 100000 !important;
+}
+
 .swal2-popup.swal-modern-popup,
 .swal2-popup.swal-modern-toast {
   background: var(--surface-panel-strong) !important;
