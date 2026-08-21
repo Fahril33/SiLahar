@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
+import { getHolidayInfo } from "../lib/holidays";
 import type { ReportRules } from "../types/report-rules";
 import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { DraftReport, Report } from "../types/report";
@@ -451,9 +451,28 @@ function SmileIcon(props: { className?: string }) {
       className={props.className || "h-4 w-4"}
     >
       <circle cx="12" cy="12" r="10" />
-      <path d="M8 13.5a4 4 0 0 0 8 0" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
       <line x1="9" y1="9" x2="9.01" y2="9" />
       <line x1="15" y1="9" x2="15.01" y2="9" />
+    </svg>
+  );
+}
+
+function CalendarIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
     </svg>
   );
 }
@@ -565,8 +584,6 @@ export function EntryView(props: EntryViewProps) {
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   const [paperMenuOpen, setPaperMenuOpen] = useState(false);
   const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false);
-  const [patchNotesOpen, setPatchNotesOpen] = useState(false);
-  const [patchNotesContent, setPatchNotesContent] = useState("");
   const [renameOverwriteWarningDismissedKey, setRenameOverwriteWarningDismissedKey] =
     useState<string | null>(null);
   const [draftPreviewSettings, setDraftPreviewSettings] = useState(
@@ -579,9 +596,20 @@ export function EntryView(props: EntryViewProps) {
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   const paperMenuRef = useRef<HTMLDivElement | null>(null);
   const previewSettingsRef = useRef<HTMLDivElement | null>(null);
-  const patchNotesButtonRef = useRef<HTMLButtonElement | null>(null);
-  const patchNotesRef = useRef<HTMLDivElement | null>(null);
+
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
+  const [bypassHolidayBlock, setBypassHolidayBlock] = useState(false);
+
+  useEffect(() => {
+    setBypassHolidayBlock(false);
+  }, [props.draft.reportDate]);
+
+  const holidayInfo = useMemo(
+    () => getHolidayInfo(props.draft.reportDate),
+    [props.draft.reportDate],
+  );
+  const isReportDateHoliday = holidayInfo.isHoliday;
+  const isFormBlockedByHoliday = isReportDateHoliday && !bypassHolidayBlock;
   const paperPreview = useMemo(
     () => getPaperPreview(props.paperFormat),
     [props.paperFormat],
@@ -603,14 +631,7 @@ export function EntryView(props: EntryViewProps) {
   );
 
   useEffect(() => {
-    fetch("/docs/patch-notes.md")
-      .then((res) => res.text())
-      .then((text) => setPatchNotesContent(text))
-      .catch(() => setPatchNotesContent("Gagal memuat catatan rilis."));
-  }, []);
-
-  useEffect(() => {
-    if (!saveMenuOpen && !paperMenuOpen && !previewSettingsOpen && !patchNotesOpen) {
+    if (!saveMenuOpen && !paperMenuOpen && !previewSettingsOpen) {
       return;
     }
 
@@ -645,7 +666,7 @@ export function EntryView(props: EntryViewProps) {
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [paperMenuOpen, previewSettingsOpen, saveMenuOpen, patchNotesOpen]);
+  }, [paperMenuOpen, previewSettingsOpen, saveMenuOpen]);
 
   useEffect(() => {
     setRenameOverwriteWarningDismissedKey(null);
@@ -850,52 +871,100 @@ export function EntryView(props: EntryViewProps) {
                 </label>
               </div>
               <div className="text-xs text-[var(--text-muted)] mt-1 flex-1">
-                    Hari / Tanggal dokumen: <span className="font-semibold">{props.draft.tanggal}</span>
-                  </div>
+                Hari / Tanggal dokumen: <span className="font-semibold">{props.draft.tanggal}</span>
+              </div>
             </section>
 
-            <section className="surface-card rounded-[15px] overflow-hidden">
-              <div className="p-4 pb-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 px-2">
-                  <div>
-                    <p className={eyebrowClassName}>Aktivitas Harian</p>
-                  </div>
+            {isFormBlockedByHoliday ? (
+              <section className="surface-card rounded-[20px] p-7 sm:p-8 text-center border border-[var(--border-soft)] flex flex-col items-center justify-center animate-fadeIn">
+                <div className="h-12 w-12 rounded-2xl bg-orange-500/10 text-orange-600 dark:text-orange-400 flex items-center justify-center mb-3 shadow-sm">
+                  <CalendarIcon className="h-6 w-6" />
                 </div>
-                <div className="mt-4 space-y-3">
-                  {props.draft.activities.map((activity, index) => (
-                    <article
-                      key={activity.no}
-                      className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
-                    >
-                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                        <h4 className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
-                          <div
-                            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white transition-colors ${
-                              props.activityCompletionStates[index]
-                                ? "bg-green-400"
-                                : "bg-[var(--primary)]"
-                            }`}
-                          >
-                            {activity.no}
-                          </div>
-                          Aktivitas ke-{activity.no}
-                          {props.activityCompletionStates[index] ? (
-                            <span className="ml-2 text-xs font-semibold text-green-400">
-                              <CheckIcon className="h-4 w-4" />
-                            </span>
-                          ) : null}
-                        </h4>
-                        {props.draft.activities.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => props.onRemoveActivity(index)}
-                            className="flex items-center gap-1.5 rounded-full bg-[var(--danger-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--danger)] transition hover:bg-[var(--danger)] hover:text-white"
-                          >
-                            <TrashIcon className="h-3.5 w-3.5" />
-                            Hapus baris
-                          </button>
-                        )}
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-500/15 text-orange-600 dark:text-orange-400 mb-1.5">
+                  {holidayInfo.name || (holidayInfo.isWeekend ? "Akhir Pekan" : "Hari Libur")}
+                </span>
+                <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                  Pengisian Laporan Libur
+                </h3>
+                <p className="text-xs text-[var(--text-muted)] max-w-sm mt-1 leading-relaxed">
+                  Sistem pelaporan harian dinonaktifkan pada hari Sabtu, Minggu, dan Hari Libur Nasional. Rekapitulasi kinerja dihitung berdasarkan hari kerja efektif.
+                </p>
+                {props.canUseAnyReportDate ? (
+                  <p className="text-[11px] text-[var(--text-muted)]/80 mt-3 pt-3 border-t border-[var(--border-soft)]">
+                    Pilih tanggal kerja pada kolom <strong>Tanggal Laporan</strong> di atas jika ingin menginput laporan tanggal lain.
+                  </p>
+                ) : null}
+                <div className="mt-3 pt-3 border-t border-[var(--border-soft)] w-full flex flex-col items-center">
+                  <button
+                    type="button"
+                    onClick={() => setBypassHolidayBlock(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--primary)] hover:underline py-1.5 px-3 rounded-xl hover:bg-[var(--primary)]/10 transition cursor-pointer"
+                  >
+                    <span>Tetap buat</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-normal">
+                      (tidak terhitung dalam rekap statistik)
+                    </span>
+                    <span className="font-bold">&rarr;</span>
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <>
+                {isReportDateHoliday ? (
+                  <div className="holiday-info-banner flex items-start gap-2.5 rounded-[15px] p-3 animate-fadeIn">
+                    <div className="banner-icon-container h-7 w-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                      <InfoIcon className="h-4 w-4" />
+                    </div>
+                    <div className="text-xs">
+                      <strong className="banner-title font-bold">Laporan Hari Libur ({holidayInfo.name || "Akhir Pekan"}):</strong>{" "}
+                      <span className="banner-desc">
+                        Laporan ini dibuat saat hari libur dan akan tersimpan di arsip histori, namun tidak dimasukkan ke dalam hitungan target hari kerja rekapitulasi statistik.
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                <section className="surface-card rounded-[15px] overflow-hidden">
+                  <div className="p-4 pb-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-2">
+                      <div>
+                        <p className={eyebrowClassName}>Aktivitas Harian</p>
                       </div>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {props.draft.activities.map((activity, index) => (
+                        <article
+                          key={activity.no}
+                          className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
+                        >
+                          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <h4 className="flex items-center gap-2 font-semibold text-[var(--text-primary)]">
+                              <div
+                                className={`flex h-6 w-6 items-center justify-center rounded-full text-xs text-white transition-colors ${
+                                  props.activityCompletionStates[index]
+                                    ? "bg-green-400"
+                                    : "bg-[var(--primary)]"
+                                }`}
+                              >
+                                {activity.no}
+                              </div>
+                              Aktivitas ke-{activity.no}
+                              {props.activityCompletionStates[index] ? (
+                                <span className="ml-2 text-xs font-semibold text-green-400">
+                                  <CheckIcon className="h-4 w-4" />
+                                </span>
+                              ) : null}
+                            </h4>
+                            {props.draft.activities.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => props.onRemoveActivity(index)}
+                                className="flex items-center gap-1.5 rounded-full bg-[var(--danger-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--danger)] transition hover:bg-[var(--danger)] hover:text-white"
+                              >
+                                <TrashIcon className="h-3.5 w-3.5" />
+                                Hapus baris
+                              </button>
+                            )}
+                          </div>
 
                       <div className="grid grid-cols-2 gap-3 min-w-0 sm:max-w-xs">
                         <label className="space-y-1.5 min-w-0">
@@ -1241,145 +1310,13 @@ export function EntryView(props: EntryViewProps) {
                 </div>
               </div>
             </section>
+          </>
+        )}
           </div>
         </div>
 
         <div className="sticky-fade mt-auto border-t border-[var(--border-soft)] px-4 py-3 sm:px-5">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <button
-                ref={patchNotesButtonRef}
-                type="button"
-                onClick={() => setPatchNotesOpen(!patchNotesOpen)}
-                className={`flex h-9 w-9 items-center justify-center rounded-full transition-all ${
-                  patchNotesOpen
-                    ? "bg-[var(--primary)] text-white shadow-lg"
-                    : "bg-[var(--surface-elevated)] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] border border-[var(--border-soft)] shadow-sm"
-                }`}
-                style={{ width: "38px", height: "38px" }}
-                aria-label="Informasi pembaruan"
-                title="Patch Notes"
-              >
-                <InfoIcon className="h-5 w-5" />
-              </button>
-
-              <AnimatePresence mode="wait">
-                {patchNotesOpen && (
-                  <motion.div
-                    ref={patchNotesRef}
-                    initial={{ opacity: 0, scale: 0.98, y: 8 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.98, y: 8 }}
-                    transition={{ duration: 0.08, ease: "easeOut" }}
-                    className="absolute bottom-full left-0 mb-4 z-[100] w-80 sm:w-[440px] overflow-hidden rounded-[32px] border border-[var(--border-soft)] shadow-[0_24px_54px_rgba(0,0,0,0.22)] backdrop-blur-3xl"
-                    style={{
-                      background: "color-mix(in srgb, var(--surface-panel-strong) 98%, var(--text-primary) 2%)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between border-b border-[var(--border-soft)]/60 px-6 py-1">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-[var(--primary)] text-white shadow-lg shadow-[var(--primary)]/20">
-                          <InfoIcon className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-bold text-[var(--text-primary)] leading-none">
-                            Catatan Rilis
-                          </h3>
-                          <p className="mt-1 text-[10px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
-                            Patch History & Updates
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setPatchNotesOpen(false)}
-                        className="rounded-full p-2 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-all active:scale-95"
-                      >
-                        <svg
-                          viewBox="0 0 24 24"
-                          className="h-5 w-5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                        >
-                          <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                    <div className="max-h-[55vh] overflow-y-auto px-6 py-2 text-sm leading-relaxed text-[var(--text-muted)] custom-scrollbar">
-                      {patchNotesContent ? (
-                        <div className="divide-y divide-[var(--border-soft)]/40">
-                          {patchNotesContent
-                            .split("\n\n##")
-                            .map((section, sectionIndex) => {
-                              const lines = (sectionIndex === 0 ? section : "##" + section)
-                                .split("\n")
-                                .filter((line) => line.trim() && !line.startsWith("# "));
-                              
-                              return (
-                                <div key={sectionIndex} className="first:pt-4 last:pb-5">
-                                  {lines.map((line, i) => {
-                                    if (line.startsWith("## ")) {
-                                      return (
-                                        <div key={i} className="mb-4 flex items-center justify-between gap-3">
-                                          <h4 className="text-base font-bold text-[var(--text-primary)]">
-                                            {line.replace("## ", "")}
-                                          </h4>
-                                          {sectionIndex === 0 && (
-                                            <span className="rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-tight text-[var(--primary)]">
-                                              Terbaru
-                                            </span>
-                                          )}
-                                        </div>
-                                      );
-                                    }
-                                    if (line.startsWith("### ")) {
-                                      return (
-                                        <h5
-                                          key={i}
-                                          className="mt-4 mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--text-primary)] opacity-50"
-                                        >
-                                          {line.replace("### ", "")}
-                                        </h5>
-                                      );
-                                    }
-                                    if (line.startsWith("- ")) {
-                                      return (
-                                        <div key={i} className="mt-1.5 flex gap-3 text-[12.5px] leading-snug">
-                                          <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[var(--text-muted)] opacity-30" />
-                                          <span className="opacity-90">{line.replace("- ", "")}</span>
-                                        </div>
-                                      );
-                                    }
-                                    return (
-                                      <p key={i} className="mt-2 text-[12.5px] opacity-70">
-                                        {line}
-                                      </p>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            })}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="h-9 w-9 animate-spin rounded-full border-3 border-[var(--primary)] border-t-transparent" />
-                          <p className="mt-4 text-sm font-medium text-[var(--text-primary)]">
-                            Memuat catatan rilis...
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="bg-[var(--surface-muted)]/30 border-t border-[var(--border-soft)]/50 px-6 py-1 w-full flex items-center justify-center">
-                      <p className="text-[10.5px] font-medium leading-relaxed text-[var(--text-muted)] opacity-80 ">
-                        Digunakan untuk melihat versi rilis.
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
             <div className="ui-tooltip-group">
               {props.hasDraftContent ? (
                 props.draftCacheStatus === "saving" ? (
@@ -1750,8 +1687,9 @@ export function EntryView(props: EntryViewProps) {
                         setSaveMenuOpen(false);
                         void props.onSaveReport();
                       }}
-                      disabled={props.submitting || props.isEditLoading}
-                      className="btn-primary rounded-r-none px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
+                      disabled={props.submitting || props.isEditLoading || isFormBlockedByHoliday}
+                      title={isFormBlockedByHoliday ? `Pengisian dinonaktifkan pada hari libur (${holidayInfo.name || "Akhir Pekan"})` : undefined}
+                      className={`btn-primary rounded-r-none px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5 ${isFormBlockedByHoliday ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       {props.submitting ? (
                         <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
@@ -1767,8 +1705,8 @@ export function EntryView(props: EntryViewProps) {
                     <button
                       type="button"
                       onClick={() => setSaveMenuOpen((open) => !open)}
-                      disabled={props.submitting || props.isEditLoading}
-                      className="btn-primary ml-[2px] rounded-l-none px-2 py-2 text-xs sm:px-3 sm:text-sm 2xl:py-2.5"
+                      disabled={props.submitting || props.isEditLoading || isFormBlockedByHoliday}
+                      className={`btn-primary ml-[2px] rounded-l-none px-2 py-2 text-xs sm:px-3 sm:text-sm 2xl:py-2.5 ${isFormBlockedByHoliday ? "opacity-60 cursor-not-allowed" : ""}`}
                       aria-label="Opsi simpan"
                     >
                       <ChevronDownIcon

@@ -3,6 +3,12 @@ import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import type { Report } from "../types/report";
 import { getWitaToday, formatWitaDate } from "../lib/time";
 import { isSameReporterName, includesReporterName } from "../lib/reporter-name";
+import {
+  SYSTEM_START_DATE,
+  getEffectiveWorkingDaysInRange,
+  getHolidayInfo,
+  isWorkDay,
+} from "../lib/holidays";
 
 type RekapViewProps = {
   reports: Report[];
@@ -108,6 +114,24 @@ function SearchIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
   );
 }
 
+function InfoIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </svg>
+  );
+}
+
 /* ── Helper: Get calendar weeks for a month ── */
 
 const BULAN_LABELS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -191,33 +215,58 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
   const dateRange = useMemo(() => {
     if (filterMode === "harian") {
       const isToday = dailyDate === todayWita;
+      const holidayInfo = getHolidayInfo(dailyDate);
+      const isEffectiveWorkDay = isWorkDay(dailyDate);
       return { 
         start: dailyDate, 
         end: dailyDate, 
         totalDays: 1, 
-        label: isToday ? `Hari Ini (${formatWitaDate(dailyDate)})` : formatWitaDate(dailyDate) 
+        totalWorkingDays: isEffectiveWorkDay ? 1 : 0,
+        label: isToday ? `Hari Ini (${formatWitaDate(dailyDate)})` : formatWitaDate(dailyDate),
+        isHoliday: holidayInfo.isHoliday,
+        holidayName: holidayInfo.name,
       };
     }
     if (filterMode === "bulanan") {
       const weeks = getWeeksInMonth(monthlyYear, monthlyMonth);
       if (monthlyWeek >= 0 && monthlyWeek < weeks.length) {
         const w = weeks[monthlyWeek];
-        const s = new Date(w.start);
-        const e = new Date(w.end);
-        const days = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1;
-        return { start: w.start, end: w.end, totalDays: days, label: `${w.label} ${BULAN_LABELS[monthlyMonth]} ${monthlyYear}` };
+        const workingStats = getEffectiveWorkingDaysInRange(w.start, w.end);
+        return { 
+          start: w.start, 
+          end: w.end, 
+          totalDays: workingStats.totalCalendarDays, 
+          totalWorkingDays: workingStats.totalWorkingDays,
+          label: `${w.label} ${BULAN_LABELS[monthlyMonth]} ${monthlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
+        };
       }
       // All weeks = entire month
       const first = new Date(monthlyYear, monthlyMonth, 1);
       const last = new Date(monthlyYear, monthlyMonth + 1, 0);
-      const days = last.getDate();
-      return { start: fmtDate(first), end: fmtDate(last), totalDays: days, label: `${BULAN_LABELS[monthlyMonth]} ${monthlyYear}` };
+      const startStr = fmtDate(first);
+      const endStr = fmtDate(last);
+      const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
+      return { 
+        start: startStr, 
+        end: endStr, 
+        totalDays: workingStats.totalCalendarDays, 
+        totalWorkingDays: workingStats.totalWorkingDays,
+        label: `${BULAN_LABELS[monthlyMonth]} ${monthlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
+      };
     }
     // tahunan = entire year
     const first = new Date(yearlyYear, 0, 1);
     const last = new Date(yearlyYear, 11, 31);
-    const days = Math.floor((last.getTime() - first.getTime()) / 86400000) + 1;
-    return { start: fmtDate(first), end: fmtDate(last), totalDays: days, label: `Tahun ${yearlyYear}` };
+    const startStr = fmtDate(first);
+    const endStr = fmtDate(last);
+    const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
+    return { 
+      start: startStr, 
+      end: endStr, 
+      totalDays: workingStats.totalCalendarDays, 
+      totalWorkingDays: workingStats.totalWorkingDays,
+      label: `Tahun ${yearlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
+    };
   }, [filterMode, dailyDate, monthlyMonth, monthlyYear, monthlyWeek, yearlyYear, todayWita]);
 
   const weeksForMonth = useMemo(() => getWeeksInMonth(monthlyYear, monthlyMonth), [monthlyYear, monthlyMonth]);
@@ -303,14 +352,20 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
         const memberReports = filteredReports.filter((r) =>
           isSameReporterName(r.nama, name),
         );
-        const uniqueDays = new Set(memberReports.map((r) => r.reportDate)).size;
+        // Only count unique working days submitted starting from system epoch (2026-08-19)
+        const uniqueWorkingDays = new Set(
+          memberReports
+            .map((r) => r.reportDate)
+            .filter((d) => isWorkDay(d) && d >= SYSTEM_START_DATE),
+        ).size;
         const memberActivities = memberReports.reduce(
           (acc, r) => acc + (r.activities?.length || 0),
           0,
         );
+        const targetDays = dateRange.totalWorkingDays;
         const pct =
-          dateRange.totalDays > 0
-            ? Math.min(100, Math.round((uniqueDays / dateRange.totalDays) * 100))
+          targetDays > 0
+            ? Math.min(100, Math.round((uniqueWorkingDays / targetDays) * 100))
             : 0;
 
         return {
@@ -406,8 +461,11 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
     { key: "tahunan", label: "Tahunan" },
   ];
 
-  // Year range for selectors
-  const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
+  // Year range for selectors - Only 2026 onwards
+  const years = Array.from(
+    { length: Math.max(3, currentYear - 2026 + 2) },
+    (_, i) => 2026 + i,
+  );
 
   return (
     <section className="space-y-5 animate-fadeIn">
@@ -565,9 +623,22 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
 
           {/* Header */}
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-bold text-[var(--text-primary)] shrink-0">Statistik Anggota</h3>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <h3 className="text-sm font-bold text-[var(--text-primary)]">Statistik Anggota</h3>
+              <div
+                tabIndex={0}
+                className="ui-tooltip-group relative inline-flex items-center text-[var(--text-muted)] hover:text-[var(--info)] focus:outline-none cursor-pointer"
+              >
+                <InfoIcon className="h-3.5 w-3.5" />
+                <div className="ui-tooltip ui-tooltip-right min-w-[240px] text-left">
+                  <span>
+                    Perhitungan konsistensi & hari kerja efektif dimulai sejak tanggal <strong>19 Agustus 2026</strong> (hari libur & kalender sebelum tanggal tersebut dikecualikan).
+                  </span>
+                </div>
+              </div>
+            </div>
             <span className="text-[10px] font-semibold text-[var(--text-muted)] text-right truncate">
-              Periode: <span className="font-bold text-[var(--text-primary)]">{dateRange.label}</span> ({dateRange.totalDays} hari)
+              Periode: <span className="font-bold text-[var(--text-primary)]">{dateRange.label}</span>
             </span>
           </div>
 

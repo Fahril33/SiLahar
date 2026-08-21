@@ -4,42 +4,9 @@ import { formatWitaDateTime } from "../lib/time";
 import type { Report } from "../types/report";
 import type { LocalReportDraftSummary } from "../types/local-draft";
 import { LocalDraftsModal } from "./local-drafts-modal";
+import { getHolidayInfo } from "../lib/holidays";
 
-function TrashIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
-  );
-}
 
-function UploadIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="17 8 12 3 7 8" />
-      <line x1="12" y1="3" x2="12" y2="15" />
-    </svg>
-  );
-}
 
 function FileTextIcon(props: { className?: string }) {
   return (
@@ -61,22 +28,7 @@ function FileTextIcon(props: { className?: string }) {
   );
 }
 
-function XIcon(props: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={props.className || "h-4 w-4"}
-    >
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
+
 
 function ReloadIcon() {
   return (
@@ -328,10 +280,10 @@ export function HistoryView(props: {
   const [openPrintMenuId, setOpenPrintMenuId] = useState<string | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
+  const holidayInfo = useMemo(() => getHolidayInfo(historyDate), [historyDate]);
 
   const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [statusSearchQuery, setStatusSearchQuery] = useState("");
-  const [draftSearchQuery, setDraftSearchQuery] = useState("");
   const [expandedCardNames, setExpandedCardNames] = useState<Record<string, boolean>>({});
   const [showSearchCapsule, setShowSearchCapsule] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -415,17 +367,7 @@ export function HistoryView(props: {
     });
   }, [statusRows, statusSearchQuery]);
 
-  const filteredDrafts = useMemo(() => {
-    if (!draftSearchQuery.trim()) return savedLocalDrafts;
-    const query = draftSearchQuery.toLowerCase();
-    return savedLocalDrafts.filter(
-      (d) =>
-        d.title.toLowerCase().includes(query) ||
-        d.reporterName.toLowerCase().includes(query) ||
-        d.reportDate.toLowerCase().includes(query) ||
-        d.displayDate.toLowerCase().includes(query),
-    );
-  }, [draftSearchQuery, savedLocalDrafts]);
+
 
   useEffect(() => {
     if (!openPrintMenuId) {
@@ -656,6 +598,21 @@ export function HistoryView(props: {
 
           {/* Submission Status List Grid */}
           <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
+            {holidayInfo.isHoliday && (
+              <div className="holiday-info-banner surface-card rounded-[20px] p-4 shadow-sm flex items-start gap-3 text-xs mb-1.5 animate-fadeIn">
+                <div className="banner-icon-container h-8 w-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+                  <CalendarIcon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="banner-title font-bold">
+                    Hari Libur: {holidayInfo.name || "Akhir Pekan"}
+                  </p>
+                  <p className="banner-desc text-[10.5px] mt-0.5 leading-relaxed">
+                    Tanggal yang Anda pilih saat ini adalah hari libur (Sabtu, Minggu, atau Hari Libur Nasional). Seluruh laporan petugas pada hari libur tidak akan dihitung sebagai beban target pada statistik rekapitulasi kerja.
+                  </p>
+                </div>
+              </div>
+            )}
             {savedLocalDrafts.length > 0 && (
               <div className="surface-card rounded-[20px] p-3.5 border border-amber-500/30 bg-amber-500/5 shadow-sm flex items-center justify-between gap-3 text-xs mb-1">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -727,7 +684,7 @@ export function HistoryView(props: {
 
                         {row.done && row.report && (
                           <div 
-                            className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)]/60 gap-2" 
+                            className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2" 
                             onClick={(e) => e.stopPropagation()}
                           >
                             {/* Edit Button */}
@@ -802,7 +759,7 @@ export function HistoryView(props: {
                     {/* Collapsible Activity List */}
                     {row.done && row.report && (
                       <div 
-                        className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]/50"
+                        className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]"
                         style={{
                           maxHeight: isExpanded ? "1000px" : "0px",
                           opacity: isExpanded ? 1 : 0,
@@ -813,7 +770,7 @@ export function HistoryView(props: {
                         }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <ul className="divide-y divide-[var(--border-soft)]/30 text-xs text-[var(--text-primary)]">
+                        <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
                           {row.report.activities.map((activity) => (
                             <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
                               <div className="font-semibold text-[var(--text-primary)]">{activity.no}. {activity.description}</div>
@@ -831,7 +788,7 @@ export function HistoryView(props: {
                   {/* Mobile Actions Row */}
                   {row.done && row.report ? (
                     <div 
-                      className="md:hidden border-t border-[var(--border-soft)]/60 mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
+                      className="md:hidden border-t border-[var(--border-soft)] mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Edit Button */}
