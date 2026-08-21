@@ -1651,24 +1651,6 @@ export function EntryView(props: EntryViewProps) {
                     </button>
                   </div>
                   <div className="flex items-center gap-1.5 sm:gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void props.onHandleExport(props.preview)}
-                    disabled={
-                      props.excelExportingReportId === props.preview.id ||
-                      props.isEditLoading
-                    }
-                    className="btn-secondary px-3 py-2 text-xs disabled:opacity-60 sm:px-4 sm:text-sm 2xl:py-2.5"
-                  >
-                    {props.excelExportingReportId === props.preview.id ? (
-                      <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
-                    ) : (
-                      <>
-                        <DownloadIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                        <span className="hidden sm:inline">Excel</span>
-                      </>
-                    )}
-                  </button>
                     <div
                       ref={paperMenuRef}
                       className="relative flex items-stretch"
@@ -1741,21 +1723,6 @@ export function EntryView(props: EntryViewProps) {
                         </div>
                       ) : null}
                     </div>
-                    {/* Save as PDF Button */}
-                    <button
-                      type="button"
-                      onClick={() => void props.onHandleSaveAsPdf(props.preview)}
-                      disabled={props.pdfExportingReportId === props.preview.id}
-                      className="btn-secondary px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5"
-                      aria-label="Save PDF"
-                    >
-                      {props.pdfExportingReportId === props.preview.id ? (
-                        <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
-                      ) : (
-                        <FileDownIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      )}
-                      <span className="hidden sm:inline">PDF</span>
-                    </button>
                   <div ref={saveMenuRef} className="relative flex items-stretch">
                     <AnchoredInlineWarning
                       open={
@@ -1810,12 +1777,13 @@ export function EntryView(props: EntryViewProps) {
                     </button>
                     {saveMenuOpen ? (
                       <div
-                        className="pointer-events-auto absolute right-0 top-[calc(100%+8px)] z-30 min-w-[260px] rounded-[14px] border border-[var(--border-soft)] p-1 shadow-2xl backdrop-blur-sm"
+                        className="pointer-events-auto absolute right-0 top-[calc(100%+8px)] z-30 min-w-[260px] rounded-[18px] border border-[var(--border-soft)] p-1.5 shadow-2xl backdrop-blur-sm"
                         style={{
                           background:
                             "color-mix(in srgb, var(--surface-panel-strong) 97%, black 3%)",
                         }}
                       >
+                        {/* Draft Options */}
                         {props.loadedLocalDraftSummary ? (
                           <button
                             type="button"
@@ -1849,6 +1817,60 @@ export function EntryView(props: EntryViewProps) {
                           <span className="text-xs text-[var(--text-muted)]">
                             {props.localDraftCount} draft
                           </span>
+                        </button>
+
+                        <div className="my-1.5 border-t border-[var(--border-soft)]/60" />
+
+                        {/* Download PDF Option */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaveMenuOpen(false);
+                            void props.onHandleSaveAsPdf(props.preview);
+                          }}
+                          disabled={
+                            props.pdfExportingReportId === props.preview.id ||
+                            props.isEditLoading
+                          }
+                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)] disabled:opacity-60"
+                        >
+                          <span className="flex items-center gap-2">
+                            <FileDownIcon className="h-4 w-4 text-[var(--danger)]" />
+                            <span>Download PDF</span>
+                          </span>
+                          {props.pdfExportingReportId === props.preview.id ? (
+                            <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <span className="text-xs text-[var(--text-muted)] uppercase">
+                              {props.paperFormat}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Download Excel Option */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaveMenuOpen(false);
+                            void props.onHandleExport(props.preview);
+                          }}
+                          disabled={
+                            props.excelExportingReportId === props.preview.id ||
+                            props.isEditLoading
+                          }
+                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)] disabled:opacity-60"
+                        >
+                          <span className="flex items-center gap-2">
+                            <DownloadIcon className="h-4 w-4 text-[var(--success)]" />
+                            <span>Download Excel</span>
+                          </span>
+                          {props.excelExportingReportId === props.preview.id ? (
+                            <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <span className="text-xs text-[var(--text-muted)]">
+                              .xlsx
+                            </span>
+                          )}
                         </button>
                       </div>
                     ) : null}
