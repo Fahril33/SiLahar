@@ -74,10 +74,10 @@ cross join (
   values
     (
       'coordinator_team',
-      'KOORDINATOR TIM',
-      'ARIS PEBRIANSYAH, S.STP, M.AP',
+      'KOORDINATOR',
+      'RIKI',
       null,
-      '199602102018081001'
+      '198607082016041001'
     ),
     (
       'division_head',

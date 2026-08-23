@@ -41,10 +41,10 @@ INSERT INTO public.report_template_approvers (
 SELECT
   rt.id,
   'coordinator_team_pusdalops',
-  'KOORDINATOR PUSDALOPS',
-  'ARIS PEBRIANSYAH, S.STP, M.AP', -- Assuming same name for now, admin can change it later
+  'KOORDINATOR',
+  'MOH. YASIR SYURIADI N.', -- Assuming same name for now, admin can change it later
   null,
-  '199602102018081001',
+  '197309181993031004',
   true
 FROM public.report_templates rt
 WHERE rt.template_code = 'bpbd-trc-harian-2026'

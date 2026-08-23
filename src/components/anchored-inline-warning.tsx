@@ -174,7 +174,6 @@ export function AnchoredInlineWarning(props: {
             aria-label={closeLabel}
             title={closeLabel}
           >
-            ×
           </button>
         </div>
         {expanded ? (

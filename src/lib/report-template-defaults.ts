@@ -51,15 +51,15 @@ export const fallbackReportTemplateConfig: ReportTemplateConfig = {
   approvers: [
     createFallbackApprover("coordinator_team_trc", {
       id: FALLBACK_COORDINATOR_TRC_ID,
-      scopeLabel: "KOORDINATOR TIM",
-      officialName: "ARIS PEBRIANSYAH, S.STP, M.AP",
-      officialNip: "199602102018081001",
+      scopeLabel: "KOORDINATOR",
+      officialName: "RIKI",
+      officialNip: "198607082016041001",
     }),
     createFallbackApprover("coordinator_team_pusdalops", {
       id: FALLBACK_COORDINATOR_PUSDALOPS_ID,
-      scopeLabel: "KOORDINATOR PUSDALOPS",
-      officialName: "ARIS PEBRIANSYAH, S.STP, M.AP",
-      officialNip: "199602102018081001",
+      scopeLabel: "KOORDINATOR",
+      officialName: "MOH. YASIR SYURIADI N.",
+      officialNip: "197309181993031004",
     }),
     createFallbackApprover("division_head", {
       id: FALLBACK_DIVISION_HEAD_ID,
