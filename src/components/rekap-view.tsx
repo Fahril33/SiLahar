@@ -215,16 +215,17 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
   const dateRange = useMemo(() => {
     if (filterMode === "harian") {
       const isToday = dailyDate === todayWita;
+      const isBeforeStart = dailyDate < SYSTEM_START_DATE;
       const holidayInfo = getHolidayInfo(dailyDate);
-      const isEffectiveWorkDay = isWorkDay(dailyDate);
+      const isEffectiveWorkDay = !isBeforeStart && isWorkDay(dailyDate);
       return { 
         start: dailyDate, 
         end: dailyDate, 
         totalDays: 1, 
         totalWorkingDays: isEffectiveWorkDay ? 1 : 0,
         label: isToday ? `Hari Ini (${formatWitaDate(dailyDate)})` : formatWitaDate(dailyDate),
-        isHoliday: holidayInfo.isHoliday,
-        holidayName: holidayInfo.name,
+        isHoliday: isBeforeStart || holidayInfo.isHoliday,
+        holidayName: isBeforeStart ? "Sebelum Operasional Sistem" : holidayInfo.name,
       };
     }
     if (filterMode === "bulanan") {
@@ -233,8 +234,8 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
         const w = weeks[monthlyWeek];
         const workingStats = getEffectiveWorkingDaysInRange(w.start, w.end);
         return { 
-          start: w.start, 
-          end: w.end, 
+          start: workingStats.effectiveStart, 
+          end: workingStats.effectiveEnd, 
           totalDays: workingStats.totalCalendarDays, 
           totalWorkingDays: workingStats.totalWorkingDays,
           label: `${w.label} ${BULAN_LABELS[monthlyMonth]} ${monthlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
@@ -247,8 +248,8 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       const endStr = fmtDate(last);
       const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
       return { 
-        start: startStr, 
-        end: endStr, 
+        start: workingStats.effectiveStart, 
+        end: workingStats.effectiveEnd, 
         totalDays: workingStats.totalCalendarDays, 
         totalWorkingDays: workingStats.totalWorkingDays,
         label: `${BULAN_LABELS[monthlyMonth]} ${monthlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
@@ -261,8 +262,8 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
     const endStr = fmtDate(last);
     const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
     return { 
-      start: startStr, 
-      end: endStr, 
+      start: workingStats.effectiveStart, 
+      end: workingStats.effectiveEnd, 
       totalDays: workingStats.totalCalendarDays, 
       totalWorkingDays: workingStats.totalWorkingDays,
       label: `Tahun ${yearlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
@@ -273,10 +274,18 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
 
   // ── Stats computation ──
   const stats = useMemo(() => {
-    // 1. Filter reports by dateRange
+    // 1. Filter reports by dateRange & SYSTEM_START_DATE
     let filteredReports = reports.filter(
-      (r) => r.reportDate >= dateRange.start && r.reportDate <= dateRange.end,
+      (r) =>
+        r.reportDate >= dateRange.start &&
+        r.reportDate <= dateRange.end &&
+        r.reportDate >= SYSTEM_START_DATE,
     );
+
+    // If bulanan or tahunan, filter out weekends and holidays
+    if (filterMode !== "harian") {
+      filteredReports = filteredReports.filter((r) => isWorkDay(r.reportDate));
+    }
 
     // 2. Filter reports by searchTerm
     if (searchTerm.trim() !== "") {
@@ -362,7 +371,9 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
           (acc, r) => acc + (r.activities?.length || 0),
           0,
         );
-        const targetDays = dateRange.totalWorkingDays;
+        const effectiveEnd = dateRange.end < todayWita ? dateRange.end : todayWita;
+        const expectedStats = getEffectiveWorkingDaysInRange(dateRange.start, effectiveEnd);
+        const targetDays = expectedStats.totalWorkingDays;
         const pct =
           targetDays > 0
             ? Math.min(100, Math.round((uniqueWorkingDays / targetDays) * 100))
