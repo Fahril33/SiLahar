@@ -395,6 +395,7 @@ export default function App() {
             onChangeActivity={dashboard.changeActivity}
             onAddActivity={dashboard.addActivity}
             onRemoveActivity={dashboard.removeActivity}
+            onMoveActivity={dashboard.moveActivity}
             onSetActivityFiles={dashboard.setActivityFiles}
             onClearActivityFiles={dashboard.clearActivityFiles}
             onRestoreActivityFiles={dashboard.restoreActivityFiles}

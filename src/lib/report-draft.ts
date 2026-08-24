@@ -65,7 +65,7 @@ export function normalizeDraft(draft: DraftReport): DraftReport {
       draft.approverDivisionHeadNip ?? defaultDraft.approverDivisionHeadNip,
     notes: draft.notes ?? defaultDraft.notes,
     activities: draft.activities.map((activity, index) => ({
-      id: activity.id,
+      id: activity.id || `act-${Math.random().toString(36).substring(2, 9)}`,
       no: activity.no || index + 1,
       description: activity.description,
       startTime: normalizeTimeValue(activity.startTime, "09:00"),
@@ -203,8 +203,8 @@ export function createPreviewReport(draft: DraftReport, pendingPreviews: Pending
       photos: [
         ...activity.photos,
         ...(pendingPreviews[activity.no] ?? []).map((photo, index) => ({
-          id: `preview-${activity.no}-${index}-${photo.url}`,
-          activityId: `preview-${activity.no}`,
+          id: `preview-${activity.id || activity.no}-${index}-${photo.url}`,
+          activityId: `preview-${activity.id || activity.no}`,
           storagePath: "",
           publicUrl: photo.url,
           originalFileName: photo.name,

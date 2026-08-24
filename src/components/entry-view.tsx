@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
+import { motion } from "framer-motion";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
 import { getHolidayInfo } from "../lib/holidays";
@@ -239,7 +240,6 @@ type EntryViewProps = {
     startAfterMorning: boolean;
     endBeforeStart: boolean;
     startsBeforePreviousEnd: boolean;
-    overtime: boolean;
   }>;
   activityCompletionStates: boolean[];
   pendingPreviews: PendingPreviewMap;
@@ -269,6 +269,7 @@ type EntryViewProps = {
   ) => void;
   onAddActivity: () => void;
   onRemoveActivity: (index: number) => void;
+  onMoveActivity?: (index: number, direction: "up" | "down") => void;
   onSetActivityFiles: (
     activityNo: number,
     files: FileList | null,
@@ -543,6 +544,22 @@ function ChevronDownIcon(props: { className?: string }) {
       {...props}
     >
       <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function ChevronUpIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <polyline points="18 15 12 9 6 15" />
     </svg>
   );
 }
@@ -932,8 +949,9 @@ export function EntryView(props: EntryViewProps) {
                     </div>
                     <div className="mt-4 space-y-3">
                       {props.draft.activities.map((activity, index) => (
-                        <article
-                          key={activity.no}
+                        <motion.article
+                          layout
+                          key={activity.id}
                           className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
                         >
                           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -953,6 +971,36 @@ export function EntryView(props: EntryViewProps) {
                                   <CheckIcon className="h-4 w-4" />
                                 </span>
                               ) : null}
+
+                              {/* Reorder Up/Down buttons */}
+                              {props.draft.activities.length > 1 && (
+                                <div className="flex items-center gap-0.5 ml-1 bg-[var(--surface-app)] border border-[var(--border-soft)] rounded-lg p-0.5 shadow-xs">
+                                  <button
+                                    type="button"
+                                    disabled={index === 0}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onMoveActivity?.(index, "up");
+                                    }}
+                                    className="h-5 w-5 rounded-md hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                                    title="Pindahkan ke atas"
+                                  >
+                                    <ChevronUpIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={index === props.draft.activities.length - 1}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onMoveActivity?.(index, "down");
+                                    }}
+                                    className="h-5 w-5 rounded-md hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                                    title="Pindahkan ke bawah"
+                                  >
+                                    <ChevronDownIcon className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )}
                             </h4>
                             {props.draft.activities.length > 1 && (
                               <button
@@ -1041,11 +1089,7 @@ export function EntryView(props: EntryViewProps) {
                             selesai aktivitas sebelumnya.
                           </div>
                         ) : null}
-                        {props.activityTimeIssues[index]?.overtime ? (
-                          <div className="inline-note inline-note-success">
-                            Sepertinya anda lembur hari ini.
-                          </div>
-                        ) : null}
+
                       </div>
                       <div className="mt-4">
                         <div className="flex items-stretch gap-2">
@@ -1149,7 +1193,7 @@ export function EntryView(props: EntryViewProps) {
                           </div>
                         ) : null}
                       </div>
-                    </article>
+                    </motion.article>
                   ))}
                 </div>
               </div>

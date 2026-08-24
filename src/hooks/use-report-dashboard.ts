@@ -251,7 +251,6 @@ function getActivityTimeIssuesForDraft(draft: DraftReport) {
       startAfterMorning: i === 0 && s > timeToMinutes("09:00"),
       endBeforeStart: e < s,
       startsBeforePreviousEnd: pE !== null && s < pE,
-      overtime: e > timeToMinutes("16:00"),
     };
   });
 }
@@ -741,6 +740,112 @@ export function useReportDashboard() {
       (c[index + 1] ?? []).forEach(p => URL.revokeObjectURL(p.url));
       const entries = Object.entries(c).filter(([k]) => Number(k) !== index + 1).map(([k, p]) => [Number(k) > index + 1 ? Number(k) - 1 : Number(k), p] as const);
       return Object.fromEntries(entries);
+    });
+  }
+
+  function moveActivity(index: number, direction: "up" | "down") {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= draft.activities.length) return;
+
+    setDraft((c) => {
+      const list = [...c.activities];
+
+      const activeTime = {
+        startTime: list[index].startTime,
+        endTime: list[index].endTime,
+      };
+      const targetTime = {
+        startTime: list[targetIndex].startTime,
+        endTime: list[targetIndex].endTime,
+      };
+
+      const temp = list[index];
+      list[index] = list[targetIndex];
+      list[targetIndex] = temp;
+
+      list[index] = {
+        ...list[index],
+        startTime: activeTime.startTime,
+        endTime: activeTime.endTime,
+      };
+      list[targetIndex] = {
+        ...list[targetIndex],
+        startTime: targetTime.startTime,
+        endTime: targetTime.endTime,
+      };
+
+      const updatedList = list.map((item, idx) => ({
+        ...item,
+        no: idx + 1,
+      }));
+
+      return normalizeDraft({
+        ...c,
+        activities: updatedList,
+      });
+    });
+
+    const activeNo = index + 1;
+    const targetNo = targetIndex + 1;
+
+    setPendingPhotos((c) => {
+      const next = { ...c };
+      const activeVal = next[activeNo];
+      const targetVal = next[targetNo];
+
+      if (activeVal !== undefined) {
+        next[targetNo] = activeVal;
+      } else {
+        delete next[targetNo];
+      }
+
+      if (targetVal !== undefined) {
+        next[activeNo] = targetVal;
+      } else {
+        delete next[activeNo];
+      }
+
+      return next;
+    });
+
+    setPendingPreviews((c) => {
+      const next = { ...c };
+      const activeVal = next[activeNo];
+      const targetVal = next[targetNo];
+
+      if (activeVal !== undefined) {
+        next[targetNo] = activeVal;
+      } else {
+        delete next[targetNo];
+      }
+
+      if (targetVal !== undefined) {
+        next[activeNo] = targetVal;
+      } else {
+        delete next[activeNo];
+      }
+
+      return next;
+    });
+
+    setEditableOriginalPhotos((c) => {
+      const next = { ...c };
+      const activeVal = next[activeNo];
+      const targetVal = next[targetNo];
+
+      if (activeVal !== undefined) {
+        next[targetNo] = activeVal;
+      } else {
+        delete next[targetNo];
+      }
+
+      if (targetVal !== undefined) {
+        next[activeNo] = targetVal;
+      } else {
+        delete next[activeNo];
+      }
+
+      return next;
     });
   }
 
@@ -1580,7 +1685,7 @@ export function useReportDashboard() {
     savedLocalDrafts, localDraftsLoading, showDraftsModal, setShowDraftsModal,
     localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
     showRenameOverwriteWarning, renameOverwriteWarningKey,
-    change, changeActivity, addActivity, removeActivity, setActivityFiles, clearActivityFiles,
+    change, changeActivity, addActivity, removeActivity, moveActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
     handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,

@@ -40,7 +40,7 @@ export function ReportPdfDocument(props: { report: Report }) {
           </thead>
           <tbody>
             {report.activities.map((activity) => (
-              <tr key={activity.no}>
+              <tr key={activity.id || activity.no}>
                 <td className="no-cell">{activity.no}</td>
                 <td className="detail-cell">{activity.description?.trim() || "-"}</td>
                 <td className="time-cell">
