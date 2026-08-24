@@ -10,6 +10,7 @@ import { useConnectivity } from "./hooks/useConnectivity";
 import { useReportDashboard } from "./hooks/use-report-dashboard";
 import { getWitaToday } from "./lib/time";
 import { showSuccess, showInfo } from "./lib/alerts";
+import { LoginView } from "./components/login-view";
 
 type ThemeMode = "light" | "dark" | "cheerfull";
 type NavbarPosition = "top" | "left" | "right";
@@ -269,7 +270,7 @@ export default function App() {
           </button>
         )}
         <div className="min-w-0 flex-1">
-          <AppTabs view={dashboard.view} onChange={dashboard.setView} />
+          <AppTabs view={dashboard.view} onChange={dashboard.setView} userSession={dashboard.userSession} />
         </div>
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2">
@@ -290,6 +291,34 @@ export default function App() {
       </div>
     </div>
   );
+
+  if (dashboard.userAuthLoading || dashboard.adminAuthLoading) {
+    return (
+      <div className="min-h-screen w-full flex items-center justify-center bg-[var(--surface-muted)]">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-sm text-[var(--text-muted)]">Memverifikasi sesi...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dashboard.userSession && !dashboard.adminSession) {
+    return (
+      <LoginView
+        reporterNames={dashboard.reporterNames}
+        userSubmitting={dashboard.userSubmitting}
+        onUserLogin={dashboard.handleUserLogin}
+        onUserRegister={dashboard.handleUserRegister}
+        adminSubmitting={dashboard.adminSubmitting}
+        onAdminLogin={dashboard.handleAdminLogin}
+        adminEmail={dashboard.adminEmail}
+        setAdminEmail={dashboard.setAdminEmail}
+        adminPassword={dashboard.adminPassword}
+        setAdminPassword={dashboard.setAdminPassword}
+      />
+    );
+  }
 
   return (
     <div className="app-shell min-h-screen px-4 py-4 sm:px-6 lg:px-8">
@@ -324,7 +353,7 @@ export default function App() {
                 </button>
               )}
               <div className="min-w-0 flex-1 lg:flex-none">
-                <AppTabs view={dashboard.view} onChange={dashboard.setView} />
+                <AppTabs view={dashboard.view} onChange={dashboard.setView} userSession={dashboard.userSession} />
               </div>
               {dashboard.view === "entry" && (
                 <button
@@ -357,6 +386,7 @@ export default function App() {
         {dashboard.view === "entry" ? (
           <EntryView
             draft={dashboard.draft}
+            userSession={dashboard.userSession}
             savedNames={dashboard.savedNames}
             reporterNames={dashboard.reporterNames}
             searchName={dashboard.searchName}
@@ -433,6 +463,9 @@ export default function App() {
             historyDate={dashboard.historyDate}
             setHistoryDate={dashboard.setHistoryDate}
             historyResults={dashboard.historyResults}
+            reports={dashboard.reports}
+            userSession={dashboard.userSession}
+            adminSession={dashboard.adminSession}
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
@@ -451,6 +484,10 @@ export default function App() {
             onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
             onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
             onOpenSavedDrafts={() => dashboard.setShowDraftsModal(true)}
+            onStartNewReportForDate={(date: string) => {
+              dashboard.change("reportDate", date);
+              dashboard.setView("entry");
+            }}
           />
         ) : null}
 
@@ -466,6 +503,10 @@ export default function App() {
         {dashboard.view === "admin" ? (
           <AdminDashboardView
             adminSession={dashboard.adminSession}
+            userSession={dashboard.userSession}
+            userSubmitting={dashboard.userSubmitting}
+            onUserUpdateProfile={dashboard.handleUserUpdateProfile}
+            onUserLogout={dashboard.handleUserLogout}
             adminEmail={dashboard.adminEmail}
             setAdminEmail={dashboard.setAdminEmail}
             adminPassword={dashboard.adminPassword}

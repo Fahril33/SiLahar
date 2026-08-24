@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useMediaQuery } from "../hooks/use-media-query";
-import { formatWitaDateTime } from "../lib/time";
-import type { Report } from "../types/report";
+import { formatWitaDateTime, formatWitaDate } from "../lib/time";
+import type {
+  Report,
+  ReporterDirectoryProfile,
+  ReportActivity,
+} from "../types/report";
+import type { AdminSessionState } from "../types/admin";
 import type { LocalReportDraftSummary } from "../types/local-draft";
+import { isSameReporterName } from "../lib/reporter-name";
 import { LocalDraftsModal } from "./local-drafts-modal";
-import { getHolidayInfo } from "../lib/holidays";
-
-
+import {
+  getHolidayInfo,
+  SYSTEM_START_DATE,
+  getEffectiveWorkingDaysInRange,
+  isWorkDay,
+} from "../lib/holidays";
 
 function FileTextIcon(props: { className?: string }) {
   return (
@@ -27,8 +36,6 @@ function FileTextIcon(props: { className?: string }) {
     </svg>
   );
 }
-
-
 
 function ReloadIcon() {
   return (
@@ -228,6 +235,9 @@ export function HistoryView(props: {
   historyDate: string;
   setHistoryDate: (value: string) => void;
   historyResults: Report[];
+  reports: Report[];
+  userSession?: ReporterDirectoryProfile | null;
+  adminSession?: AdminSessionState | null;
   onHandleLoadEdit: (report: Report) => Promise<void>;
   onHandleExport: (report: Report) => Promise<void>;
   onHandlePrint: (
@@ -253,6 +263,7 @@ export function HistoryView(props: {
   onHandleDeleteLocalDraft?: (draftId: string) => Promise<void>;
   onHandleQueueLocalDraftUpload?: (draftId: string) => Promise<void>;
   onOpenSavedDrafts?: () => void;
+  onStartNewReportForDate?: (date: string) => void;
 }) {
   const {
     loading,
@@ -276,6 +287,7 @@ export function HistoryView(props: {
     onHandleDeleteLocalDraft,
     onHandleQueueLocalDraftUpload,
     onOpenSavedDrafts,
+    onStartNewReportForDate,
   } = props;
   const [openPrintMenuId, setOpenPrintMenuId] = useState<string | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
@@ -284,9 +296,219 @@ export function HistoryView(props: {
 
   const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [statusSearchQuery, setStatusSearchQuery] = useState("");
-  const [expandedCardNames, setExpandedCardNames] = useState<Record<string, boolean>>({});
+  const [expandedCardNames, setExpandedCardNames] = useState<
+    Record<string, boolean>
+  >({});
   const [showSearchCapsule, setShowSearchCapsule] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Month and Year selector for chronological view
+  const [chronoMonth, setChronoMonth] = useState(() => new Date().getMonth());
+  const [chronoYear, setChronoYear] = useState(() => new Date().getFullYear());
+
+  // Flash highlight effect state
+  const [flashingDate, setFlashingDate] = useState<string | null>(null);
+
+  const BULAN_LABELS = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+  ];
+
+  const showChronologicalView =
+    Boolean(props.userSession) ||
+    (Boolean(props.adminSession) && statusSearchQuery.trim() !== "");
+
+  // All reports list passed from props
+  const allReports = props.reports || [];
+
+  const chronoReports = useMemo(() => {
+    if (!showChronologicalView) return [];
+
+    // Determine the target reporter name
+    const targetName = props.userSession
+      ? props.userSession.fullName
+      : statusSearchQuery.trim();
+
+    // Filter reports belonging to targetName in the selected month & year
+    return allReports
+      .filter((r: Report) => {
+        const matchName = isSameReporterName(r.nama, targetName);
+        if (!matchName) return false;
+
+        const rDate = new Date(r.reportDate);
+        return (
+          rDate.getMonth() === chronoMonth && rDate.getFullYear() === chronoYear
+        );
+      })
+      .sort((a: Report, b: Report) => b.reportDate.localeCompare(a.reportDate));
+  }, [
+    allReports,
+    showChronologicalView,
+    props.userSession,
+    statusSearchQuery,
+    chronoMonth,
+    chronoYear,
+  ]);
+
+  const consistencyStats = useMemo(() => {
+    if (!showChronologicalView || !props.userSession) return null;
+
+    // Start date of the month
+    const yyyy = String(chronoYear);
+    const mm = String(chronoMonth + 1).padStart(2, "0");
+    const startOfMonth = `${yyyy}-${mm}-01`;
+
+    // End date of the month
+    const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
+    const endOfMonth = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
+
+    // Clamp the end date to today if the selected period is the current month and year
+    const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
+    const effectiveStart = startOfMonth;
+
+    // Get expected working days in this range
+    const expectedStats = getEffectiveWorkingDaysInRange(
+      effectiveStart,
+      effectiveEnd,
+    );
+    const targetDays = expectedStats.totalWorkingDays;
+
+    // Filter unique working days submitted by this user in this range
+    const uniqueWorkingDaysSubmitted = new Set(
+      chronoReports
+        .map((r) => r.reportDate)
+        .filter(
+          (d) =>
+            d >= effectiveStart &&
+            d <= effectiveEnd &&
+            isWorkDay(d) &&
+            d >= SYSTEM_START_DATE,
+        ),
+    ).size;
+
+    const pct =
+      targetDays > 0
+        ? Math.min(
+            100,
+            Math.round((uniqueWorkingDaysSubmitted / targetDays) * 100),
+          )
+        : 0;
+
+    return {
+      percentage: pct,
+      submitted: uniqueWorkingDaysSubmitted,
+      target: targetDays,
+    };
+  }, [
+    chronoReports,
+    showChronologicalView,
+    props.userSession,
+    chronoMonth,
+    chronoYear,
+    props.today,
+  ]);
+
+  const expectedWorkingDays = useMemo(() => {
+    if (!showChronologicalView || !props.userSession) return [];
+
+    const yyyy = String(chronoYear);
+    const mm = String(chronoMonth + 1).padStart(2, "0");
+
+    // Start of month or SYSTEM_START_DATE (whichever is later)
+    const startOfMonth = `${yyyy}-${mm}-01`;
+    const effectiveStart = startOfMonth > SYSTEM_START_DATE ? startOfMonth : SYSTEM_START_DATE;
+
+    // End of month or today (whichever is earlier)
+    const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
+    const endOfMonth = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
+    const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
+
+    if (effectiveStart > effectiveEnd) return [];
+
+    const days: string[] = [];
+    const current = new Date(effectiveStart);
+    const endLimit = new Date(effectiveEnd);
+
+    while (current <= endLimit) {
+      const yStr = current.getFullYear();
+      const mStr = String(current.getMonth() + 1).padStart(2, "0");
+      const dStr = String(current.getDate()).padStart(2, "0");
+      const dateStr = `${yStr}-${mStr}-${dStr}`;
+      if (isWorkDay(dateStr)) {
+        days.push(dateStr);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return days;
+  }, [chronoMonth, chronoYear, props.today, showChronologicalView, props.userSession]);
+
+  const chronoItems = useMemo(() => {
+    if (!showChronologicalView) return [];
+
+    // If this is not a regular user session (e.g. admin searching), just return the actual reports!
+    if (!props.userSession) {
+      return chronoReports.map(r => ({ type: "report" as const, date: r.reportDate, report: r }));
+    }
+
+    // For regular users, we merge with expected working days
+    const allDates = new Set([
+      ...chronoReports.map(r => r.reportDate),
+      ...expectedWorkingDays
+    ]);
+
+    const sortedDates = Array.from(allDates).sort((a, b) => b.localeCompare(a));
+
+    return sortedDates.map(date => {
+      const report = chronoReports.find(r => r.reportDate === date);
+      if (report) {
+        return { type: "report" as const, date, report };
+      } else {
+        return { type: "missing" as const, date, report: null };
+      }
+    });
+  }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays]);
+
+  const handleScrollToDate = (targetDate: string) => {
+    if (!targetDate) return;
+
+    const dateObj = new Date(targetDate);
+    const targetMonth = dateObj.getMonth();
+    const targetYear = dateObj.getFullYear();
+
+    // If different month/year, switch first
+    if (targetMonth !== chronoMonth || targetYear !== chronoYear) {
+      setChronoMonth(targetMonth);
+      setChronoYear(targetYear);
+    }
+
+    // Scroll to the element after a short delay to allow rendering
+    setTimeout(() => {
+      const element = document.getElementById(`date-group-${targetDate}`);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        // Flash highlight effect
+        setFlashingDate(targetDate);
+        setTimeout(() => setFlashingDate(null), 2000);
+      }
+    }, 200);
+  };
+
+  useEffect(() => {
+    if (showChronologicalView && historyDate) {
+      handleScrollToDate(historyDate);
+    }
+  }, [historyDate, showChronologicalView]);
 
   useEffect(() => {
     if (showSearchCapsule && searchInputRef.current) {
@@ -299,7 +521,7 @@ export function HistoryView(props: {
 
     const originalBodyOverflow = document.body.style.overflow;
     const originalHtmlOverflow = document.documentElement.style.overflow;
-    
+
     // Prevent background scrolling when modal is open
     document.body.style.overflow = "hidden";
     document.documentElement.style.overflow = "hidden";
@@ -332,10 +554,10 @@ export function HistoryView(props: {
       const year = parseInt(parts[0], 10);
       const month = parseInt(parts[1], 10) - 1;
       const day = parseInt(parts[2], 10);
-      
+
       const date = new Date(year, month, day);
       date.setDate(date.getDate() + amount);
-      
+
       const yyyy = date.getFullYear();
       const mm = String(date.getMonth() + 1).padStart(2, "0");
       const dd = String(date.getDate()).padStart(2, "0");
@@ -345,14 +567,14 @@ export function HistoryView(props: {
 
   const submissionStats = useMemo(() => {
     const total = statusRows.length;
-    const done = statusRows.filter(r => r.done).length;
+    const done = statusRows.filter((r) => r.done).length;
     const pending = total - done;
     return { total, done, pending };
   }, [statusRows]);
 
   const filteredStatusRows = useMemo(() => {
     const filtered = statusRows.filter((row) =>
-      row.name.toLowerCase().includes(statusSearchQuery.toLowerCase())
+      row.name.toLowerCase().includes(statusSearchQuery.toLowerCase()),
     );
     return [...filtered].sort((a, b) => {
       if (a.done !== b.done) {
@@ -366,8 +588,6 @@ export function HistoryView(props: {
       return a.name.localeCompare(b.name);
     });
   }, [statusRows, statusSearchQuery]);
-
-
 
   useEffect(() => {
     if (!openPrintMenuId) {
@@ -397,23 +617,61 @@ export function HistoryView(props: {
 
   return (
     <section className="space-y-4 animate-fadeIn">
-          {/* Desktop & Tablet Filter Panels */}
-          <div className="hidden md:block w-full animate-fadeIn">
-            <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
-              {/* Top Row: Stats Capsule & Search/Date Pill */}
-              <div className="flex md:flex-row md:items-center md:justify-between gap-4">
-                {/* Stats Capsule */}
-                <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
-                  <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
-                  <span className="mx-3 text-[var(--border-soft)]">|</span>
-                  <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
-                  <span className="mx-3 text-[var(--border-soft)]">|</span>
-                  <span>Total {submissionStats.total}</span>
+      {/* Desktop & Tablet Filter Panels */}
+      <div className="hidden md:block w-full animate-fadeIn">
+        <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
+          {/* Top Row: Stats Capsule & Search/Date Pill */}
+          <div className="flex md:flex-row md:items-center md:justify-between gap-4">
+            {/* Stats Capsule */}
+            {props.userSession || showChronologicalView ? (
+              <div className="flex flex-wrap items-center gap-4 pl-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                    Periode:
+                  </span>
+                  <select
+                    value={chronoMonth}
+                    onChange={(e) => setChronoMonth(Number(e.target.value))}
+                    className="field-input py-1 px-2 text-xs rounded-lg min-w-[100px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
+                  >
+                    {BULAN_LABELS.map((label, idx) => (
+                      <option key={idx} value={idx}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={chronoYear}
+                    onChange={(e) => setChronoYear(Number(e.target.value))}
+                    className="field-input py-1 px-2 text-xs rounded-lg min-w-[70px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
+                  >
+                    {[2026, 2027, 2028].map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+              </div>
+            ) : (
+              <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
+                <span className="text-[var(--success)]">
+                  {submissionStats.done} Sudah isi
+                </span>
+                <span className="mx-3 text-[var(--border-soft)]">|</span>
+                <span className="text-[var(--danger)]">
+                  {submissionStats.pending} Belum isi
+                </span>
+                <span className="mx-3 text-[var(--border-soft)]">|</span>
+                <span>Total {submissionStats.total}</span>
+              </div>
+            )}
 
-                {/* Unified Search Pill */}
-                <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
-                  {/* Desktop Inline Search */}
+            {/* Unified Search Pill */}
+            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
+              {/* Desktop Inline Search */}
+              {!props.userSession && (
+                <>
                   <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
                     <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
                     <input
@@ -433,8 +691,8 @@ export function HistoryView(props: {
                     type="button"
                     onClick={() => setShowSearchCapsule((prev) => !prev)}
                     className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
-                      showSearchCapsule 
-                        ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
+                      showSearchCapsule
+                        ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10"
                         : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
                     }`}
                     title="Cari Petugas"
@@ -444,99 +702,10 @@ export function HistoryView(props: {
 
                   {/* Tablet-only Divider */}
                   <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-                  {/* Date Picker with Prev/Next Day buttons */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleAdjustDay(-1)}
-                      className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-                      title="Hari Sebelumnya"
-                    >
-                      <ChevronLeftIcon className="h-3.5 w-3.5" />
-                    </button>
-
-                    <div className="flex items-center gap-1.5 px-0.5">
-                      <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-                      <input
-                        type="date"
-                        value={historyDate}
-                        onChange={(e) => setHistoryDate(e.target.value)}
-                        className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleAdjustDay(1)}
-                      className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-                      title="Hari Berikutnya"
-                    >
-                      <ChevronRightIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-
-                  {/* Vertical Divider */}
-                  <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-                  {/* Reload Button */}
-                  <button
-                    type="button"
-                    onClick={() => void onReload()}
-                    disabled={loading}
-                    className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
-                    title="Muat ulang data"
-                  >
-                    {loading ? <SpinnerIcon /> : <ReloadIcon />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Tablet Collapsible Search Capsule */}
-              {showSearchCapsule && (
-                <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-                  <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={statusSearchQuery}
-                    onChange={(e) => setStatusSearchQuery(e.target.value)}
-                    placeholder="Cari petugas..."
-                    className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-                  />
-                </div>
+                </>
               )}
-            </div>
-          </div>
 
-          {/* Mobile Filter Panel */}
-          <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
-            {/* Row 1: Stats Capsule */}
-            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
-              <span className="text-[var(--success)]">{submissionStats.done} Sudah isi</span>
-              <span className="mx-2.5 text-[var(--border-soft)]">|</span>
-              <span className="text-[var(--danger)]">{submissionStats.pending} Belum isi</span>
-              <span className="mx-2.5 text-[var(--border-soft)]">|</span>
-              <span>Total {submissionStats.total}</span>
-            </div>
-
-            {/* Row 2: Date Picker & Reload Capsule */}
-            <div className="flex items-center justify-between h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm w-full">
-              <button
-                type="button"
-                onClick={() => setShowSearchCapsule((prev) => !prev)}
-                className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
-                  showSearchCapsule 
-                    ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10" 
-                    : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                }`}
-                title="Cari Petugas"
-              >
-                <SearchIcon className="h-4 w-4" />
-              </button>
-
-              <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
+              {/* Date Picker with Prev/Next Day buttons */}
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   type="button"
@@ -567,8 +736,10 @@ export function HistoryView(props: {
                 </button>
               </div>
 
+              {/* Vertical Divider */}
               <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
 
+              {/* Reload Button */}
               <button
                 type="button"
                 onClick={() => void onReload()}
@@ -579,24 +750,606 @@ export function HistoryView(props: {
                 {loading ? <SpinnerIcon /> : <ReloadIcon />}
               </button>
             </div>
-
-            {/* Row 3: Mobile Search Capsule */}
-            {showSearchCapsule && (
-              <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={statusSearchQuery}
-                  onChange={(e) => setStatusSearchQuery(e.target.value)}
-                  placeholder="Cari petugas..."
-                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-                />
-              </div>
-            )}
           </div>
 
-          {/* Submission Status List Grid */}
+          {/* Tablet Collapsible Search Capsule */}
+          {!props.userSession && showSearchCapsule && (
+            <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={statusSearchQuery}
+                onChange={(e) => setStatusSearchQuery(e.target.value)}
+                placeholder="Cari petugas..."
+                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Mobile Filter Panel */}
+      {!props.userSession && !showChronologicalView && (
+        <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
+          {/* Row 1: Stats Capsule */}
+          <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
+            <span className="text-[var(--success)]">
+              {submissionStats.done} Sudah isi
+            </span>
+            <span className="mx-2.5 text-[var(--border-soft)]">|</span>
+            <span className="text-[var(--danger)]">
+              {submissionStats.pending} Belum isi
+            </span>
+            <span className="mx-2.5 text-[var(--border-soft)]">|</span>
+            <span>Total {submissionStats.total}</span>
+          </div>
+
+          {/* Row 2: Date Picker & Reload Capsule */}
+          <div className="flex items-center justify-between h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm w-full">
+            <button
+              type="button"
+              onClick={() => setShowSearchCapsule((prev) => !prev)}
+              className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+                showSearchCapsule
+                  ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10"
+                  : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              }`}
+              title="Cari Petugas"
+            >
+              <SearchIcon className="h-4 w-4" />
+            </button>
+            <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+            <div className="flex items-center gap-1 shrink-0 mx-auto">
+              <button
+                type="button"
+                onClick={() => handleAdjustDay(-1)}
+                className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                title="Hari Sebelumnya"
+              >
+                <ChevronLeftIcon className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="flex items-center gap-1.5 px-0.5">
+                <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                <input
+                  type="date"
+                  value={historyDate}
+                  onChange={(e) => setHistoryDate(e.target.value)}
+                  className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleAdjustDay(1)}
+                className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                title="Hari Berikutnya"
+              >
+                <ChevronRightIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+            <button
+              type="button"
+              onClick={() => void onReload()}
+              disabled={loading}
+              className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
+              title="Muat ulang data"
+            >
+              {loading ? <SpinnerIcon /> : <ReloadIcon />}
+            </button>
+          </div>
+
+          {/* Row 3: Mobile Search Capsule */}
+          {showSearchCapsule && (
+            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
+              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={statusSearchQuery}
+                onChange={(e) => setStatusSearchQuery(e.target.value)}
+                placeholder="Cari petugas..."
+                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Submission Status List Grid or Chronological List */}
+      <div className="w-full">
+        {showChronologicalView ? (
+          <div className="space-y-4 max-w-4xl mx-auto w-full animate-fadeIn">
+            {/* On mobile, render the Filter & Periode Card at the top */}
+            <div className="md:hidden">
+              <div className="surface-card rounded-[28px] p-5 border border-[var(--border-soft)] shadow-sm space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                      Bulan
+                    </label>
+                    <select
+                      value={chronoMonth}
+                      onChange={(e) => setChronoMonth(Number(e.target.value))}
+                      className="w-full field-input py-2 px-3 text-xs rounded-xl cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)] focus:outline-none focus:border-purple-500"
+                    >
+                      {BULAN_LABELS.map((label, idx) => (
+                        <option key={idx} value={idx}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                      Tahun
+                    </label>
+                    <select
+                      value={chronoYear}
+                      onChange={(e) => setChronoYear(Number(e.target.value))}
+                      className="w-full field-input py-2 px-3 text-xs rounded-xl cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)] focus:outline-none focus:border-purple-500"
+                    >
+                      {[2026, 2027, 2028].map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1.5">
+                      Lompat ke Tanggal
+                    </label>
+                    <input
+                      type="date"
+                      value={historyDate}
+                      onChange={(e) => setHistoryDate(e.target.value)}
+                      className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-purple-500 rounded-xl px-4 py-2.5 text-xs focus:outline-none transition shadow-inner text-[var(--text-primary)] cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {consistencyStats && (
+                  <div className="pt-3.5 border-t border-[var(--border-soft)] space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-xs font-bold text-[var(--text-primary)]">Konsistensi Laporan</h4>
+                          <span className="group relative cursor-pointer text-[var(--text-soft)] hover:text-[var(--text-primary)] transition shrink-0">
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="12" y1="16" x2="12" y2="12" />
+                              <line x1="12" y1="8" x2="12.01" y2="8" />
+                            </svg>
+                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
+                              Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>19 Agustus 2026</strong> tidak dihitung sebagai beban target absensi kerja.
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-sm font-extrabold text-[var(--text-primary)] tabular-nums">{consistencyStats.percentage}%</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="w-full h-2 rounded-full bg-[var(--surface-muted)] overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ease-out ${
+                            consistencyStats.percentage >= 80
+                              ? "bg-[var(--success)]"
+                              : consistencyStats.percentage >= 50
+                                ? "bg-[var(--warning)]"
+                                : "bg-[var(--danger)]"
+                          }`}
+                          style={{ width: `${consistencyStats.percentage}%` }}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-0.5 text-[10px] text-[var(--text-muted)] font-semibold">
+                        <div className="flex justify-between">
+                          <span>Sudah mengisi:</span>
+                          <span className="text-[var(--text-primary)] font-bold">{consistencyStats.submitted} hari</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Target hari efektif:</span>
+                          <span className="text-[var(--text-primary)] font-bold">{consistencyStats.target} hari</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+
+            {consistencyStats && (
+              <div className="hidden md:block surface-card rounded-2xl p-4 border border-[var(--border-soft)] shadow-sm space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-xs font-bold text-[var(--text-primary)] leading-tight">
+                        Konsistensi Laporan
+                      </h3>
+                      <span className="group relative cursor-pointer text-[var(--text-soft)] hover:text-[var(--text-primary)] transition shrink-0">
+                        <svg
+                          viewBox="0 0 24 24"
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="12" y1="16" x2="12" y2="12" />
+                          <line x1="12" y1="8" x2="12.01" y2="8" />
+                        </svg>
+
+                        {/* Custom instant tooltip overlay */}
+                        <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
+                          Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>19 Agustus 2026</strong> tidak dihitung sebagai beban target absensi kerja.
+                        </span>
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[var(--text-muted)] font-semibold leading-none mt-0.5">
+                      {BULAN_LABELS[chronoMonth]} {chronoYear}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-base font-extrabold text-[var(--text-primary)] tabular-nums">
+                      {consistencyStats.percentage}%
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="w-full h-2 rounded-full bg-[var(--surface-muted)] overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${
+                        consistencyStats.percentage >= 80
+                          ? "bg-[var(--success)]"
+                          : consistencyStats.percentage >= 50
+                            ? "bg-[var(--warning)]"
+                            : "bg-[var(--danger)]"
+                      }`}
+                      style={{ width: `${consistencyStats.percentage}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold">
+                    <span>
+                      Sudah mengisi:{" "}
+                      <strong className="text-[var(--text-primary)]">
+                        {consistencyStats.submitted} hari
+                      </strong>
+                    </span>
+                    <span>
+                      Target:{" "}
+                      <strong className="text-[var(--text-primary)]">
+                        {consistencyStats.target} hari kerja efektif
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {chronoItems.length === 0 ? (
+              <div className="surface-card rounded-[28px] p-16 text-center text-[var(--text-muted)] border border-[var(--border-soft)]">
+                <p className="text-sm font-semibold">
+                  Belum ada data laporan untuk periode yang dipilih.
+                </p>
+              </div>
+            ) : (
+              chronoItems.map((item) => {
+                if (item.type === "report") {
+                  const report = item.report!;
+                  const isExpanded = expandedCardNames[report.id] || false;
+                  return (
+                    <div
+                      key={report.id}
+                      id={`date-group-${report.reportDate}`}
+                      onClick={() => toggleExpand(report.id)}
+                      className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all cursor-pointer hover:bg-[var(--surface-muted)]/30 ${
+                        flashingDate === report.reportDate
+                          ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
+                          : ""
+                      }`}
+                    >
+                      <div>
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 bg-purple-500/10 text-purple-500">
+                              <CalendarIcon className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-bold text-[var(--text-primary)] truncate text-sm">
+                                {formatWitaDate(report.reportDate)}
+                              </p>
+                              <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
+                                TIM {report.tim || "TRC"} •{" "}
+                                {report.activities.length} Aktivitas •{" "}
+                                {report.updatedAt !== report.createdAt
+                                  ? `Diperbarui ${formatWitaDateTime(report.updatedAt)}`
+                                  : `Diunggah ${formatWitaDateTime(report.createdAt)}`}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Right side container */}
+                          <div className="flex items-center gap-3 shrink-0">
+                            <div
+                              className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {/* Edit Button */}
+                              {(report.reportDate === today ||
+                                canUseAnyReportDate) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void onHandleLoadEdit(report);
+                                  }}
+                                  disabled={editLoadingReportId === report.id}
+                                  className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                  title="Edit Laporan"
+                                >
+                                  {editLoadingReportId === report.id ? (
+                                    <SpinnerIcon />
+                                  ) : (
+                                    <PencilIcon className="h-3.5 w-3.5" />
+                                  )}
+                                  <span>Edit</span>
+                                </button>
+                              )}
+
+                              {/* Excel Export */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onHandleExport(report);
+                                }}
+                                disabled={excelExportingReportId === report.id}
+                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                title="Download Excel"
+                              >
+                                {excelExportingReportId === report.id ? (
+                                  <SpinnerIcon />
+                                ) : (
+                                  <DownloadIcon className="h-3.5 w-3.5" />
+                                )}
+                                <span>Excel</span>
+                              </button>
+
+                              {/* Print PDF Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isMobileOrTablet) {
+                                    void onHandleUnsupportedMobilePrint();
+                                  } else {
+                                    void onHandlePrint(report, "a4");
+                                  }
+                                }}
+                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                title="Cetak PDF"
+                              >
+                                <PrintIcon className="h-3.5 w-3.5" />
+                                <span>Print</span>
+                              </button>
+
+                              {/* Save as PDF Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void onHandleSaveAsPdf(report);
+                                }}
+                                disabled={pdfExportingReportId === report.id}
+                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                title="Save PDF"
+                              >
+                                {pdfExportingReportId === report.id ? (
+                                  <SpinnerIcon />
+                                ) : (
+                                  <FileDownIcon className="h-3.5 w-3.5" />
+                                )}
+                                <span>PDF</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Collapsible Activity List */}
+                        <div
+                          className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]"
+                          style={{
+                            maxHeight: isExpanded ? "1000px" : "0px",
+                            opacity: isExpanded ? 1 : 0,
+                            marginTop: isExpanded ? "12px" : "0px",
+                            paddingTop: isExpanded ? "8px" : "0px",
+                            borderTopColor: isExpanded
+                              ? "var(--border-soft)"
+                              : "transparent",
+                            borderTopWidth: isExpanded ? "1px" : "0px",
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
+                            {report.activities.map((activity: ReportActivity) => (
+                              <li
+                                key={`${report.id}-${activity.no}`}
+                                className="leading-relaxed py-2"
+                              >
+                                <div className="font-semibold text-[var(--text-primary)]">
+                                  {activity.no}. {activity.description}
+                                </div>
+                                <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
+                                  <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                                  <span>
+                                    {activity.startTime} - {activity.endTime} WITA
+                                  </span>
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Mobile Actions Row */}
+                      {report.activities.length > 0 ? (
+                        <div
+                          className="md:hidden border-t border-[var(--border-soft)] mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Edit Button */}
+                          {(report.reportDate === today ||
+                            canUseAnyReportDate) && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void onHandleLoadEdit(report);
+                              }}
+                              disabled={editLoadingReportId === report.id}
+                              className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                              title="Edit Laporan"
+                            >
+                              {editLoadingReportId === report.id ? (
+                                <SpinnerIcon />
+                              ) : (
+                                <PencilIcon className="h-3.5 w-3.5" />
+                              )}
+                              <span>Edit</span>
+                            </button>
+                          )}
+
+                          {/* Excel Export */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onHandleExport(report);
+                            }}
+                            disabled={excelExportingReportId === report.id}
+                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                            title="Download Excel"
+                          >
+                            {excelExportingReportId === report.id ? (
+                              <SpinnerIcon />
+                            ) : (
+                              <DownloadIcon className="h-3.5 w-3.5" />
+                            )}
+                            <span>Excel</span>
+                          </button>
+
+                          {/* Print PDF Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isMobileOrTablet) {
+                                void onHandleUnsupportedMobilePrint();
+                              } else {
+                                void onHandlePrint(report, "a4");
+                              }
+                            }}
+                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                            title="Cetak PDF"
+                          >
+                            <PrintIcon className="h-3.5 w-3.5" />
+                            <span>Print</span>
+                          </button>
+
+                          {/* Save as PDF Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onHandleSaveAsPdf(report);
+                            }}
+                            disabled={pdfExportingReportId === report.id}
+                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                            title="Save PDF"
+                          >
+                            {pdfExportingReportId === report.id ? (
+                              <SpinnerIcon />
+                            ) : (
+                              <FileDownIcon className="h-3.5 w-3.5" />
+                            )}
+                            <span>PDF</span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                } else {
+                  // Render missing report card placeholder
+                  return (
+                    <div
+                      key={`missing-${item.date}`}
+                      id={`date-group-${item.date}`}
+                      className={`surface-card rounded-[26px] p-4 sm:p-5 border border-[var(--border-soft)] shadow-sm flex flex-row items-center justify-between gap-3 hover:scale-[1.01] transition-all bg-[var(--surface-panel-strong)]/40 ${
+                        flashingDate === item.date
+                          ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
+                          : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="h-10 w-10 rounded-xl bg-[var(--danger-soft)] text-[var(--danger)] flex items-center justify-center shrink-0">
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                            <line x1="12" y1="9" x2="12" y2="13" />
+                            <line x1="12" y1="17" x2="12.01" y2="17" />
+                          </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-xs font-extrabold text-[var(--text-primary)] truncate leading-tight">
+                            {formatWitaDate(item.date)}
+                          </h4>
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <span className="inline-flex items-center text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] shrink-0">
+                              Belum dibuat
+                            </span>
+                            <span className="text-[9px] text-[var(--text-muted)] font-semibold hidden xs:inline truncate">
+                              Laporan harian kosong
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 flex items-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onStartNewReportForDate) {
+                              onStartNewReportForDate(item.date);
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--primary)] text-white hover:bg-[var(--primary-strong)] text-[10px] font-extrabold transition shadow-sm shrink-0"
+                        >
+                          <span>Buat</span>
+                          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="7" y1="17" x2="17" y2="7" />
+                            <polyline points="7 7 17 7 17 17" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+              })
+            )}
+          </div>
+        ) : (
           <div className="grid grid-cols-1 gap-2 max-w-4xl mx-auto w-full">
             {holidayInfo.isHoliday && (
               <div className="holiday-info-banner surface-card rounded-[20px] p-4 shadow-sm flex items-start gap-3 text-xs mb-1.5 animate-fadeIn">
@@ -608,7 +1361,10 @@ export function HistoryView(props: {
                     Hari Libur: {holidayInfo.name || "Akhir Pekan"}
                   </p>
                   <p className="banner-desc text-[10.5px] mt-0.5 leading-relaxed">
-                    Tanggal yang Anda pilih saat ini adalah hari libur (Sabtu, Minggu, atau Hari Libur Nasional). Seluruh laporan petugas pada hari libur tidak akan dihitung sebagai beban target pada statistik rekapitulasi kerja.
+                    Tanggal yang Anda pilih saat ini adalah hari libur (Sabtu,
+                    Minggu, atau Hari Libur Nasional). Seluruh laporan petugas
+                    pada hari libur tidak akan dihitung sebagai beban target
+                    pada statistik rekapitulasi kerja.
                   </p>
                 </div>
               </div>
@@ -621,16 +1377,22 @@ export function HistoryView(props: {
                   </div>
                   <div className="min-w-0">
                     <p className="font-bold text-[var(--text-primary)] truncate">
-                      Ada {savedLocalDrafts.length} draft tersimpan di perangkat ini
+                      Ada {savedLocalDrafts.length} draft tersimpan di perangkat
+                      ini
                     </p>
                     <p className="text-[10px] text-[var(--text-muted)] truncate">
-                      Draft lokal dapat dilanjutkan atau diunggah kembali kapan saja
+                      Draft lokal dapat dilanjutkan atau diunggah kembali kapan
+                      saja
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => (onOpenSavedDrafts ? onOpenSavedDrafts() : setShowDraftsModal(true))}
+                  onClick={() =>
+                    onOpenSavedDrafts
+                      ? onOpenSavedDrafts()
+                      : setShowDraftsModal(true)
+                  }
                   className="btn-secondary text-xs px-3 py-1.5 shrink-0 hover:border-amber-500/40"
                 >
                   Lihat Draft
@@ -640,31 +1402,37 @@ export function HistoryView(props: {
             {filteredStatusRows.map((row) => {
               const isExpanded = expandedCardNames[row.name] || false;
               return (
-                <div 
-                  key={row.name} 
+                <div
+                  key={row.name}
                   onClick={() => row.done && toggleExpand(row.name)}
                   className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all ${
-                    row.done ? "cursor-pointer hover:bg-[var(--surface-muted)]/30" : ""
+                    row.done
+                      ? "cursor-pointer hover:bg-[var(--surface-muted)]/30"
+                      : ""
                   }`}
                 >
                   <div>
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
-                          row.done 
-                            ? "bg-emerald-500/10 text-emerald-500" 
-                            : "bg-red-500/10 text-red-500"
-                        }`}>
+                        <div
+                          className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 ${
+                            row.done
+                              ? "bg-emerald-500/10 text-emerald-500"
+                              : "bg-red-500/10 text-red-500"
+                          }`}
+                        >
                           {row.name.substring(0, 2).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-[var(--text-primary)] truncate text-sm">{row.name}</p>
+                          <p className="font-bold text-[var(--text-primary)] truncate text-sm">
+                            {row.name}
+                          </p>
                           {row.done && row.report ? (
                             <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
-                              {row.report.activities.length} Aktivitas • {row.report.updatedAt !== row.report.createdAt 
+                              {row.report.activities.length} Aktivitas •{" "}
+                              {row.report.updatedAt !== row.report.createdAt
                                 ? `Diperbarui ${formatWitaDateTime(row.report.updatedAt)}`
-                                : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`
-                              }
+                                : `Diunggah ${formatWitaDateTime(row.report.createdAt)}`}
                             </p>
                           ) : (
                             <p className="text-xs text-[var(--text-muted)] mt-0.5 font-semibold">
@@ -673,7 +1441,7 @@ export function HistoryView(props: {
                           )}
                         </div>
                       </div>
-                      
+
                       {/* Right side container */}
                       <div className="flex items-center gap-3 shrink-0">
                         {!row.done && (
@@ -683,12 +1451,13 @@ export function HistoryView(props: {
                         )}
 
                         {row.done && row.report && (
-                          <div 
-                            className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2" 
+                          <div
+                            className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2"
                             onClick={(e) => e.stopPropagation()}
                           >
                             {/* Edit Button */}
-                            {(row.report.reportDate === today || canUseAnyReportDate) && (
+                            {(row.report.reportDate === today ||
+                              canUseAnyReportDate) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -699,7 +1468,11 @@ export function HistoryView(props: {
                                 className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                                 title="Edit Laporan"
                               >
-                                {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                                {editLoadingReportId === row.report.id ? (
+                                  <SpinnerIcon />
+                                ) : (
+                                  <PencilIcon className="h-3.5 w-3.5" />
+                                )}
                                 <span>Edit</span>
                               </button>
                             )}
@@ -711,11 +1484,17 @@ export function HistoryView(props: {
                                 e.stopPropagation();
                                 void onHandleExport(row.report!);
                               }}
-                              disabled={excelExportingReportId === row.report.id}
+                              disabled={
+                                excelExportingReportId === row.report.id
+                              }
                               className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                               title="Download Excel"
                             >
-                              {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                              {excelExportingReportId === row.report.id ? (
+                                <SpinnerIcon />
+                              ) : (
+                                <DownloadIcon className="h-3.5 w-3.5" />
+                              )}
                               <span>Excel</span>
                             </button>
 
@@ -748,7 +1527,11 @@ export function HistoryView(props: {
                               className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                               title="Save PDF"
                             >
-                              {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                              {pdfExportingReportId === row.report.id ? (
+                                <SpinnerIcon />
+                              ) : (
+                                <FileDownIcon className="h-3.5 w-3.5" />
+                              )}
                               <span>PDF</span>
                             </button>
                           </div>
@@ -758,25 +1541,34 @@ export function HistoryView(props: {
 
                     {/* Collapsible Activity List */}
                     {row.done && row.report && (
-                      <div 
+                      <div
                         className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]"
                         style={{
                           maxHeight: isExpanded ? "1000px" : "0px",
                           opacity: isExpanded ? 1 : 0,
                           marginTop: isExpanded ? "8px" : "0px",
                           paddingTop: isExpanded ? "4px" : "0px",
-                          borderTopColor: isExpanded ? "var(--border-soft)" : "transparent",
-                          borderTopWidth: isExpanded ? "1px" : "0px"
+                          borderTopColor: isExpanded
+                            ? "var(--border-soft)"
+                            : "transparent",
+                          borderTopWidth: isExpanded ? "1px" : "0px",
                         }}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
                           {row.report.activities.map((activity) => (
-                            <li key={`${row.report!.id}-${activity.no}`} className="leading-relaxed py-2">
-                              <div className="font-semibold text-[var(--text-primary)]">{activity.no}. {activity.description}</div>
+                            <li
+                              key={`${row.report!.id}-${activity.no}`}
+                              className="leading-relaxed py-2"
+                            >
+                              <div className="font-semibold text-[var(--text-primary)]">
+                                {activity.no}. {activity.description}
+                              </div>
                               <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
                                 <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
-                                <span>{activity.startTime} - {activity.endTime} WITA</span>
+                                <span>
+                                  {activity.startTime} - {activity.endTime} WITA
+                                </span>
                               </span>
                             </li>
                           ))}
@@ -787,12 +1579,13 @@ export function HistoryView(props: {
 
                   {/* Mobile Actions Row */}
                   {row.done && row.report ? (
-                    <div 
+                    <div
                       className="md:hidden border-t border-[var(--border-soft)] mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Edit Button */}
-                      {(row.report.reportDate === today || canUseAnyReportDate) && (
+                      {(row.report.reportDate === today ||
+                        canUseAnyReportDate) && (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -803,7 +1596,11 @@ export function HistoryView(props: {
                           className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                           title="Edit Laporan"
                         >
-                          {editLoadingReportId === row.report.id ? <SpinnerIcon /> : <PencilIcon className="h-3.5 w-3.5" />}
+                          {editLoadingReportId === row.report.id ? (
+                            <SpinnerIcon />
+                          ) : (
+                            <PencilIcon className="h-3.5 w-3.5" />
+                          )}
                           <span>Edit</span>
                         </button>
                       )}
@@ -819,7 +1616,11 @@ export function HistoryView(props: {
                         className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                         title="Download Excel"
                       >
-                        {excelExportingReportId === row.report.id ? <SpinnerIcon /> : <DownloadIcon className="h-3.5 w-3.5" />}
+                        {excelExportingReportId === row.report.id ? (
+                          <SpinnerIcon />
+                        ) : (
+                          <DownloadIcon className="h-3.5 w-3.5" />
+                        )}
                         <span>Excel</span>
                       </button>
 
@@ -852,7 +1653,11 @@ export function HistoryView(props: {
                         className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                         title="Save PDF"
                       >
-                        {pdfExportingReportId === row.report.id ? <SpinnerIcon /> : <FileDownIcon className="h-3.5 w-3.5" />}
+                        {pdfExportingReportId === row.report.id ? (
+                          <SpinnerIcon />
+                        ) : (
+                          <FileDownIcon className="h-3.5 w-3.5" />
+                        )}
                         <span>PDF</span>
                       </button>
                     </div>
@@ -862,10 +1667,14 @@ export function HistoryView(props: {
             })}
             {filteredStatusRows.length === 0 && (
               <div className="surface-card rounded-[28px] p-16 text-center text-[var(--text-muted)]">
-                <p className="text-lg">Tidak ada petugas yang cocok dengan pencarian.</p>
+                <p className="text-lg">
+                  Tidak ada petugas yang cocok dengan pencarian.
+                </p>
               </div>
             )}
           </div>
+        )}
+      </div>
 
       {/* Drafts Modal Fallback */}
       {!onOpenSavedDrafts && (

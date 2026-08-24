@@ -9,6 +9,7 @@ type AutocompleteInputProps = {
   className?: string;
   emptyMessage?: string;
   endAdornment?: React.ReactNode;
+  disabled?: boolean;
 };
 
 export function AutocompleteInput(props: AutocompleteInputProps) {
@@ -20,6 +21,7 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
     className = "",
     emptyMessage = "Belum ada saran nama yang cocok.",
     endAdornment,
+    disabled = false,
   } = props;
   const [isOpen, setIsOpen] = useState(false);
 
@@ -42,11 +44,12 @@ export function AutocompleteInput(props: AutocompleteInputProps) {
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        onFocus={() => setIsOpen(true)}
+        onFocus={() => !disabled && setIsOpen(true)}
         onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
         placeholder={placeholder}
         autoComplete="off"
-        className={`${className} ${endAdornment ? "pr-11" : ""}`}
+        disabled={disabled}
+        className={`${className} ${endAdornment ? "pr-11" : ""} ${disabled ? "opacity-60 cursor-not-allowed select-none bg-[var(--surface-muted)]" : ""}`}
       />
       {endAdornment && (
         <div className="absolute inset-y-0 right-0 flex items-center pr-3">

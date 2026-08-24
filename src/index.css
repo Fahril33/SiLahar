@@ -40,6 +40,7 @@
   --field-border: rgba(132, 150, 175, 0.3);
   --field-border-focus: rgba(53, 123, 131, 0.72);
   --primary: #246a73;
+  --primary-soft: rgba(36, 106, 115, 0.1);
   --primary-strong: #1c545d;
   --primary-contrast: #f8fcff;
   --secondary: #edf2f7;
@@ -89,6 +90,7 @@
   --field-border: rgba(125, 148, 181, 0.22);
   --field-border-focus: rgba(98, 177, 170, 0.9);
   --primary: #65b4c2;
+  --primary-soft: rgba(101, 180, 194, 0.1);
   --primary-strong: #4ea5b4;
   --primary-contrast: #041116;
   --secondary: rgba(33, 45, 66, 0.96);
@@ -143,6 +145,7 @@
   --field-border: rgba(148, 163, 184, 0.34);
   --field-border-focus: rgba(14, 165, 233, 0.68);
   --primary: #4f46e5;
+  --primary-soft: rgba(79, 70, 229, 0.1);
   --primary-strong: #0ea5e9;
   --primary-contrast: #ffffff;
   --secondary: #eef2ff;
@@ -631,6 +634,22 @@ select:focus {
 
   .inline-note-danger {
     color: var(--danger);
+  }
+
+  .warning-link {
+    color: var(--primary);
+    font-weight: 700;
+    text-decoration: underline;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    display: inline;
+    transition: color 0.15s ease;
+  }
+
+  .warning-link:hover {
+    color: var(--text-primary);
   }
 
   .theme-switcher {
@@ -1193,4 +1212,12 @@ select:focus {
 :root[data-theme="dark"] .holiday-info-banner .banner-icon-container {
   background-color: rgba(249, 115, 22, 0.25) !important;
   color: #f97316 !important;
+}
+
+/* Remove Recharts Pie sector outline/border on click/focus */
+.recharts-sector,
+.recharts-pie-sector,
+path.recharts-sector,
+path.recharts-pie-sector {
+  outline: none !important;
 }

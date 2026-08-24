@@ -675,6 +675,89 @@ export async function deleteReporterDirectoryTrace(reporterId: string) {
   }
 }
 
+export async function authenticateReporter(name: string, pass: string): Promise<ReporterDirectoryProfile | null> {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+  const { data, error } = await supabase.rpc("authenticate_reporter", {
+    reporter_name: name,
+    pass: pass
+  });
+  if (error) {
+    throw error;
+  }
+  if (!data || data.length === 0) {
+    return null;
+  }
+  const row = data[0];
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    firstReportedAt: row.first_reported_at,
+    lastReportedAt: row.last_reported_at,
+    totalReports: row.total_reports,
+    isActive: row.is_active,
+    password: pass
+  };
+}
+
+export async function registerReporter(name: string, pass: string): Promise<ReporterDirectoryProfile> {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+  const { data, error } = await supabase.rpc("register_reporter", {
+    reporter_name: name,
+    pass: pass
+  });
+  if (error) {
+    throw error;
+  }
+  if (!data || data.length === 0) {
+    throw new Error("Registrasi gagal.");
+  }
+  const row = data[0];
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    firstReportedAt: row.first_reported_at,
+    lastReportedAt: row.last_reported_at,
+    totalReports: row.total_reports,
+    isActive: row.is_active,
+    password: pass
+  };
+}
+
+export async function updateReporterProfile(reporterId: string, nextName: string, nextPass: string) {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+  const { error } = await supabase.rpc("update_reporter_profile", {
+    reporter_id: reporterId,
+    next_name: nextName,
+    next_password: nextPass
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+export async function adminGetReporterPasswords(): Promise<Record<string, string>> {
+  if (!supabase) {
+    throw new Error("Supabase client belum terkonfigurasi.");
+  }
+  const { data, error } = await supabase.rpc("admin_get_reporter_passwords");
+  if (error) {
+    throw error;
+  }
+  const res: Record<string, string> = {};
+  if (data) {
+    for (const row of data) {
+      res[row.id] = row.password;
+    }
+  }
+  return res;
+}
+
 async function upsertReporterDirectory(name: string) {
   if (!supabase) {
     throw new Error("Supabase client belum terkonfigurasi.");

@@ -488,8 +488,8 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
             <div
               key={m.label}
               className={`flex items-center gap-3 px-4 py-3 ${
-                i < metricItems.length - 1 ? "lg:border-r border-[var(--border-soft)]/50" : ""
-              } ${i < 2 ? "border-b lg:border-b-0 border-[var(--border-soft)]/50" : ""}`}
+                i < metricItems.length - 1 ? "lg:border-r border-[var(--border-soft)]" : ""
+              } ${i < 2 ? "border-b lg:border-b-0 border-[var(--border-soft)]" : ""}`}
             >
               <div className={`h-9 w-9 rounded-xl ${m.bg} ${m.color} flex items-center justify-center shrink-0`}>
                 {m.icon}
@@ -536,6 +536,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                   {hasData && (
                     <Tooltip
                       wrapperStyle={{ zIndex: 50 }}
+                      allowEscapeViewBox={{ x: true, y: true }}
                       contentStyle={{ backgroundColor: "var(--surface-elevated)", borderColor: "var(--border-soft)", borderRadius: "10px", color: "var(--text-primary)", fontSize: "11px", fontWeight: 600, boxShadow: "0 8px 20px -4px rgba(0,0,0,0.1)", padding: "6px 10px" }}
                       itemStyle={{ color: "var(--text-primary)" }}
                     />
@@ -550,13 +551,14 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
 
             {/* Chart Kepatuhan (animasi masuk/keluar) */}
             <div
-              className="h-full relative overflow-hidden transition-all duration-500 ease-in-out border-l border-[var(--border-soft)]/20"
+              className="h-full relative overflow-hidden transition-all duration-500 ease-in-out border-l border-[var(--border-soft)]"
               style={{
                 flex: filterMode === "harian" ? "1 1 0%" : "0 0 0%",
                 maxWidth: filterMode === "harian" ? "50%" : "0px",
                 opacity: filterMode === "harian" ? 1 : 0,
                 paddingLeft: filterMode === "harian" ? "8px" : "0px",
                 borderColor: filterMode === "harian" ? undefined : "transparent",
+                overflow: filterMode === "harian" ? "visible" : "hidden",
               }}
             >
               <ResponsiveContainer width="100%" height="100%">
@@ -568,6 +570,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                   </Pie>
                   <Tooltip
                     wrapperStyle={{ zIndex: 50 }}
+                    allowEscapeViewBox={{ x: true, y: true }}
                     contentStyle={{ backgroundColor: "var(--surface-elevated)", borderColor: "var(--border-soft)", borderRadius: "10px", color: "var(--text-primary)", fontSize: "11px", fontWeight: 600, boxShadow: "0 8px 20px -4px rgba(0,0,0,0.1)", padding: "6px 10px" }}
                     itemStyle={{ color: "var(--text-primary)" }}
                   />
@@ -581,7 +584,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
           </div>
 
           {/* Legends - stacked by category */}
-          <div className="pt-2.5 border-t border-[var(--border-soft)]/20 mt-auto space-y-2">
+          <div className="pt-2.5 border-t border-[var(--border-soft)] mt-auto space-y-2">
             {/* Distribusi legends (selalu tampil) */}
             <div className="space-y-1">
               <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Distribusi Tim</span>
@@ -709,7 +712,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                     <button
                       type="button"
                       onClick={() => setDailyDate(todayWita)}
-                      className="text-[10px] font-bold text-[var(--primary)] hover:underline ml-1 px-1.5 py-0.5 rounded bg-[var(--primary)]/10 shrink-0"
+                      className="text-[10px] font-bold text-[var(--primary)] hover:underline ml-1 px-1.5 py-0.5 rounded bg-[var(--primary-soft)] shrink-0"
                       title="Kembali ke Hari Ini"
                     >
                       Hari ini
@@ -785,7 +788,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                   stats.memberStats.map((member, idx) => (
                     <tr
                       key={member.name}
-                      className={`border-b border-[var(--border-soft)]/30 hover:bg-[var(--surface-muted)]/40 transition-colors ${
+                      className={`border-b border-[var(--border-soft)] hover:bg-[var(--surface-muted)]/40 transition-colors ${
                         idx === stats.memberStats.length - 1 ? "border-b-0" : ""
                       }`}
                     >
@@ -803,8 +806,8 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                         <td className="py-2.5 px-2 text-center">
                           <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full ${
                             member.totalReports > 0
-                              ? "bg-[var(--success)]/15 text-[var(--success)]"
-                              : "bg-[var(--danger)]/15 text-[var(--danger)]"
+                              ? "bg-[var(--success-soft)] text-[var(--success)]"
+                              : "bg-[var(--danger-soft)] text-[var(--danger)]"
                           }`}>
                             {member.totalReports > 0 ? "Sudah" : "Belum"}
                           </span>
@@ -866,13 +869,13 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
             stats.latestActivities.map((act, index) => (
               <div
                 key={index}
-                className="rounded-xl border border-[var(--border-soft)]/50 bg-[var(--surface-panel-strong)]/40 p-3 hover:bg-[var(--surface-muted)]/50 transition-colors duration-200"
+                className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)]/40 p-3 hover:bg-[var(--surface-muted)]/50 transition-colors duration-200"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <div className={`h-6 w-6 rounded-lg flex items-center justify-center shrink-0 text-[8px] font-extrabold uppercase border ${
                     act.tim === "TRC"
-                      ? "bg-[var(--info-soft)] text-[var(--info)] border-[var(--info)]/15"
-                      : "bg-[var(--success-soft)] text-[var(--success)] border-[var(--success)]/15"
+                      ? "bg-[var(--info-soft)] text-[var(--info)] border-[var(--info-soft)]"
+                      : "bg-[var(--success-soft)] text-[var(--success)] border-[var(--success-soft)]"
                   }`}>
                     {act.tim === "TRC" ? "TRC" : "PD"}
                   </div>
@@ -881,7 +884,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                 <p className="text-[11px] text-[var(--text-muted)] leading-snug line-clamp-2 min-h-[30px]">
                   {act.description}
                 </p>
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--border-soft)]/30">
+                <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--border-soft)]">
                   <div className="flex items-center gap-1 text-[var(--text-soft)]">
                     <ClockIcon className="h-2.5 w-2.5" />
                     <span className="text-[9px] font-semibold tabular-nums">{act.startTime} – {act.endTime}</span>

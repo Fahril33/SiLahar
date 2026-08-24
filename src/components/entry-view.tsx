@@ -5,7 +5,7 @@ import { formatWitaDateTime } from "../lib/time";
 import { getHolidayInfo } from "../lib/holidays";
 import type { ReportRules } from "../types/report-rules";
 import type { LocalReportDraftSummary } from "../types/local-draft";
-import type { DraftReport, Report } from "../types/report";
+import type { DraftReport, Report, ReporterDirectoryProfile } from "../types/report";
 import { AnchoredInlineWarning } from "./anchored-inline-warning";
 import { AutocompleteInput } from "./autocomplete-input";
 import { DeviceNameHistory } from "./device-name-history";
@@ -219,6 +219,7 @@ function getPreviewSectionDefaults(section: PreviewSettingsSection) {
 
 type EntryViewProps = {
   draft: DraftReport;
+  userSession?: ReporterDirectoryProfile | null;
   savedNames: string[];
   reporterNames: string[];
   searchName: string;
@@ -793,11 +794,13 @@ export function EntryView(props: EntryViewProps) {
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
           <div className="space-y-4 pb-8">
             <section className="surface-card rounded-[15px] p-4">
-              <DeviceNameHistory
-                names={props.savedNames}
-                onPick={(name) => props.onChange("nama", name)}
-                onRemove={props.onHandleRemoveSavedName}
-              />
+              {!props.userSession && (
+                <DeviceNameHistory
+                  names={props.savedNames}
+                  onPick={(name) => props.onChange("nama", name)}
+                  onRemove={props.onHandleRemoveSavedName}
+                />
+              )}
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 {props.similarName ? (
                   <div className="inline-note inline-note-warning md:col-span-2">
@@ -807,8 +810,23 @@ export function EntryView(props: EntryViewProps) {
                 ) : null}
                 {props.duplicateReport ? (
                   <div className="inline-note inline-note-warning md:col-span-2">
-                    Sudah ada laporan atas nama ini untuk tanggal yang dipilih.
-                    Jika disimpan, data sebelumnya akan diperbarui.
+                    {props.userSession ? (
+                      <span>
+                        Sudah ada laporan untuk tanggal yang dipilih. Jika disimpan, data sebelumnya akan diperbarui. Atau -&gt;{" "}
+                        <button
+                          type="button"
+                          onClick={() => void props.onHandleLoadEdit(props.duplicateReport!)}
+                          className="warning-link focus:outline-none ml-1"
+                        > 
+                          Lanjutkan yang sudah ada
+                        </button>
+                      </span>
+                    ) : (
+                      <span>
+                        Sudah ada laporan atas nama ini untuk tanggal yang dipilih.
+                        Jika disimpan, data sebelumnya akan diperbarui.
+                      </span>
+                    )}
                   </div>
                 ) : null}
                 <div className="md:col-span-2">
@@ -818,6 +836,7 @@ export function EntryView(props: EntryViewProps) {
                     options={props.reporterNames}
                     placeholder="Nama Anda"
                     className={inputClassName}
+                    disabled={Boolean(props.userSession)}
                     emptyMessage="Nama belum ada di database, tetapi laporan tetap bisa dilanjutkan."
                     endAdornment={
                       props.draft.nama.trim() &&

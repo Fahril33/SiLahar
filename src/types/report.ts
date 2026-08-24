@@ -56,4 +56,5 @@ export type ReporterDirectoryProfile = {
   lastReportedAt: string | null;
   totalReports: number;
   isActive: boolean;
+  password?: string;
 };

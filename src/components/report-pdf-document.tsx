@@ -57,7 +57,7 @@ export function ReportPdfDocument(props: { report: Report }) {
                           className="proof-image"
                           loading="eager"
                           decoding="sync"
-                          fetchPriority="high"
+                          {...{ fetchpriority: "high" }}
                           crossOrigin="anonymous"
                           referrerPolicy="no-referrer"
                         />

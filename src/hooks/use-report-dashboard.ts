@@ -63,7 +63,6 @@ import {
   fetchReporterDirectoryProfiles,
   fetchReports,
   getActiveAdminSession,
-  renameReporterDirectoryProfile,
   saveNotificationSettingsToDatabase,
   saveReportRulesToDatabase,
   saveReportToDatabase,
@@ -71,6 +70,9 @@ import {
   signOutAdminAccount,
   subscribeAdminSession,
   subscribeReportData,
+  authenticateReporter,
+  registerReporter,
+  updateReporterProfile,
 } from "../lib/report-service";
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -343,10 +345,36 @@ export function useReportDashboard() {
   const [nameExistsInDirectory, setNameExistsInDirectory] = useState<boolean | null>(null);
   const [reportRules, setReportRules] = useState<ReportRules>(initialReportRules);
   const [rulesLoaded, setRulesLoaded] = useState(false);
+  const [userSession, setUserSession] = useState<ReporterDirectoryProfile | null>(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("silahar:user-session");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (e) {
+          logSafeError(e, "Dashboard/UserSessionLoadInit");
+        }
+      }
+    }
+    return null;
+  });
+  const [userAuthLoading, setUserAuthLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("silahar:user-session");
+      if (stored) return false;
+    }
+    return true;
+  });
+  const [userSubmitting, setUserSubmitting] = useState(false);
   const [adminSession, setAdminSession] = useState<AdminSessionState | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [adminAuthLoading, setAdminAuthLoading] = useState(true);
+  const [adminAuthLoading, setAdminAuthLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.localStorage.getItem("silahar:admin-session-active") === "true";
+    }
+    return true;
+  });
   const [adminSubmitting, setAdminSubmitting] = useState(false);
   const [adminActiveAction, setAdminActiveAction] = useState<AdminActiveAction>(null);
   const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(initialReportRules);
@@ -459,18 +487,57 @@ export function useReportDashboard() {
     void getActiveAdminSession().then((session) => {
       if (!alive) return;
       setAdminSession(session);
+      if (typeof window !== "undefined") {
+        if (session) {
+          window.localStorage.setItem("silahar:admin-session-active", "true");
+        } else {
+          window.localStorage.removeItem("silahar:admin-session-active");
+        }
+      }
     }).catch(err => {
       logSafeError(err, "Dashboard/AdminAuth");
-      if (alive) setAdminSession(null);
+      if (alive) {
+        setAdminSession(null);
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem("silahar:admin-session-active");
+        }
+      }
     }).finally(() => { if (alive) setAdminAuthLoading(false); });
 
     const unsubscribe = subscribeAdminSession((session) => {
       setAdminSession(session);
       setAdminAuthLoading(false);
+      if (typeof window !== "undefined") {
+        if (session) {
+          window.localStorage.setItem("silahar:admin-session-active", "true");
+        } else {
+          window.localStorage.removeItem("silahar:admin-session-active");
+        }
+      }
     });
     return () => { alive = false; unsubscribe(); };
   }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem("silahar:user-session");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setUserSession(parsed);
+          setDraft((current) => normalizeDraft({ ...current, nama: parsed.fullName }));
+        } catch (e) {
+          logSafeError(e, "Dashboard/UserSessionLoad");
+        }
+      }
+    }
+    setUserAuthLoading(false);
+  }, []);
 
+  useEffect(() => {
+    if (userSession) {
+      setDraft((current) => normalizeDraft({ ...current, nama: userSession.fullName }));
+    }
+  }, [userSession]);
   useEffect(() => {
     const currentToday = getWitaToday();
     if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === currentToday) return;
@@ -1237,7 +1304,11 @@ export function useReportDashboard() {
     setLoadedSearchSnapshot(null);
     setLoadedLocalDraftId(null);
     clearDraft();
-    setDraft(createEmptyDraft(activeReportTemplateConfig));
+    const emptyDraft = createEmptyDraft(activeReportTemplateConfig);
+    if (userSession) {
+      emptyDraft.nama = userSession.fullName;
+    }
+    setDraft(normalizeDraft(emptyDraft));
     setDraftSavedAt(null);
     setDraftCacheStatus("idle");
   }
@@ -1475,20 +1546,30 @@ export function useReportDashboard() {
     }
   }
 
-  async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile) {
+  async function handleRenameReporterProfile(reporter: ReporterDirectoryProfile, nextPassword?: string) {
     if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
     const nextName = formatReporterNameForDatabase(adminReporterDraftNames[reporter.id] ?? reporter.fullName);
     if (!nextName) { await showError("Nama belum valid", "Nama tidak boleh kosong."); return; }
-    if (nextName === reporter.fullName) { await showInfo("Tidak ada perubahan", "Nama belum berubah."); return; }
+    
+    const nextPass = nextPassword || reporter.password || "123123123";
+    const nameChanged = nextName !== reporter.fullName;
+    const passChanged = nextPassword !== undefined && nextPassword !== reporter.password;
 
-    if (await askConfirmation("Ubah data pengguna?", `Laporan ${reporter.fullName} akan diubah menjadi ${nextName}.`, "Simpan perubahan")) {
+    if (!nameChanged && !passChanged) { await showInfo("Tidak ada perubahan", "Nama dan password belum berubah."); return; }
+
+    if (await askConfirmation("Ubah data pengguna?", `Profil ${reporter.fullName} akan diperbarui.`, "Simpan perubahan")) {
       setAdminSubmitting(true);
       setAdminActiveAction("rename-reporter");
       setAdminActiveItemId(reporter.id);
       try {
-        await renameReporterDirectoryProfile(reporter.id, nextName);
+        await updateReporterProfile(reporter.id, nextName, nextPass);
+        if (nameChanged) {
+          if (isSameReporterName(draft.nama, reporter.fullName)) {
+            setDraft((current) => normalizeDraft({ ...current, nama: nextName }));
+          }
+        }
         await loadDashboardData();
-        await showSuccess("Profil diperbarui", "Nama dan laporannya sudah disesuaikan.");
+        await showSuccess("Profil disimpan", "Data pengguna sudah diperbarui.");
       } catch (err) { console.error(err); await showError("Rename gagal", "Gagal mengubah profil."); }
       finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
     }
@@ -1517,6 +1598,9 @@ export function useReportDashboard() {
     try {
       const sess = await signInAdminAccount(adminEmail, adminPassword);
       setAdminSession(sess);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("silahar:admin-session-active", "true");
+      }
       setAdminEmail(""); 
       setAdminPassword("");
       await showSuccess("Login berhasil", `Selamat datang, ${sess.profile.fullName}.`);
@@ -1525,11 +1609,111 @@ export function useReportDashboard() {
   }
 
   async function handleAdminLogout() {
+    if (!(await askConfirmation("Keluar Sesi Admin?", "Apakah Anda yakin ingin keluar dari sesi administrator?", "Ya, Keluar"))) {
+      return;
+    }
     setAdminSubmitting(true);
     setAdminActiveAction("logout");
-    try { await signOutAdminAccount(); setAdminSession(null); await showSuccess("Logout berhasil", "Sesi ditutup."); }
+    try {
+      await signOutAdminAccount();
+      setAdminSession(null);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("silahar:admin-session-active");
+      }
+      await showSuccess("Logout berhasil", "Sesi ditutup.");
+    }
     catch (err) { logSafeError(err, "Dashboard/AdminLogout"); await showError("Logout gagal", "Sesi belum ditutup."); }
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
+  }
+
+  async function handleUserLogin(name: string, pass: string) {
+    if (!name.trim() || !pass) {
+      await showError("Data tidak lengkap", "Nama dan password wajib diisi.");
+      return;
+    }
+    setUserSubmitting(true);
+    try {
+      const profile = await authenticateReporter(name, pass);
+      if (!profile) {
+        throw new Error("Nama petugas atau password salah.");
+      }
+      setUserSession(profile);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("silahar:user-session", JSON.stringify(profile));
+        window.localStorage.setItem("silahar:last-login-username", profile.fullName);
+      }
+      setDraft((current) => normalizeDraft({ ...current, nama: profile.fullName }));
+      setView("entry");
+      await showSuccess("Login Berhasil", `Selamat datang, ${profile.fullName}!`);
+    } catch (err: any) {
+      await showError("Login Gagal", err.message || "Terjadi kesalahan.");
+    } finally {
+      setUserSubmitting(false);
+    }
+  }
+
+  async function handleUserRegister(name: string, pass: string) {
+    if (!name.trim() || !pass) {
+      await showError("Data tidak lengkap", "Nama dan password wajib diisi.");
+      return;
+    }
+    setUserSubmitting(true);
+    try {
+      const profile = await registerReporter(name, pass);
+      setUserSession(profile);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("silahar:user-session", JSON.stringify(profile));
+        window.localStorage.setItem("silahar:last-login-username", profile.fullName);
+      }
+      setDraft((current) => normalizeDraft({ ...current, nama: profile.fullName }));
+      setView("entry");
+      await showSuccess("Pendaftaran Berhasil", `Akun baru ${profile.fullName} telah terdaftar dan login otomatis.`);
+    } catch (err: any) {
+      await showError("Pendaftaran Gagal", err.message || "Terjadi kesalahan.");
+    } finally {
+      setUserSubmitting(false);
+    }
+  }
+
+  async function handleUserLogout() {
+    if (!(await askConfirmation("Keluar Sesi?", "Apakah Anda yakin ingin keluar dari sesi petugas?", "Ya, Keluar"))) {
+      return;
+    }
+    setUserSession(null);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("silahar:user-session");
+    }
+    setDraft((current) => normalizeDraft({ ...current, nama: "" }));
+    setView("entry");
+    await showSuccess("Logout Berhasil", "Sesi Anda telah ditutup.");
+  }
+
+  async function handleUserUpdateProfile(nextName: string, nextPass: string) {
+    if (!userSession) return;
+    if (!nextName.trim() || !nextPass) {
+      await showError("Data tidak lengkap", "Nama dan password tidak boleh kosong.");
+      return;
+    }
+    setUserSubmitting(true);
+    try {
+      await updateReporterProfile(userSession.id, nextName, nextPass);
+      const updatedProfile = {
+        ...userSession,
+        fullName: nextName,
+        password: nextPass
+      };
+      setUserSession(updatedProfile);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("silahar:user-session", JSON.stringify(updatedProfile));
+      }
+      setDraft((current) => normalizeDraft({ ...current, nama: nextName }));
+      await loadDashboardData();
+      await showSuccess("Profil Diperbarui", "Nama dan password Anda berhasil disimpan.");
+    } catch (err: any) {
+      await showError("Gagal Memperbarui Profil", err.message || "Terjadi kesalahan.");
+    } finally {
+      setUserSubmitting(false);
+    }
   }
 
   function changeAdminRule<K extends keyof ReportRules>(key: K, value: ReportRules[K]) {
@@ -1674,7 +1858,7 @@ export function useReportDashboard() {
     savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
     historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
-    reportRules, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
+    reportRules, userSession, userAuthLoading, userSubmitting, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
     adminAuthLoading, adminSubmitting, adminActiveAction, adminActiveItemId, adminRuleDraft,
     adminTemplateApproverDrafts, adminReporterDraftNames,
     canUseAnyReportDate: Boolean(adminSession) || (rulesLoaded && reportRules.allowAnyReportDate),
@@ -1693,7 +1877,8 @@ export function useReportDashboard() {
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,
     changeAdminTemplateApproverDraft, changeExcelTemplateDraft, clearExcelTemplateDraftName,
     selectExcelTemplateFile, changeAdminExcelTemplateDraft, changeAdminReporterDraftName,
-    handleAdminLogin, handleAdminLogout, handleDeleteReporterTrace, handleUploadExcelTemplate,
+    handleAdminLogin, handleAdminLogout, handleUserLogin, handleUserRegister, handleUserLogout, handleUserUpdateProfile,
+    handleDeleteReporterTrace, handleUploadExcelTemplate,
     handleActivateExcelTemplate, handleRenameExcelTemplate, handleDeleteExcelTemplate,
     handleRenameReporterProfile, handleSaveAdminRules, handleSaveTemplateApproverDefaults,
     handleSaveNotificationSettings, isEditLoading: editLoadingReportId !== null,

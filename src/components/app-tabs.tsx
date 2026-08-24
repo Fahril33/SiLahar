@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useMemo,
   type CSSProperties,
 } from "react";
 import type { View } from "../hooks/use-report-dashboard";
@@ -46,11 +47,10 @@ function AdminTabIcon() {
   );
 }
 
-const TABS: Array<{ key: View; label: string; icon: JSX.Element }> = [
+const STATIC_TABS: Array<{ key: View; label: string; icon: JSX.Element }> = [
   { key: "entry", label: "Laporan", icon: <ReportTabIcon /> },
   { key: "history", label: "Histori", icon: <HistoryTabIcon /> },
   { key: "rekap", label: "Rekap", icon: <RekapTabIcon /> },
-  { key: "admin", label: "Admin", icon: <AdminTabIcon /> },
 ];
 
 type SliderMetrics = {
@@ -61,9 +61,11 @@ type SliderMetrics = {
 export function AppTabs({
   view,
   onChange,
+  userSession,
 }: {
   view: View;
   onChange: (view: View) => void;
+  userSession?: any;
 }) {
   const navRef = useRef<HTMLElement | null>(null);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -71,6 +73,12 @@ export function AppTabs({
     width: 0,
     x: 0,
   });
+
+  const TABS = useMemo(() => [
+    ...STATIC_TABS,
+    { key: "admin" as const, label: userSession ? "Profil" : "Admin", icon: <AdminTabIcon /> },
+  ], [userSession]);
+
   const activeIndex = Math.max(
     0,
     TABS.findIndex((tab) => tab.key === view),

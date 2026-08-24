@@ -14,6 +14,7 @@ import type {
 } from "../types/report-template";
 import type { NotificationSettings } from "../types/notification-settings";
 import type { Report, ReporterDirectoryProfile } from "../types/report";
+import { adminGetReporterPasswords } from "../lib/report-service";
 import { AdminEditableListCard } from "./admin-editable-list-card";
 import { AdminReporterStatsView } from "./admin-reporter-stats-view";
 import {
@@ -45,6 +46,10 @@ type AdminSection = "rules" | "reporters" | "templates" | "bulk-export" | "sound
 
 type AdminDashboardViewProps = {
   adminSession: AdminSessionState | null;
+  userSession?: ReporterDirectoryProfile | null;
+  userSubmitting?: boolean;
+  onUserUpdateProfile?: (name: string, pass: string) => Promise<void>;
+  onUserLogout?: () => Promise<void>;
   adminEmail: string;
   setAdminEmail: (value: string) => void;
   adminPassword: string;
@@ -108,6 +113,7 @@ type AdminDashboardViewProps = {
   onHandleDeleteExcelTemplate: (template: ExcelReportTemplate) => Promise<void>;
   onHandleRenameReporterProfile: (
     reporter: ReporterDirectoryProfile,
+    nextPassword?: string,
   ) => Promise<void>;
   onHandleDeleteReporterTrace: (
     reporter: ReporterDirectoryProfile,
@@ -159,15 +165,18 @@ function ClearableTextInput(props: {
   value: string;
   placeholder?: string;
   readOnly?: boolean;
+  type?: string;
   onChange?: (value: string) => void;
   onClear?: () => void;
 }) {
+  const { type = "text" } = props;
   return (
     <label className="space-y-2">
       <span className="text-sm font-medium">{props.label}</span>
       <div className="relative">
         <input
           value={props.value}
+          type={type}
           readOnly={props.readOnly}
           onChange={(event) => props.onChange?.(event.target.value)}
           placeholder={props.placeholder}
@@ -496,6 +505,23 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
   const [editingReporterId, setEditingReporterId] = useState<string | null>(
     null,
   );
+  const [passwords, setPasswords] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let alive = true;
+    adminGetReporterPasswords()
+      .then((data) => {
+        if (!alive) return;
+        setPasswords(data);
+      })
+      .catch((err) => {
+        console.error("Gagal memuat password user:", err);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [props.reporterProfiles]);
+
   const [selectedReporterId, setSelectedReporterId] = useState<string | null>(
     null,
   );
@@ -599,10 +625,17 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
                     props.onChangeAdminReporterDraftName(reporter.id, "")
                   }
                 />
-                <div className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)]">
+                <ClearableTextInput
+                  label="Password Pengguna"
+                  value={passwords[reporter.id] ?? "123123123"}
+                  onChange={(value) => {
+                    setPasswords(prev => ({ ...prev, [reporter.id]: value }));
+                  }}
+                />
+                <div className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)] md:col-span-2">
                   <p>
                     Data relasional laporan ikut memakai nama terbaru saat
-                    disimpan.
+                    disimpan. Password default adalah '123123123'.
                   </p>
                 </div>
               </div>
@@ -628,7 +661,7 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
             }}
             onSaveEdit={() => {
               void props
-                .onHandleRenameReporterProfile(reporter)
+                .onHandleRenameReporterProfile(reporter, passwords[reporter.id])
                 .then(() => setEditingReporterId(null));
             }}
             onDelete={() => void props.onHandleDeleteReporterTrace(reporter)}
@@ -1261,6 +1294,109 @@ function AdminLoadingOverlay() {
   );
 }
 
+function UserProfilePanel(props: {
+  userSession: ReporterDirectoryProfile;
+  userSubmitting: boolean;
+  onUserUpdateProfile: (name: string, pass: string) => Promise<void>;
+  onUserLogout: () => Promise<void>;
+}) {
+  const [name, setName] = useState(props.userSession.fullName);
+  const [pass, setPass] = useState(props.userSession.password || "123123123");
+  const [showPass, setShowPass] = useState(false);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await props.onUserUpdateProfile(name, pass);
+  };
+
+  return (
+    <div className="surface-card rounded-[28px] p-6 max-w-md mx-auto border border-[var(--border-soft)] shadow-sm animate-fadeIn">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3.5">
+          <div className="h-12 w-12 rounded-2xl bg-purple-500/10 text-purple-500 flex items-center justify-center font-bold text-lg">
+            {props.userSession.fullName.substring(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-[var(--text-primary)]">Pengaturan Profil</h3>
+            <p className="text-xs text-[var(--text-muted)]">Perbarui nama dan password Anda</p>
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={handleSave} className="space-y-4">
+        <div>
+          <label className="block text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">Nama Lengkap</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-purple-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition shadow-inner text-[var(--text-primary)]"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">Password Baru</label>
+          <div className="relative flex items-center">
+            <input
+              type={showPass ? "text" : "password"}
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              required
+              className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-purple-500 rounded-xl pl-4 pr-11 py-3 text-sm focus:outline-none transition shadow-inner text-[var(--text-primary)]"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPass(!showPass)}
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] focus:outline-none transition cursor-pointer bg-transparent border-none p-1 flex items-center justify-center"
+              title={showPass ? "Sembunyikan sandi" : "Tampilkan sandi"}
+            >
+              {showPass ? (
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.52 13.52 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61M2 2l20 20" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="pt-2 space-y-2">
+          <button
+            type="submit"
+            disabled={props.userSubmitting}
+            className="w-full py-3 px-4 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold rounded-xl transition shadow-md hover:shadow-lg focus:outline-none flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {props.userSubmitting ? (
+              <>
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Menyimpan...
+              </>
+            ) : (
+              "Simpan Profil"
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={props.onUserLogout}
+            className="w-full py-3 px-4 bg-[var(--danger-soft)] hover:bg-[var(--danger-soft)]/80 text-[var(--danger)] font-semibold rounded-xl transition focus:outline-none flex items-center justify-center gap-2 cursor-pointer"
+          >
+            Keluar Sesi
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export function AdminDashboardView(props: AdminDashboardViewProps) {
   const [activeSection, setActiveSection] = useState<AdminSection>(() => {
     if (typeof window !== "undefined") {
@@ -1324,6 +1460,13 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
 
       {props.adminAuthLoading ? (
         <AdminLoadingOverlay />
+      ) : props.userSession ? (
+        <UserProfilePanel
+          userSession={props.userSession}
+          userSubmitting={props.userSubmitting || false}
+          onUserUpdateProfile={props.onUserUpdateProfile || (async () => {})}
+          onUserLogout={props.onUserLogout || (async () => {})}
+        />
       ) : (
         <>
           {!props.adminSession ? <AdminLoginCard {...props} /> : null}
