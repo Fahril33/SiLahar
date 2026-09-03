@@ -797,8 +797,12 @@ export function EntryView(props: EntryViewProps) {
           <div className="space-y-4 pb-8">
             {showEmergencyNotice && OFFLINE_EMERGENCY_MODE.disableLoginRequirement && (
               <div
-                style={{ color: "#000000" }}
-                className="relative rounded-[16px] border border-orange-500/40 bg-gradient-to-r from-orange-500/15 via-orange-500/10 to-amber-500/5 p-3.5 sm:p-4 text-xs text-black shadow-sm animate-fadeIn"
+                style={{
+                  backgroundColor: "#fff2e2",
+                  borderColor: "#fdba74",
+                  color: "#000000",
+                }}
+                className="relative rounded-[16px] border p-3.5 sm:p-4 text-xs shadow-sm animate-fadeIn"
               >
                 <button
                   type="button"
@@ -818,8 +822,12 @@ export function EntryView(props: EntryViewProps) {
                         Mode Akses Bebas &amp; Draft Lokal Aktif
                       </span>
                       <span
-                        className="rounded-full bg-orange-500/25 px-2 py-0.5 text-[10px] font-bold text-black border border-orange-500/40"
-                        style={{ color: "#000000" }}
+                        style={{
+                          backgroundColor: "#fed7aa",
+                          borderColor: "#fb923c",
+                          color: "#000000",
+                        }}
+                        className="rounded-full border px-2 py-0.5 text-[10px] font-bold text-black"
                       >
                         Database Offline
                       </span>
@@ -828,8 +836,11 @@ export function EntryView(props: EntryViewProps) {
                       Basis data saat ini sedang offline/maintenance. Login sementara dinonaktifkan dan tanggal laporan dapat dipilih secara bebas. Anda dapat mengisi form dan menyimpannya melalui <strong>Draft Lokal</strong>.
                     </p>
                     <div
-                      className="pt-2 border-t border-orange-500/35 text-[11.5px] text-black flex items-start gap-1.5"
-                      style={{ color: "#000000" }}
+                      style={{
+                        borderTopColor: "#fdba74",
+                        color: "#000000",
+                      }}
+                      className="pt-2 border-t text-[11.5px] text-black flex items-start gap-1.5"
                     >
                       <span className="text-sm leading-none shrink-0">⚠️</span>
                       <p className="text-black" style={{ color: "#000000" }}>
