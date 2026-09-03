@@ -3,7 +3,6 @@
  * Digunakan untuk validasi laporan harian dan perhitungan statistik konsistensi BPBD.
  */
 
-export const SYSTEM_START_DATE = "2026-08-19";
 
 /**
  * Daftar Hari Libur Nasional Resmi & Cuti Bersama Indonesia (2024–2027)
@@ -173,12 +172,12 @@ export function isWorkDay(dateStr: string): boolean {
 
 /**
  * Menghitung hari kerja kalender efektif dalam rentang waktu tertentu.
- * Otomatis membatasi tanggal awal perhitungan minimal SYSTEM_START_DATE (2026-08-19).
+ * Otomatis membatasi tanggal awal perhitungan minimal systemStartDate.
  */
 export function getEffectiveWorkingDaysInRange(
   startStr: string,
   endStr: string,
-  options?: { enforceSystemStartDate?: boolean }
+  options?: { enforceSystemStartDate?: boolean; systemStartDate?: string }
 ): {
   effectiveStart: string;
   effectiveEnd: string;
@@ -188,14 +187,49 @@ export function getEffectiveWorkingDaysInRange(
   holidayDates: Array<{ date: string; name: string }>;
 } {
   const enforceStart = options?.enforceSystemStartDate !== false;
+  const startDate = options?.systemStartDate;
   
   let actualStart = startStr;
-  if (enforceStart && actualStart < SYSTEM_START_DATE) {
-    actualStart = SYSTEM_START_DATE;
+  if (enforceStart && startDate && actualStart < startDate) {
+    actualStart = startDate;
   }
   const actualEnd = endStr;
 
-  if (actualStart > actualEnd) {
+  if (
+    !actualStart ||
+    !actualEnd ||
+    actualStart > actualEnd ||
+    actualStart.length < 10 ||
+    actualEnd.length < 10
+  ) {
+    return {
+      effectiveStart: actualStart || "",
+      effectiveEnd: actualEnd || "",
+      totalWorkingDays: 0,
+      totalCalendarDays: 0,
+      workingDates: [],
+      holidayDates: [],
+    };
+  }
+
+  const [sY, sM, sD] = actualStart.slice(0, 10).split("-").map(Number);
+  const [eY, eM, eD] = actualEnd.slice(0, 10).split("-").map(Number);
+
+  if (isNaN(sY) || isNaN(sM) || isNaN(sD) || isNaN(eY) || isNaN(eM) || isNaN(eD)) {
+    return {
+      effectiveStart: actualStart,
+      effectiveEnd: actualEnd,
+      totalWorkingDays: 0,
+      totalCalendarDays: 0,
+      workingDates: [],
+      holidayDates: [],
+    };
+  }
+
+  const cur = new Date(sY, sM - 1, sD);
+  const end = new Date(eY, eM - 1, eD);
+
+  if (isNaN(cur.getTime()) || isNaN(end.getTime())) {
     return {
       effectiveStart: actualStart,
       effectiveEnd: actualEnd,
@@ -208,16 +242,9 @@ export function getEffectiveWorkingDaysInRange(
 
   const workingDates: string[] = [];
   const holidayDates: Array<{ date: string; name: string }> = [];
-
-  const [sY, sM, sD] = actualStart.split("-").map(Number);
-  const [eY, eM, eD] = actualEnd.split("-").map(Number);
-
-  const cur = new Date(sY, sM - 1, sD);
-  const end = new Date(eY, eM - 1, eD);
-
   let totalCalendarDays = 0;
 
-  while (cur <= end) {
+  while (cur <= end && totalCalendarDays < 1000) {
     totalCalendarDays++;
     const yyyy = cur.getFullYear();
     const mm = String(cur.getMonth() + 1).padStart(2, "0");

@@ -28,6 +28,7 @@ type PendingPhotoMap = Record<number, File[]>;
 type ReportRulesRow = {
   allow_any_report_date?: boolean;
   max_photos_per_activity?: number;
+  system_start_date?: string;
 };
 
 type NotificationSettingsRow = {
@@ -244,10 +245,11 @@ export async function fetchReportRules(): Promise<ReportRules> {
     .maybeSingle();
 
   if (!settingError && settingData?.value) {
-    const val = settingData.value as { allow_any_report_date?: boolean; max_photos_per_activity?: number };
+    const val = settingData.value as { allow_any_report_date?: boolean; max_photos_per_activity?: number; system_start_date?: string };
     return {
       allowAnyReportDate: Boolean(val.allow_any_report_date),
       maxPhotosPerActivity: Math.max(1, Number(val.max_photos_per_activity) || 1),
+      systemStartDate: val.system_start_date || "",
     };
   }
 
@@ -263,6 +265,7 @@ export async function fetchReportRules(): Promise<ReportRules> {
   return {
     allowAnyReportDate: Boolean(rules?.allow_any_report_date),
     maxPhotosPerActivity: Math.max(1, Number(rules?.max_photos_per_activity) || 1),
+    systemStartDate: rules?.system_start_date || "",
   };
 }
 
@@ -541,6 +544,7 @@ export async function saveReportRulesToDatabase(rules: ReportRules) {
   const normalizedRules: ReportRules = {
     allowAnyReportDate: rules.allowAnyReportDate ?? false,
     maxPhotosPerActivity: Math.max(1, Number(rules.maxPhotosPerActivity) || 1),
+    systemStartDate: rules.systemStartDate || "",
   };
   const { error } = await supabase.from("app_settings").upsert(
     {
@@ -548,6 +552,7 @@ export async function saveReportRulesToDatabase(rules: ReportRules) {
       value: {
         allow_any_report_date: normalizedRules.allowAnyReportDate,
         max_photos_per_activity: normalizedRules.maxPhotosPerActivity,
+        system_start_date: normalizedRules.systemStartDate,
       },
       updated_at: new Date().toISOString(),
     },

@@ -4,17 +4,21 @@ import type { Report } from "../types/report";
 import { getWitaToday, formatWitaDate } from "../lib/time";
 import { isSameReporterName, includesReporterName } from "../lib/reporter-name";
 import {
-  SYSTEM_START_DATE,
   getEffectiveWorkingDaysInRange,
   getHolidayInfo,
   isWorkDay,
 } from "../lib/holidays";
+import {
+  resolveEffectiveSystemStartDate,
+  getSystemStartDateLabel,
+} from "../lib/system-date";
 
 type RekapViewProps = {
   reports: Report[];
   reporterNames: string[];
   loading: boolean;
   onReload: () => Promise<void>;
+  systemStartDate: string;
 };
 
 type FilterMode = "harian" | "bulanan" | "tahunan";
@@ -185,7 +189,7 @@ function fmtDate(d: Date): string {
 
 /* ── Main Component ── */
 
-export function RekapView({ reports, reporterNames }: RekapViewProps) {
+export function RekapView({ reports, reporterNames, systemStartDate }: RekapViewProps) {
   // ── Filter state: Always anchor to official WITA today ──
   const todayWita = getWitaToday();
   const [currentYear, currentMonthNum] = todayWita.split("-").map(Number);
@@ -211,11 +215,21 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
     }
   }, [dailyDate]);
 
+  // Tanggal acuan mulai operasional: gunakan modul terpusat (in-memory, tanpa query DB tambahan)
+  const effectiveStartDate = useMemo(
+    () => resolveEffectiveSystemStartDate(systemStartDate, reports, todayWita),
+    [systemStartDate, reports, todayWita],
+  );
+  const startDateLabel = useMemo(
+    () => getSystemStartDateLabel(effectiveStartDate),
+    [effectiveStartDate],
+  );
+
   // ── Compute date range from filter ──
   const dateRange = useMemo(() => {
     if (filterMode === "harian") {
       const isToday = dailyDate === todayWita;
-      const isBeforeStart = dailyDate < SYSTEM_START_DATE;
+      const isBeforeStart = dailyDate < effectiveStartDate;
       const holidayInfo = getHolidayInfo(dailyDate);
       const isEffectiveWorkDay = !isBeforeStart && isWorkDay(dailyDate);
       return { 
@@ -232,7 +246,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       const weeks = getWeeksInMonth(monthlyYear, monthlyMonth);
       if (monthlyWeek >= 0 && monthlyWeek < weeks.length) {
         const w = weeks[monthlyWeek];
-        const workingStats = getEffectiveWorkingDaysInRange(w.start, w.end);
+        const workingStats = getEffectiveWorkingDaysInRange(w.start, w.end, { systemStartDate: effectiveStartDate });
         return { 
           start: workingStats.effectiveStart, 
           end: workingStats.effectiveEnd, 
@@ -246,7 +260,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       const last = new Date(monthlyYear, monthlyMonth + 1, 0);
       const startStr = fmtDate(first);
       const endStr = fmtDate(last);
-      const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
+      const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr, { systemStartDate: effectiveStartDate });
       return { 
         start: workingStats.effectiveStart, 
         end: workingStats.effectiveEnd, 
@@ -260,7 +274,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
     const last = new Date(yearlyYear, 11, 31);
     const startStr = fmtDate(first);
     const endStr = fmtDate(last);
-    const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr);
+    const workingStats = getEffectiveWorkingDaysInRange(startStr, endStr, { systemStartDate: effectiveStartDate });
     return { 
       start: workingStats.effectiveStart, 
       end: workingStats.effectiveEnd, 
@@ -268,18 +282,18 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       totalWorkingDays: workingStats.totalWorkingDays,
       label: `Tahun ${yearlyYear} (${workingStats.totalWorkingDays} hari kerja)` 
     };
-  }, [filterMode, dailyDate, monthlyMonth, monthlyYear, monthlyWeek, yearlyYear, todayWita]);
+  }, [filterMode, dailyDate, monthlyMonth, monthlyYear, monthlyWeek, yearlyYear, todayWita, effectiveStartDate]);
 
   const weeksForMonth = useMemo(() => getWeeksInMonth(monthlyYear, monthlyMonth), [monthlyYear, monthlyMonth]);
 
   // ── Stats computation ──
   const stats = useMemo(() => {
-    // 1. Filter reports by dateRange & SYSTEM_START_DATE
+    // 1. Filter reports by dateRange & effectiveStartDate
     let filteredReports = reports.filter(
       (r) =>
         r.reportDate >= dateRange.start &&
         r.reportDate <= dateRange.end &&
-        r.reportDate >= SYSTEM_START_DATE,
+        r.reportDate >= effectiveStartDate,
     );
 
     // If bulanan or tahunan, filter out weekends and holidays
@@ -361,18 +375,18 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
         const memberReports = filteredReports.filter((r) =>
           isSameReporterName(r.nama, name),
         );
-        // Only count unique working days submitted starting from system epoch (2026-08-19)
+        // Only count unique working days submitted starting from effective operational start date
         const uniqueWorkingDays = new Set(
           memberReports
             .map((r) => r.reportDate)
-            .filter((d) => isWorkDay(d) && d >= SYSTEM_START_DATE),
+            .filter((d) => isWorkDay(d) && d >= effectiveStartDate),
         ).size;
         const memberActivities = memberReports.reduce(
           (acc, r) => acc + (r.activities?.length || 0),
           0,
         );
         const effectiveEnd = dateRange.end < todayWita ? dateRange.end : todayWita;
-        const expectedStats = getEffectiveWorkingDaysInRange(dateRange.start, effectiveEnd);
+        const expectedStats = getEffectiveWorkingDaysInRange(dateRange.start, effectiveEnd, { systemStartDate: effectiveStartDate });
         const targetDays = expectedStats.totalWorkingDays;
         const pct =
           targetDays > 0
@@ -407,7 +421,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
       targetDateStr,
       isTargetToday,
     };
-  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate, todayWita]);
+  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate, todayWita, effectiveStartDate]);
 
   const totalCount = stats.trcCount + stats.pusdalopsCount;
   const hasData = totalCount > 0;
@@ -646,7 +660,7 @@ export function RekapView({ reports, reporterNames }: RekapViewProps) {
                 <InfoIcon className="h-3.5 w-3.5" />
                 <div className="ui-tooltip ui-tooltip-right min-w-[240px] text-left">
                   <span>
-                    Perhitungan konsistensi & hari kerja efektif dimulai sejak tanggal <strong>19 Agustus 2026</strong> (hari libur & kalender sebelum tanggal tersebut dikecualikan).
+                    Perhitungan konsistensi &amp; hari kerja efektif dimulai sejak tanggal <strong>{startDateLabel}</strong> (hari libur &amp; kalender sebelum tanggal tersebut dikecualikan).
                   </span>
                 </div>
               </div>

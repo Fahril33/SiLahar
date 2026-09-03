@@ -11,6 +11,7 @@ import {
 } from "../lib/alerts";
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
+import { resolveEffectiveSystemStartDate } from "../lib/system-date";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
@@ -653,9 +654,17 @@ export function useReportDashboard() {
       persistNotificationSettings(dbNS);
       setExcelTemplates(dbET);
       setReporterNames(dbRN);
-      setReportRules(dbRules);
+      const effectiveRules: ReportRules = {
+        ...dbRules,
+        systemStartDate: resolveEffectiveSystemStartDate(
+          dbRules.systemStartDate,
+          dbR,
+          getWitaToday(),
+        ),
+      };
+      setReportRules(effectiveRules);
       setRulesLoaded(true);
-      setAdminRuleDraft(dbRules);
+      setAdminRuleDraft(effectiveRules);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(dbATC));
       setAdminReporterDraftNames(c => Object.fromEntries(dbRP.map(r => [r.id, c[r.id] ?? r.fullName])));
       setAdminExcelTemplateDrafts(c => Object.fromEntries(dbET.map(t => [t.id, c[t.id] ?? {

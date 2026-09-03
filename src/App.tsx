@@ -488,6 +488,7 @@ export default function App() {
               dashboard.change("reportDate", date);
               dashboard.setView("entry");
             }}
+            systemStartDate={dashboard.reportRules.systemStartDate}
           />
         ) : null}
 
@@ -497,6 +498,7 @@ export default function App() {
             reporterNames={dashboard.reporterNames}
             loading={dashboard.loading}
             onReload={dashboard.handleReloadDashboardData}
+            systemStartDate={dashboard.reportRules.systemStartDate}
           />
         ) : null}
 

@@ -12,10 +12,13 @@ import { isSameReporterName } from "../lib/reporter-name";
 import { LocalDraftsModal } from "./local-drafts-modal";
 import {
   getHolidayInfo,
-  SYSTEM_START_DATE,
   getEffectiveWorkingDaysInRange,
   isWorkDay,
 } from "../lib/holidays";
+import {
+  resolveEffectiveSystemStartDate,
+  getSystemStartDateLabel,
+} from "../lib/system-date";
 
 function FileTextIcon(props: { className?: string }) {
   return (
@@ -264,6 +267,7 @@ export function HistoryView(props: {
   onHandleQueueLocalDraftUpload?: (draftId: string) => Promise<void>;
   onOpenSavedDrafts?: () => void;
   onStartNewReportForDate?: (date: string) => void;
+  systemStartDate: string;
 }) {
   const {
     loading,
@@ -288,6 +292,7 @@ export function HistoryView(props: {
     onHandleQueueLocalDraftUpload,
     onOpenSavedDrafts,
     onStartNewReportForDate,
+    systemStartDate,
   } = props;
   const [openPrintMenuId, setOpenPrintMenuId] = useState<string | null>(null);
   const printMenuRef = useRef<HTMLDivElement | null>(null);
@@ -360,6 +365,16 @@ export function HistoryView(props: {
     chronoYear,
   ]);
 
+  // Tanggal acuan mulai operasional: gunakan modul terpusat (in-memory, tanpa query DB tambahan)
+  const effectiveStartDate = useMemo(
+    () => resolveEffectiveSystemStartDate(systemStartDate, props.reports, props.today),
+    [systemStartDate, props.reports, props.today],
+  );
+  const startDateLabel = useMemo(
+    () => getSystemStartDateLabel(effectiveStartDate),
+    [effectiveStartDate],
+  );
+
   const consistencyStats = useMemo(() => {
     if (!showChronologicalView || !props.userSession) return null;
 
@@ -380,6 +395,7 @@ export function HistoryView(props: {
     const expectedStats = getEffectiveWorkingDaysInRange(
       effectiveStart,
       effectiveEnd,
+      { systemStartDate: effectiveStartDate },
     );
     const targetDays = expectedStats.totalWorkingDays;
 
@@ -392,7 +408,7 @@ export function HistoryView(props: {
             d >= effectiveStart &&
             d <= effectiveEnd &&
             isWorkDay(d) &&
-            d >= SYSTEM_START_DATE,
+            d >= effectiveStartDate,
         ),
     ).size;
 
@@ -416,6 +432,7 @@ export function HistoryView(props: {
     chronoMonth,
     chronoYear,
     props.today,
+    effectiveStartDate,
   ]);
 
   const expectedWorkingDays = useMemo(() => {
@@ -424,22 +441,30 @@ export function HistoryView(props: {
     const yyyy = String(chronoYear);
     const mm = String(chronoMonth + 1).padStart(2, "0");
 
-    // Start of month or SYSTEM_START_DATE (whichever is later)
+    // Start of month or effectiveStartDate (whichever is later)
     const startOfMonth = `${yyyy}-${mm}-01`;
-    const effectiveStart = startOfMonth > SYSTEM_START_DATE ? startOfMonth : SYSTEM_START_DATE;
+    const effectiveStart = startOfMonth > effectiveStartDate ? startOfMonth : effectiveStartDate;
 
     // End of month or today (whichever is earlier)
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
     const endOfMonth = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
     const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
 
-    if (effectiveStart > effectiveEnd) return [];
+    if (!effectiveStart || !effectiveEnd || effectiveStart > effectiveEnd) return [];
+
+    const [sY, sM, sD] = effectiveStart.slice(0, 10).split("-").map(Number);
+    const [eY, eM, eD] = effectiveEnd.slice(0, 10).split("-").map(Number);
+    if (isNaN(sY) || isNaN(sM) || isNaN(sD) || isNaN(eY) || isNaN(eM) || isNaN(eD)) return [];
+
+    const current = new Date(sY, sM - 1, sD);
+    const endLimit = new Date(eY, eM - 1, eD);
+    if (isNaN(current.getTime()) || isNaN(endLimit.getTime())) return [];
 
     const days: string[] = [];
-    const current = new Date(effectiveStart);
-    const endLimit = new Date(effectiveEnd);
+    let safetyCount = 0;
 
-    while (current <= endLimit) {
+    while (current <= endLimit && safetyCount < 100) {
+      safetyCount++;
       const yStr = current.getFullYear();
       const mStr = String(current.getMonth() + 1).padStart(2, "0");
       const dStr = String(current.getDate()).padStart(2, "0");
@@ -451,7 +476,7 @@ export function HistoryView(props: {
     }
 
     return days;
-  }, [chronoMonth, chronoYear, props.today, showChronologicalView, props.userSession]);
+  }, [chronoMonth, chronoYear, props.today, showChronologicalView, props.userSession, effectiveStartDate]);
 
   const chronoItems = useMemo(() => {
     if (!showChronologicalView) return [];
@@ -929,7 +954,7 @@ export function HistoryView(props: {
                               <line x1="12" y1="8" x2="12.01" y2="8" />
                             </svg>
                             <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
-                              Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>19 Agustus 2026</strong> tidak dihitung sebagai beban target absensi kerja.
+                              Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> tidak dihitung sebagai beban target absensi kerja.
                             </span>
                           </span>
                         </div>
@@ -992,7 +1017,7 @@ export function HistoryView(props: {
 
                         {/* Custom instant tooltip overlay */}
                         <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
-                          Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>19 Agustus 2026</strong> tidak dihitung sebagai beban target absensi kerja.
+                          Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> tidak dihitung sebagai beban target absensi kerja.
                         </span>
                       </span>
                     </div>

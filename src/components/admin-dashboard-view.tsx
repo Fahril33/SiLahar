@@ -399,6 +399,26 @@ function ReportRulesPanel(props: AdminDashboardViewProps) {
             />
           </label>
 
+          <label className="block space-y-2">
+            <span className="text-sm font-medium">
+              Tanggal mulai operasional sistem
+            </span>
+            <p className="text-xs text-[var(--text-muted)]">
+              Laporan &amp; statistik hanya dihitung mulai dari tanggal ini.
+            </p>
+            <input
+              type="date"
+              value={props.adminRuleDraft.systemStartDate}
+              onChange={(event) =>
+                props.onChangeAdminRule(
+                  "systemStartDate",
+                  event.target.value,
+                )
+              }
+              className={inputClassName}
+            />
+          </label>
+
           <button
             type="button"
             onClick={() => void props.onHandleSaveAdminRules()}
