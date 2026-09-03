@@ -61,12 +61,12 @@ export function useConnectivity() {
     // Initial check
     void checkServerStatus();
 
-    // Periodic check every 30 seconds if online
+    // Periodic check every 2 minutes if online
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") {
         void checkServerStatus();
       }
-    }, 30000);
+    }, 120000);
 
     return () => {
       window.removeEventListener("online", handleOnline);

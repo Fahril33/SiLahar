@@ -11,6 +11,7 @@ import {
 } from "../lib/alerts";
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
+import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
 import { resolveEffectiveSystemStartDate } from "../lib/system-date";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
@@ -400,6 +401,7 @@ export function useReportDashboard() {
 
   const realtimeReloadTimeoutRef = useRef<number | null>(null);
   const backgroundRefreshIntervalRef = useRef<number | null>(null);
+  const lastDashboardLoadTimeRef = useRef<number>(Date.now());
   const templateVersionRef = useRef<string | null>(null);
   const templatePreviousConfigRef = useRef<ReportTemplateConfig | null>(null);
   const templateInitializedRef = useRef(false);
@@ -472,8 +474,18 @@ export function useReportDashboard() {
   }, []);
 
   useEffect(() => {
-    const refresh = () => { if (document.visibilityState === "visible") void loadDashboardData(); };
-    backgroundRefreshIntervalRef.current = window.setInterval(refresh, 15000);
+    const refresh = () => {
+      // Throttle focus/visibility refresh: only reload if at least 60s passed
+      if (document.visibilityState === "visible" && Date.now() - lastDashboardLoadTimeRef.current > 60000) {
+        void loadDashboardData();
+      }
+    };
+    // Gentle heartbeat sync every 5 minutes (Realtime WebSocket already pushes instant changes)
+    backgroundRefreshIntervalRef.current = window.setInterval(() => {
+      if (document.visibilityState === "visible" && Date.now() - lastDashboardLoadTimeRef.current > 180000) {
+        void loadDashboardData();
+      }
+    }, 300000);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => {
@@ -541,7 +553,7 @@ export function useReportDashboard() {
   }, [userSession]);
   useEffect(() => {
     const currentToday = getWitaToday();
-    if (adminSession || reportRules.allowAnyReportDate || draft.reportDate === currentToday) return;
+    if (OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate || adminSession || reportRules.allowAnyReportDate || draft.reportDate === currentToday) return;
     setDraft((current) => normalizeDraft({ ...current, reportDate: currentToday }));
   }, [adminSession, draft.reportDate, reportRules.allowAnyReportDate]);
 
@@ -639,6 +651,7 @@ export function useReportDashboard() {
   }
 
   async function loadDashboardData() {
+    lastDashboardLoadTimeRef.current = Date.now();
     setLoading(true);
     try {
       const [dbR, dbRP, dbRules, dbET, dbATC, dbNS] = await Promise.all([
@@ -767,7 +780,12 @@ export function useReportDashboard() {
   }, [draft.nama, loadedSearchReportId, loadedSourceOriginalName]);
 
   function change<K extends keyof DraftReport>(key: K, value: DraftReport[K]) {
-    if (key === "reportDate" && !adminSession && (!rulesLoaded || !reportRules.allowAnyReportDate)) {
+    if (
+      key === "reportDate" &&
+      !adminSession &&
+      !OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate &&
+      (!rulesLoaded || !reportRules.allowAnyReportDate)
+    ) {
       setDraft(c => normalizeDraft({ ...c, reportDate: getWitaToday() }));
       return;
     }
@@ -1030,7 +1048,6 @@ export function useReportDashboard() {
     }
 
     await refreshLocalDrafts();
-    setLoadedLocalDraftId(saved.id);
 
     if (options?.showToast !== false) {
       await showSuccess(
@@ -1047,6 +1064,7 @@ export function useReportDashboard() {
       );
     }
 
+    resetDraftState();
     return saved.id;
   }
 
@@ -1351,7 +1369,12 @@ export function useReportDashboard() {
   }
 
   async function handleLoadEdit(report: Report) {
-    if (!adminSession && !reportRules.allowAnyReportDate && report.reportDate !== getWitaToday()) {
+    if (
+      !adminSession &&
+      !OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate &&
+      !reportRules.allowAnyReportDate &&
+      report.reportDate !== getWitaToday()
+    ) {
       await showError("Edit belum diizinkan", "Hanya laporan hari berjalan yang bisa diedit publik.");
       return;
     }
@@ -1532,8 +1555,18 @@ export function useReportDashboard() {
         await showSuccess("Laporan tersimpan", isWitaFriday(draft.reportDate) ? "terimakasih atas kerja keras anda. sampai jumpa hari senin." : "terimakasih atas kerja keras anda. sampai jumpa besok");
       } catch (err) {
         logSafeError(err, "Dashboard/SaveReport");
+        toast.close();
         const msg = (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") ? err.message : "Gagal menyimpan laporan.";
-        await showError("Simpan gagal", msg);
+        const saveLocal = await askConfirmation(
+          "Database Sedang Offline",
+          `${msg}\n\nKoneksi database sedang terputus. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
+          "Simpan ke Draft Lokal"
+        );
+        if (saveLocal) {
+          await persistCurrentAsLocalDraft({ showToast: true });
+        } else {
+          await showError("Simpan gagal", msg);
+        }
       } finally {
         window.clearTimeout(slowSaveTimer);
         setSubmitting(false);
@@ -1870,7 +1903,10 @@ export function useReportDashboard() {
     reportRules, userSession, userAuthLoading, userSubmitting, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
     adminAuthLoading, adminSubmitting, adminActiveAction, adminActiveItemId, adminRuleDraft,
     adminTemplateApproverDrafts, adminReporterDraftNames,
-    canUseAnyReportDate: Boolean(adminSession) || (rulesLoaded && reportRules.allowAnyReportDate),
+    canUseAnyReportDate:
+      OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate ||
+      Boolean(adminSession) ||
+      (rulesLoaded && reportRules.allowAnyReportDate),
     canManageReports: Boolean(adminSession),
     duplicateReport, activityTimeIssues, activityCompletionStates, preview, historyResults,
     historyLocalDrafts, searchResult, searchResultLoaded, searchResultCanReload, searchResultNeedsReload, statusRows,

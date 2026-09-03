@@ -1,3 +1,5 @@
+import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
+
 export type ReportRules = {
   allowAnyReportDate: boolean;
   maxPhotosPerActivity: number;
@@ -5,7 +7,7 @@ export type ReportRules = {
 };
 
 export const initialReportRules: ReportRules = {
-  allowAnyReportDate: false,
+  allowAnyReportDate: OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate,
   maxPhotosPerActivity: 1,
   systemStartDate: "",
 };

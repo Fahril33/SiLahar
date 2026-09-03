@@ -11,6 +11,7 @@ import { useReportDashboard } from "./hooks/use-report-dashboard";
 import { getWitaToday } from "./lib/time";
 import { showSuccess, showInfo } from "./lib/alerts";
 import { LoginView } from "./components/login-view";
+import { OFFLINE_EMERGENCY_MODE } from "./config/app-mode";
 
 type ThemeMode = "light" | "dark" | "cheerfull";
 type NavbarPosition = "top" | "left" | "right";
@@ -292,7 +293,7 @@ export default function App() {
     </div>
   );
 
-  if (dashboard.userAuthLoading || dashboard.adminAuthLoading) {
+  if (!OFFLINE_EMERGENCY_MODE.disableLoginRequirement && (dashboard.userAuthLoading || dashboard.adminAuthLoading)) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-[var(--surface-muted)]">
         <div className="text-center">
@@ -303,7 +304,7 @@ export default function App() {
     );
   }
 
-  if (!dashboard.userSession && !dashboard.adminSession) {
+  if (!OFFLINE_EMERGENCY_MODE.disableLoginRequirement && !dashboard.userSession && !dashboard.adminSession) {
     return (
       <LoginView
         reporterNames={dashboard.reporterNames}
