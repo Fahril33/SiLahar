@@ -856,7 +856,7 @@ export function EntryView(props: EntryViewProps) {
             )}
 
             <section className="surface-card rounded-[15px] p-4">
-              {!props.userSession && (
+              {(!props.userSession || OFFLINE_EMERGENCY_MODE.disableLoginRequirement) && (
                 <DeviceNameHistory
                   names={props.savedNames}
                   onPick={(name) => props.onChange("nama", name)}
@@ -898,7 +898,7 @@ export function EntryView(props: EntryViewProps) {
                     options={props.reporterNames}
                     placeholder="Nama Anda"
                     className={inputClassName}
-                    disabled={Boolean(props.userSession)}
+                    disabled={false}
                     emptyMessage="Nama belum ada di database, tetapi laporan tetap bisa dilanjutkan."
                     endAdornment={
                       props.draft.nama.trim() &&
