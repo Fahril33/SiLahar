@@ -262,9 +262,11 @@ export function HistoryView(props: {
   }>;
   savedLocalDrafts?: LocalReportDraftSummary[];
   activeLocalDraftId?: string | null;
+  pdfExportingDraftId?: string | null;
   onHandleLoadLocalDraft?: (draftId: string) => Promise<void>;
   onHandleDeleteLocalDraft?: (draftId: string) => Promise<void>;
   onHandleQueueLocalDraftUpload?: (draftId: string) => Promise<void>;
+  onHandleDownloadLocalDraftPdf?: (draftId: string) => Promise<void>;
   onOpenSavedDrafts?: () => void;
   onStartNewReportForDate?: (date: string) => void;
   systemStartDate: string;
@@ -287,9 +289,11 @@ export function HistoryView(props: {
     statusRows,
     savedLocalDrafts = [],
     activeLocalDraftId,
+    pdfExportingDraftId,
     onHandleLoadLocalDraft,
     onHandleDeleteLocalDraft,
     onHandleQueueLocalDraftUpload,
+    onHandleDownloadLocalDraftPdf,
     onOpenSavedDrafts,
     onStartNewReportForDate,
     systemStartDate,
@@ -1708,9 +1712,11 @@ export function HistoryView(props: {
           onClose={() => setShowDraftsModal(false)}
           savedLocalDrafts={savedLocalDrafts}
           activeLocalDraftId={activeLocalDraftId}
+          pdfExportingDraftId={pdfExportingDraftId}
           onHandleLoadLocalDraft={onHandleLoadLocalDraft}
           onHandleDeleteLocalDraft={onHandleDeleteLocalDraft}
           onHandleQueueLocalDraftUpload={onHandleQueueLocalDraftUpload}
+          onHandleDownloadLocalDraftPdf={onHandleDownloadLocalDraftPdf}
         />
       )}
     </section>

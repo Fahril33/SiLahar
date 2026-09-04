@@ -481,9 +481,11 @@ export default function App() {
             statusRows={dashboard.statusRows}
             savedLocalDrafts={dashboard.savedLocalDrafts}
             activeLocalDraftId={dashboard.activeLocalDraftId}
+            pdfExportingDraftId={dashboard.pdfExportingDraftId}
             onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
             onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
             onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
+            onHandleDownloadLocalDraftPdf={dashboard.handleExportLocalDraftPdf}
             onOpenSavedDrafts={() => dashboard.setShowDraftsModal(true)}
             onStartNewReportForDate={(date: string) => {
               dashboard.change("reportDate", date);
@@ -581,9 +583,11 @@ export default function App() {
           onClose={() => dashboard.setShowDraftsModal(false)}
           savedLocalDrafts={dashboard.savedLocalDrafts}
           activeLocalDraftId={dashboard.activeLocalDraftId}
+          pdfExportingDraftId={dashboard.pdfExportingDraftId}
           onHandleLoadLocalDraft={dashboard.handleLoadLocalDraft}
           onHandleDeleteLocalDraft={dashboard.handleDeleteLocalDraft}
           onHandleQueueLocalDraftUpload={dashboard.handleQueueLocalDraftUpload}
+          onHandleDownloadLocalDraftPdf={dashboard.handleExportLocalDraftPdf}
         />
       </div>
     </div>

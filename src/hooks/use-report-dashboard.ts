@@ -328,6 +328,7 @@ export function useReportDashboard() {
   const [excelTemplateUploading, setExcelTemplateUploading] = useState(false);
   const [excelExportingReportId, setExcelExportingReportId] = useState<string | null>(null);
   const [pdfExportingReportId, setPdfExportingReportId] = useState<string | null>(null);
+  const [pdfExportingDraftId, setPdfExportingDraftId] = useState<string | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
   const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
@@ -1477,6 +1478,54 @@ export function useReportDashboard() {
     }
   }
 
+  async function handleExportLocalDraftPdf(draftId: string) {
+    setPdfExportingDraftId(draftId);
+    const toast = openProgressToast("Export Dokumen PDF", [
+      { id: "images", label: "Optimasi" },
+      { id: "render", label: "Render" },
+      { id: "download", label: "Unduh" },
+    ]);
+    let pendingPreviewsToRevoke: PendingPreviewMap | null = null;
+    try {
+      const localDraft = await loadLocalReportDraft(draftId);
+      if (!localDraft) {
+        toast.close();
+        await showError("Draft tidak ditemukan", "Draft lokal ini sudah tidak tersedia.");
+        return;
+      }
+
+      const pendingPreviews: PendingPreviewMap = Object.fromEntries(
+        Object.entries(localDraft.pendingPhotos).map(([no, files]) => [
+          Number(no),
+          files.map((file) => ({
+            name: file.name,
+            url: URL.createObjectURL(file),
+          })),
+        ]),
+      );
+      pendingPreviewsToRevoke = pendingPreviews;
+
+      const previewReport = createPreviewReport(localDraft.draft, pendingPreviews);
+
+      await exportReportAsPdf(
+        previewReport,
+        paperFormat,
+        localDraft.pendingPhotos,
+        (stageId, detail) => toast.update(stageId, detail),
+      );
+      toast.close();
+    } catch (err) {
+      logSafeError(err, "Dashboard/ExportLocalDraftPdf");
+      toast.close();
+      await showError("Download PDF gagal", "Terjadi masalah saat membuat file PDF dari draft.");
+    } finally {
+      if (pendingPreviewsToRevoke) {
+        revokePreviews(pendingPreviewsToRevoke);
+      }
+      setPdfExportingDraftId(null);
+    }
+  }
+
   async function handleUnsupportedMobilePrint() {
     await askAcknowledge(
       "Print belum didukung",
@@ -1896,7 +1945,7 @@ export function useReportDashboard() {
     view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
     activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
     excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
-    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, bulkExporting, editLoadingReportId,
+    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, pdfExportingDraftId, bulkExporting, editLoadingReportId,
     savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
     historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
@@ -1916,7 +1965,7 @@ export function useReportDashboard() {
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, moveActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleUnsupportedMobilePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,
