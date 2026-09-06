@@ -790,28 +790,33 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
 
   const reporterDirectoryId = await upsertReporterDirectory(draft.nama);
 
+  // Helper: return the ID only if it's a real DB UUID (not a client-side fallback)
+  const isFallbackId = (id: string | null | undefined): boolean =>
+    !id ||
+    id === FALLBACK_TEMPLATE_ID ||
+    id === FALLBACK_COORDINATOR_TRC_ID ||
+    id === FALLBACK_COORDINATOR_PUSDALOPS_ID ||
+    id === FALLBACK_DIVISION_HEAD_ID;
+
+  const resolveTemplateId = (primary: string | null | undefined, fallback: string | null | undefined) =>
+    !isFallbackId(primary) ? primary : !isFallbackId(fallback) ? fallback : null;
+
   const payload: any = {
-    template_id:
-      draft.templateId && draft.templateId !== FALLBACK_TEMPLATE_ID
-        ? draft.templateId
-        : existingReport?.templateId ?? null,
+    template_id: resolveTemplateId(draft.templateId, existingReport?.templateId),
     reporter_directory_id: reporterDirectoryId,
     reporter_name: formatReporterNameForDatabase(draft.nama),
     tim: draft.tim ?? "PUSDALOPS",
     report_date: draft.reportDate,
-    template_approver_coordinator_id:
-      draft.approverCoordinatorTemplateId &&
-      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_TRC_ID &&
-      draft.approverCoordinatorTemplateId !== FALLBACK_COORDINATOR_PUSDALOPS_ID
-        ? draft.approverCoordinatorTemplateId
-        : null,
+    template_approver_coordinator_id: resolveTemplateId(
+      draft.approverCoordinatorTemplateId,
+      existingReport?.approverCoordinatorTemplateId,
+    ),
     approver_coordinator_name: draft.approverCoordinator,
     approver_coordinator_nip: draft.approverCoordinatorNip,
-    template_approver_division_head_id:
-      draft.approverDivisionHeadTemplateId &&
-      draft.approverDivisionHeadTemplateId !== FALLBACK_DIVISION_HEAD_ID
-        ? draft.approverDivisionHeadTemplateId
-        : null,
+    template_approver_division_head_id: resolveTemplateId(
+      draft.approverDivisionHeadTemplateId,
+      existingReport?.approverDivisionHeadTemplateId,
+    ),
     approver_division_head_name: draft.approverDivisionHead,
     approver_division_head_title: draft.approverDivisionHeadTitle,
     approver_division_head_nip: draft.approverDivisionHeadNip,
