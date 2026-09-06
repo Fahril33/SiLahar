@@ -187,13 +187,13 @@ export function getEffectiveWorkingDaysInRange(
   holidayDates: Array<{ date: string; name: string }>;
 } {
   const enforceStart = options?.enforceSystemStartDate !== false;
-  const startDate = options?.systemStartDate;
+  const startDate = options?.systemStartDate ? options.systemStartDate.trim().slice(0, 10) : "";
   
-  let actualStart = startStr;
+  let actualStart = startStr ? startStr.trim().slice(0, 10) : "";
   if (enforceStart && startDate && actualStart < startDate) {
     actualStart = startDate;
   }
-  const actualEnd = endStr;
+  const actualEnd = endStr ? endStr.trim().slice(0, 10) : "";
 
   if (
     !actualStart ||

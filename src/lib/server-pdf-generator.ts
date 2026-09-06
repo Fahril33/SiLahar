@@ -5,7 +5,7 @@ import chromium from "@sparticuz/chromium";
 import fs from "node:fs";
 import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
-import pdfStylesInline from "../styles/report-pdf.css?inline";
+import { PDF_REPORT_CSS } from "../styles/report-pdf-styles";
 
 function getLocalChromePath(): string | null {
   const platform = process.platform;
@@ -110,7 +110,7 @@ export function renderReportToHtml(report: Report): string {
   <meta charset="UTF-8">
   <title>${report.nama || "Laporan"}</title>
   <style>
-    ${pdfStylesInline}
+    ${PDF_REPORT_CSS}
     
     /* Strict print & page layout optimizations for Chromium */
     html, body {

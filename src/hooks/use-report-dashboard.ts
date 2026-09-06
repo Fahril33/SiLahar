@@ -13,7 +13,6 @@ import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
 import { supabase } from "../lib/supabase";
-import { resolveEffectiveSystemStartDate } from "../lib/system-date";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
@@ -699,11 +698,7 @@ export function useReportDashboard() {
       setReporterNames(allReporterNames);
       const effectiveRules: ReportRules = {
         ...dbRules,
-        systemStartDate: resolveEffectiveSystemStartDate(
-          dbRules.systemStartDate,
-          mergedReports,
-          getWitaToday(),
-        ),
+        systemStartDate: (dbRules.systemStartDate || "").trim(),
       };
       setReportRules(effectiveRules);
       setRulesLoaded(true);

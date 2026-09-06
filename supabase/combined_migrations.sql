@@ -305,7 +305,8 @@ $$;
 create or replace function public.get_report_rules()
 returns table (
   allow_any_report_date boolean,
-  max_photos_per_activity integer
+  max_photos_per_activity integer,
+  system_start_date text
 )
 language sql
 stable
@@ -321,7 +322,15 @@ as $$
       ),
       false
     ) as allow_any_report_date,
-    public.current_max_photos_per_activity() as max_photos_per_activity;
+    public.current_max_photos_per_activity() as max_photos_per_activity,
+    coalesce(
+      (
+        select value->>'system_start_date'
+        from public.app_settings
+        where key = 'report_rules'
+      ),
+      ''
+    ) as system_start_date;
 $$;
 
 -- RPC: Ambil pengaturan notifikasi suara publik & admin [015, 016]

@@ -406,6 +406,16 @@ export function HistoryView(props: {
   // All reports list passed from props
   const allReports = props.reports || [];
 
+  // Tanggal acuan mulai operasional: murni dari konfigurasi database (systemStartDate)
+  const effectiveStartDate = useMemo(
+    () => resolveEffectiveSystemStartDate(systemStartDate),
+    [systemStartDate],
+  );
+  const startDateLabel = useMemo(
+    () => getSystemStartDateLabel(effectiveStartDate),
+    [effectiveStartDate],
+  );
+
   const chronoReports = useMemo(() => {
     if (!showChronologicalView) return [];
 
@@ -420,10 +430,10 @@ export function HistoryView(props: {
         const matchName = isSameReporterName(r.nama, targetName);
         if (!matchName) return false;
 
-        const rDate = new Date(r.reportDate);
-        return (
-          rDate.getMonth() === chronoMonth && rDate.getFullYear() === chronoYear
-        );
+        if (effectiveStartDate && r.reportDate < effectiveStartDate) return false;
+
+        const [rY, rM] = (r.reportDate || "").split("-").map(Number);
+        return rM - 1 === chronoMonth && rY === chronoYear;
       })
       .sort((a: Report, b: Report) => {
         const dateCompare = b.reportDate.localeCompare(a.reportDate);
@@ -439,26 +449,20 @@ export function HistoryView(props: {
     statusSearchQuery,
     chronoMonth,
     chronoYear,
+    effectiveStartDate,
   ]);
-
-  // Tanggal acuan mulai operasional: gunakan modul terpusat (in-memory, tanpa query DB tambahan)
-  const effectiveStartDate = useMemo(
-    () => resolveEffectiveSystemStartDate(systemStartDate, props.reports, props.today),
-    [systemStartDate, props.reports, props.today],
-  );
-  const startDateLabel = useMemo(
-    () => getSystemStartDateLabel(effectiveStartDate),
-    [effectiveStartDate],
-  );
 
   const consistencyStats = useMemo(() => {
     if (!showChronologicalView || !props.userSession) return null;
 
-    // Start date of the month, clamped to effectiveStartDate
+    // Start date of the month, clamped to effectiveStartDate if configured
     const yyyy = String(chronoYear);
     const mm = String(chronoMonth + 1).padStart(2, "0");
     const rawStart = `${yyyy}-${mm}-01`;
-    const effectiveStart = rawStart < effectiveStartDate ? effectiveStartDate : rawStart;
+    const effectiveStart =
+      effectiveStartDate && rawStart < effectiveStartDate
+        ? effectiveStartDate
+        : rawStart;
 
     // End date of the month
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
@@ -479,7 +483,7 @@ export function HistoryView(props: {
     const expectedStats = getEffectiveWorkingDaysInRange(
       effectiveStart,
       effectiveEnd,
-      { enforceSystemStartDate: true, systemStartDate: effectiveStartDate },
+      { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
     );
     const targetDays = expectedStats.totalWorkingDays;
 
@@ -524,9 +528,12 @@ export function HistoryView(props: {
     const yyyy = String(chronoYear);
     const mm = String(chronoMonth + 1).padStart(2, "0");
 
-    // Start of month, clamped to effectiveStartDate
+    // Start of month, clamped to effectiveStartDate if configured
     const rawStart = `${yyyy}-${mm}-01`;
-    const effectiveStart = rawStart < effectiveStartDate ? effectiveStartDate : rawStart;
+    const effectiveStart =
+      effectiveStartDate && rawStart < effectiveStartDate
+        ? effectiveStartDate
+        : rawStart;
 
     // End of month or today (whichever is earlier)
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
@@ -554,7 +561,7 @@ export function HistoryView(props: {
       const dateStr = `${yStr}-${mStr}-${dStr}`;
 
       // Khususkan untuk hari wajib saja (Senin - Jumat non-libur nasional)
-      if (isWorkDay(dateStr)) {
+      if (isWorkDay(dateStr) && (!effectiveStartDate || dateStr >= effectiveStartDate)) {
         days.push(dateStr);
       }
       current.setDate(current.getDate() + 1);
@@ -585,18 +592,22 @@ export function HistoryView(props: {
     > = [];
 
     sortedDates.forEach((date) => {
+      if (effectiveStartDate && date < effectiveStartDate) return;
+
       const reportsForDate = chronoReports.filter((r) => r.reportDate === date);
       if (reportsForDate.length > 0) {
         reportsForDate.forEach((report) => {
           items.push({ type: "report", date, report });
         });
       } else {
-        items.push({ type: "missing", date, report: null });
+        if (!effectiveStartDate || date >= effectiveStartDate) {
+          items.push({ type: "missing", date, report: null });
+        }
       }
     });
 
     return items;
-  }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays]);
+  }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays, effectiveStartDate]);
 
   const handleScrollToDate = (targetDate: string) => {
     if (!targetDate) return;
@@ -1059,7 +1070,11 @@ export function HistoryView(props: {
                               <line x1="12" y1="8" x2="12.01" y2="8" />
                             </svg>
                             <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
-                              Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> tidak dihitung sebagai beban target absensi kerja.
+                              {startDateLabel ? (
+                                <>Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> (tanggal acuan yang ditetapkan) tidak dihitung sebagai beban target absensi kerja.</>
+                              ) : (
+                                <>Hari Sabtu, Minggu, dan Hari Libur Nasional tidak dihitung sebagai beban target absensi kerja.</>
+                              )}
                             </span>
                           </span>
                         </div>
@@ -1122,7 +1137,11 @@ export function HistoryView(props: {
 
                         {/* Custom instant tooltip overlay */}
                         <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
-                          Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> tidak dihitung sebagai beban target absensi kerja.
+                          {startDateLabel ? (
+                            <>Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> (tanggal acuan yang ditetapkan) tidak dihitung sebagai beban target absensi kerja.</>
+                          ) : (
+                            <>Hari Sabtu, Minggu, dan Hari Libur Nasional tidak dihitung sebagai beban target absensi kerja.</>
+                          )}
                         </span>
                       </span>
                     </div>

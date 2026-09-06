@@ -347,7 +347,7 @@ export async function exportReportAsPdf(
   onStage?.("images", "Mengompresi dan memproses foto dokumentasi...");
   const pdfReadyReport = await materializeReportImages(report, pendingPhotos);
 
-  onStage?.("render", "Merender dokumen PDF di server...");
+  onStage?.("render", "Merender dokumen PDF kualitas tinggi...");
   try {
     const response = await fetch("/api/generate-pdf", {
       method: "POST",
@@ -376,7 +376,7 @@ export async function exportReportAsPdf(
     document.body.removeChild(link);
     window.setTimeout(() => URL.revokeObjectURL(url), 2000);
   } catch (error) {
-    console.warn("Server-side PDF generation error, trying client-side fallback:", error);
+    console.warn("Puppeteer PDF generation error, trying client-side fallback:", error);
     onStage?.("render", "Membuat PDF via browser...");
     const blob = await buildPdfBlob(pdfReadyReport, paperFormat);
     onStage?.("download", "Menyiapkan file unduhan...");
