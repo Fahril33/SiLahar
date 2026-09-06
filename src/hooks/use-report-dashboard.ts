@@ -12,10 +12,12 @@ import {
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
+import { supabase } from "../lib/supabase";
 import { resolveEffectiveSystemStartDate } from "../lib/system-date";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
+  DEFAULT_LOCAL_EXCEL_TEMPLATE,
   activateExcelReportTemplate,
   buildAutoExcelTemplateName,
   deleteExcelReportTemplate,
@@ -71,7 +73,6 @@ import {
   signInAdminAccount,
   signOutAdminAccount,
   subscribeAdminSession,
-  subscribeReportData,
   authenticateReporter,
   registerReporter,
   updateReporterProfile,
@@ -180,7 +181,17 @@ function buildPendingPreviewMap(
 
 function mapOriginalActivityPhotos(report: Report) {
   return Object.fromEntries(
-    report.activities.map((activity) => [activity.no, activity.photos ?? []]),
+    report.activities.map((activity) => [
+      activity.no,
+      (activity.photos ?? []).map(p => {
+        let url = p.publicUrl;
+        if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath && supabase) {
+          const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+          url = data?.publicUrl || "";
+        }
+        return { ...p, publicUrl: url };
+      }),
+    ]),
   ) as Record<number, ReportActivityPhoto[]>;
 }
 
@@ -307,7 +318,13 @@ export function useReportDashboard() {
   });
   const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
   const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
-  const [reports, setReports] = useState<Report[]>(() => loadCachedReports());
+  const [reports, setReports] = useState<Report[]>(() => {
+    const cached = loadCachedReports();
+    return cached.map((r) => ({
+      ...r,
+      source: r.source || "local",
+    }));
+  });
   const [reporterProfiles, setReporterProfiles] = useState<ReporterDirectoryProfile[]>([]);
   const [activeReportTemplateConfig, setActiveReportTemplateConfig] =
     useState<ReportTemplateConfig | null>(null);
@@ -361,13 +378,7 @@ export function useReportDashboard() {
     }
     return null;
   });
-  const [userAuthLoading, setUserAuthLoading] = useState(() => {
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("silahar:user-session");
-      if (stored) return false;
-    }
-    return true;
-  });
+  const [userAuthLoading, setUserAuthLoading] = useState(false);
   const [userSubmitting, setUserSubmitting] = useState(false);
   const [adminSession, setAdminSession] = useState<AdminSessionState | null>(null);
   const [adminEmail, setAdminEmail] = useState("");
@@ -400,14 +411,11 @@ export function useReportDashboard() {
   const [activeLocalDraftId, setActiveLocalDraftId] = useState<string | null>(null);
   const [loadedLocalDraftId, setLoadedLocalDraftId] = useState<string | null>(null);
 
-  const realtimeReloadTimeoutRef = useRef<number | null>(null);
-  const backgroundRefreshIntervalRef = useRef<number | null>(null);
   const lastDashboardLoadTimeRef = useRef<number>(Date.now());
   const templateVersionRef = useRef<string | null>(null);
   const templatePreviousConfigRef = useRef<ReportTemplateConfig | null>(null);
   const templateInitializedRef = useRef(false);
   const templateRefreshPromptOpenRef = useRef(false);
-  const previousViewRef = useRef<View>(view);
   const reportsRef = useRef(reports);
   const reporterNamesRef = useRef(reporterNames);
   const reportRulesRef = useRef(reportRules);
@@ -423,13 +431,6 @@ export function useReportDashboard() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("silahar:active-view", view);
     }
-  }, [view]);
-
-  useEffect(() => {
-    if (previousViewRef.current !== view && (view === "history" || view === "rekap")) {
-      void loadDashboardData();
-    }
-    previousViewRef.current = view;
   }, [view]);
 
   function handleRemoveSavedName(name: string) {
@@ -453,6 +454,7 @@ export function useReportDashboard() {
     };
   }, [draft]);
 
+  // Initial load on application mount
   useEffect(() => {
     void loadDashboardData();
     void refreshLocalDrafts();
@@ -462,39 +464,6 @@ export function useReportDashboard() {
     const activeTemplate = excelTemplates.find((t) => t.isActive) ?? null;
     void warmUpExcelTemplateCache(activeTemplate).catch((err) => logSafeError(err, "Dashboard/Cache"));
   }, [excelTemplates]);
-
-  useEffect(() => {
-    const unsubscribe = subscribeReportData(() => {
-      if (realtimeReloadTimeoutRef.current !== null) window.clearTimeout(realtimeReloadTimeoutRef.current);
-      realtimeReloadTimeoutRef.current = window.setTimeout(() => { void loadDashboardData(); }, 300);
-    });
-    return () => {
-      if (realtimeReloadTimeoutRef.current !== null) window.clearTimeout(realtimeReloadTimeoutRef.current);
-      unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const refresh = () => {
-      // Throttle focus/visibility refresh: only reload if at least 60s passed
-      if (document.visibilityState === "visible" && Date.now() - lastDashboardLoadTimeRef.current > 60000) {
-        void loadDashboardData();
-      }
-    };
-    // Gentle heartbeat sync every 5 minutes (Realtime WebSocket already pushes instant changes)
-    backgroundRefreshIntervalRef.current = window.setInterval(() => {
-      if (document.visibilityState === "visible" && Date.now() - lastDashboardLoadTimeRef.current > 180000) {
-        void loadDashboardData();
-      }
-    }, 300000);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      if (backgroundRefreshIntervalRef.current !== null) window.clearInterval(backgroundRefreshIntervalRef.current);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -660,19 +629,79 @@ export function useReportDashboard() {
         fetchExcelReportTemplates(), fetchActiveReportTemplateConfig(), fetchNotificationSettings()
       ]);
       const dbRN = dbRP.filter(r => r.isActive).map(r => r.fullName);
-      setReports(dbR);
-      setReporterProfiles(dbRP);
+      
+      const dbReportsWithSource: Report[] = dbR.map(r => ({ ...r, source: "db" as const }));
+      const dbReportIds = new Set(dbReportsWithSource.map(r => r.id));
+
+      const existingCached = loadCachedReports();
+      const localOnlyReports: Report[] = existingCached
+        .filter(r => !dbReportIds.has(r.id))
+        .map(r => ({ ...r, source: "local" as const }));
+
+      const mergedReports = [...dbReportsWithSource, ...localOnlyReports];
+
+      let currentUserSession = userSession;
+      if (!currentUserSession && typeof window !== "undefined") {
+        const stored = window.localStorage.getItem("silahar:user-session");
+        if (stored) {
+          try {
+            currentUserSession = JSON.parse(stored);
+          } catch {}
+        }
+      }
+
+      const mergedProfiles = [...dbRP];
+      if (currentUserSession) {
+        const matchingDbProfile = dbRP.find(p => isSameReporterName(p.fullName, currentUserSession!.fullName));
+        if (matchingDbProfile) {
+          // If profile exists in new DB, seamlessly sync profile details while preserving session without requiring re-login
+          const syncedSession: ReporterDirectoryProfile = {
+            ...currentUserSession,
+            id: matchingDbProfile.id,
+            fullName: matchingDbProfile.fullName,
+            isActive: matchingDbProfile.isActive,
+            totalReports: matchingDbProfile.totalReports,
+            firstReportedAt: matchingDbProfile.firstReportedAt,
+            lastReportedAt: matchingDbProfile.lastReportedAt,
+          };
+          currentUserSession = syncedSession;
+          setUserSession(syncedSession);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem("silahar:user-session", JSON.stringify(syncedSession));
+          }
+        } else if (!mergedProfiles.some(p => isSameReporterName(p.fullName, currentUserSession!.fullName))) {
+          mergedProfiles.push(currentUserSession);
+        }
+      }
+
+      const cachedNames = loadCachedReporterNames();
+      const reportNames = mergedReports.map(r => r.nama).filter(Boolean);
+      const deviceNames = loadDeviceSubmittedNames();
+      const activeUserNames = currentUserSession?.fullName ? [currentUserSession.fullName] : [];
+
+      const allReporterNames = Array.from(
+        new Set([
+          ...dbRN,
+          ...cachedNames,
+          ...reportNames,
+          ...deviceNames,
+          ...activeUserNames,
+        ])
+      ).filter(Boolean);
+
+      setReports(mergedReports);
+      setReporterProfiles(mergedProfiles);
       setActiveReportTemplateConfig(dbATC);
       setNotificationSettings(dbNS);
       setRuntimeNotificationSettings(dbNS);
       persistNotificationSettings(dbNS);
       setExcelTemplates(dbET);
-      setReporterNames(dbRN);
+      setReporterNames(allReporterNames);
       const effectiveRules: ReportRules = {
         ...dbRules,
         systemStartDate: resolveEffectiveSystemStartDate(
           dbRules.systemStartDate,
-          dbR,
+          mergedReports,
           getWitaToday(),
         ),
       };
@@ -680,7 +709,7 @@ export function useReportDashboard() {
       setRulesLoaded(true);
       setAdminRuleDraft(effectiveRules);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(dbATC));
-      setAdminReporterDraftNames(c => Object.fromEntries(dbRP.map(r => [r.id, c[r.id] ?? r.fullName])));
+      setAdminReporterDraftNames(c => Object.fromEntries(mergedProfiles.map(r => [r.id, c[r.id] ?? r.fullName])));
       setAdminExcelTemplateDrafts(c => Object.fromEntries(dbET.map(t => [t.id, c[t.id] ?? {
         templateName: t.templateName,
         templateDate: t.createdAt.slice(0, 10),
@@ -694,9 +723,9 @@ export function useReportDashboard() {
           ? buildAutoExcelTemplateName(nextVersion, c.templateDate)
           : c.templateName
       }));
-      saveCachedReports(dbR);
-      saveCachedReporterNames(dbRN);
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(dbATC));
+      saveCachedReports(mergedReports);
+      saveCachedReporterNames(allReporterNames);
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : (userSession ? { ...createEmptyDraft(dbATC), nama: userSession.fullName } : createEmptyDraft(dbATC)));
     } catch (err) {
       logSafeError(err, "Dashboard/LoadData");
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
@@ -743,7 +772,7 @@ export function useReportDashboard() {
   const activityTimeIssues = useMemo(() => getActivityTimeIssuesForDraft(draft), [draft]);
 
   const activityCompletionStates = useMemo(() => draft.activities.map((act, i) => isActivityComplete(act, pendingPhotos, activityTimeIssues[i] ?? { endBeforeStart: false, startsBeforePreviousEnd: false })), [activityTimeIssues, draft.activities, pendingPhotos]);
-  const activeExcelTemplate = useMemo(() => excelTemplates.find(t => t.isActive) ?? null, [excelTemplates]);
+  const activeExcelTemplate = useMemo(() => excelTemplates.find(t => t.isActive) ?? DEFAULT_LOCAL_EXCEL_TEMPLATE, [excelTemplates]);
   const localDraftCount = savedLocalDrafts.length;
   const queuedLocalDraftCount = savedLocalDrafts.filter(item => item.uploadStatus === "queued" || item.uploadStatus === "uploading").length;
   const loadedLocalDraftSummary = useMemo(
@@ -788,6 +817,15 @@ export function useReportDashboard() {
       (!rulesLoaded || !reportRules.allowAnyReportDate)
     ) {
       setDraft(c => normalizeDraft({ ...c, reportDate: getWitaToday() }));
+      return;
+    }
+
+    if (
+      key === "nama" &&
+      userSession &&
+      !OFFLINE_EMERGENCY_MODE.disableLoginRequirement &&
+      !adminSession
+    ) {
       return;
     }
     
@@ -1348,7 +1386,21 @@ export function useReportDashboard() {
       nama: report.nama,
       tanggal: report.tanggal,
       reportDate: report.reportDate,
-      activities: report.activities.map(a => ({ id: a.id, no: a.no, description: a.description, startTime: a.startTime, endTime: a.endTime, photos: a.photos ?? [] })),
+      activities: report.activities.map(a => ({
+        id: a.id,
+        no: a.no,
+        description: a.description,
+        startTime: a.startTime,
+        endTime: a.endTime,
+        photos: (a.photos ?? []).map(p => {
+          let url = p.publicUrl;
+          if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath && supabase) {
+            const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+            url = data?.publicUrl || "";
+          }
+          return { ...p, publicUrl: url };
+        }),
+      })),
       approverCoordinatorTemplateId: report.approverCoordinatorTemplateId,
       approverCoordinator: report.approverCoordinator,
       approverCoordinatorNip: report.approverCoordinatorNip,
@@ -1628,12 +1680,40 @@ export function useReportDashboard() {
     if (await askConfirmation("Hapus laporan?", `Laporan ${report.nama} akan dihapus permanen.`, "Hapus laporan")) {
       setSubmitting(true);
       try {
-        await deleteReportFromDatabase(report);
+        if (report.source !== "local") {
+          await deleteReportFromDatabase(report);
+        }
+        const currentCached = loadCachedReports();
+        saveCachedReports(currentCached.filter(r => r.id !== report.id));
         if (loadedSearchReportId === report.id) resetDraftState();
         await loadDashboardData();
         await showSuccess("Laporan dihapus", "Data sudah dihapus.");
       } catch (err) { logSafeError(err, "Dashboard/DeleteReport"); await showError("Hapus gagal", "Laporan belum berhasil dihapus."); }
       finally { setSubmitting(false); }
+    }
+  }
+
+  async function handleAdminDirectDeleteReport(report: Report) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      if (report.source !== "local") {
+        await deleteReportFromDatabase(report);
+      }
+      const currentCached = loadCachedReports();
+      saveCachedReports(currentCached.filter(r => r.id !== report.id));
+      if (loadedSearchReportId === report.id) resetDraftState();
+      await loadDashboardData();
+      await showSuccess("Laporan dihapus", `Laporan ${report.nama} (${report.reportDate}) berhasil dihapus.`);
+    } catch (err) {
+      logSafeError(err, "Dashboard/DeleteReport");
+      await showError("Hapus gagal", "Laporan belum berhasil dihapus.");
+      throw err;
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -1724,10 +1804,37 @@ export function useReportDashboard() {
     }
     setUserSubmitting(true);
     try {
-      const profile = await authenticateReporter(name, pass);
+      let profile: ReporterDirectoryProfile | null = null;
+      try {
+        profile = await authenticateReporter(name, pass);
+      } catch (authErr) {
+        logSafeError(authErr, "Dashboard/AuthReporter");
+      }
+
+      // Jika autentikasi DB belum berhasil (misal: password di DB berbeda atau DB baru),
+      // periksa apakah user aktif di perangkat memiliki nama yang sama.
+      // Jika namanya sama, pertahankan sesi login tanpa mengeluarkan user.
       if (!profile) {
+        const storedSession = typeof window !== "undefined" ? window.localStorage.getItem("silahar:user-session") : null;
+        let parsedSession: ReporterDirectoryProfile | null = null;
+        if (storedSession) {
+          try {
+            parsedSession = JSON.parse(storedSession);
+          } catch {}
+        }
+
+        const activeSession = userSession || parsedSession;
+        if (activeSession && isSameReporterName(activeSession.fullName, name)) {
+          setUserSession(activeSession);
+          setDraft((current) => normalizeDraft({ ...current, nama: activeSession.fullName }));
+          setView("entry");
+          await showSuccess("Sesi Aktif", `Sesi Anda tetap aktif sebagai ${activeSession.fullName}.`);
+          return;
+        }
+
         throw new Error("Nama petugas atau password salah.");
       }
+
       setUserSession(profile);
       if (typeof window !== "undefined") {
         window.localStorage.setItem("silahar:user-session", JSON.stringify(profile));
@@ -1964,7 +2071,7 @@ export function useReportDashboard() {
     localDraftCount, queuedLocalDraftCount, activeLocalDraftId, loadedLocalDraftId, loadedLocalDraftSummary,
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, moveActivity, setActivityFiles, clearActivityFiles,
-    restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleLoadEdit,
+    restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleAdminDirectDeleteReport, handleLoadEdit,
     handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,

@@ -7,6 +7,17 @@ const EXCEL_TEMPLATE_BUCKET = "report-excel-templates";
 const EXCEL_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+export const DEFAULT_LOCAL_EXCEL_TEMPLATE: ExcelReportTemplate = {
+  id: "local-default-excel-template",
+  templateName: "Template Bawaan Sistem (Lokal)",
+  cacheVersion: "v1-local",
+  storagePath: "",
+  publicUrl: "/template-laporan-harian.xlsx",
+  isActive: true,
+  createdAt: "2026-09-01T00:00:00.000Z",
+  updatedAt: "2026-09-01T00:00:00.000Z",
+};
+
 type ExcelReportTemplateRow = {
   id: string;
   template_name: string;

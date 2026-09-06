@@ -4,6 +4,7 @@ import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime } from "../lib/time";
 import { getHolidayInfo } from "../lib/holidays";
 import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
+import { supabase } from "../lib/supabase";
 import type { ReportRules } from "../types/report-rules";
 import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { DraftReport, Report, ReporterDirectoryProfile } from "../types/report";
@@ -461,6 +462,23 @@ function SmileIcon(props: { className?: string }) {
   );
 }
 
+function LockIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
 function CalendarIcon(props: { className?: string }) {
   return (
     <svg
@@ -892,18 +910,43 @@ export function EntryView(props: EntryViewProps) {
                   </div>
                 ) : null}
                 <div className="md:col-span-2">
+                  {props.userSession && !OFFLINE_EMERGENCY_MODE.disableLoginRequirement && !props.isAdmin && (
+                    <div className="mb-1.5 flex items-center justify-between text-xs text-[var(--text-muted)]">
+                      <span className="font-medium">Nama Petugas</span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]">
+                        <LockIcon className="h-3 w-3" />
+                        Terkunci sesuai akun login
+                      </span>
+                    </div>
+                  )}
                   <AutocompleteInput
                     value={props.draft.nama}
                     onChange={(value) => props.onChange("nama", value)}
                     options={props.reporterNames}
                     placeholder="Nama Anda"
                     className={inputClassName}
-                    disabled={false}
+                    disabled={Boolean(
+                      props.userSession &&
+                        !OFFLINE_EMERGENCY_MODE.disableLoginRequirement &&
+                        !props.isAdmin,
+                    )}
                     emptyMessage="Nama belum ada di database, tetapi laporan tetap bisa dilanjutkan."
                     endAdornment={
-                      props.draft.nama.trim() &&
-                      (props.nameCheckLoading ||
-                        props.nameExistsInDirectory === true) ? (
+                      props.userSession &&
+                      !OFFLINE_EMERGENCY_MODE.disableLoginRequirement &&
+                      !props.isAdmin ? (
+                        <div
+                          tabIndex={0}
+                          className="ui-tooltip-group focus:outline-none"
+                        >
+                          <LockIcon className="h-4 w-4 text-[var(--text-muted)]" />
+                          <div className="ui-tooltip ui-tooltip-right">
+                            Nama terkunci otomatis sesuai akun login ({props.userSession.fullName}).
+                          </div>
+                        </div>
+                      ) : props.draft.nama.trim() &&
+                        (props.nameCheckLoading ||
+                          props.nameExistsInDirectory === true) ? (
                         <div
                           tabIndex={0}
                           className="ui-tooltip-group focus:outline-none"
@@ -923,6 +966,8 @@ export function EntryView(props: EntryViewProps) {
                     }
                   />
                 </div>
+
+
                 <label className="space-y-2">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm font-medium">Tanggal laporan</span>
@@ -1247,14 +1292,47 @@ export function EntryView(props: EntryViewProps) {
                         {(props.pendingPreviews[activity.no]?.length ?? 0) >
                           0 || activity.photos.length > 0 ? (
                           <div className="mt-4 flex flex-wrap gap-3">
-                            {activity.photos.slice(0, 1).map((photo) => (
-                              <img
-                                key={photo.id}
-                                src={photo.publicUrl}
-                                alt={photo.originalFileName}
-                                className="h-24 w-24 rounded-2xl object-cover"
-                              />
-                            ))}
+                            {activity.photos
+                              .slice(
+                                0,
+                                Math.max(
+                                  1,
+                                  props.reportRules.maxPhotosPerActivity,
+                                ),
+                              )
+                              .map((photo) => {
+                                let photoUrl = photo.publicUrl;
+                                if (
+                                  (!photoUrl ||
+                                    photoUrl.trim() === "" ||
+                                    photoUrl.includes("undefined")) &&
+                                  photo.storagePath &&
+                                  supabase
+                                ) {
+                                  const { data } = supabase.storage
+                                    .from("daily-report-proofs")
+                                    .getPublicUrl(photo.storagePath);
+                                  photoUrl = data?.publicUrl || "";
+                                }
+                                return (
+                                  <img
+                                    key={photo.id || photo.storagePath || photoUrl}
+                                    src={photoUrl}
+                                    alt={photo.originalFileName || "Foto dokumentasi"}
+                                    className="h-24 w-24 rounded-2xl object-cover border border-[var(--border-soft)]"
+                                    onError={(e) => {
+                                      if (photo.storagePath && supabase) {
+                                        const { data } = supabase.storage
+                                          .from("daily-report-proofs")
+                                          .getPublicUrl(photo.storagePath);
+                                        if (data?.publicUrl && e.currentTarget.src !== data.publicUrl) {
+                                          e.currentTarget.src = data.publicUrl;
+                                        }
+                                      }
+                                    }}
+                                  />
+                                );
+                              })}
                             {(props.pendingPreviews[activity.no] ?? [])
                               .slice(
                                 0,
@@ -1810,9 +1888,13 @@ export function EntryView(props: EntryViewProps) {
                       type="button"
                       onClick={() => {
                         setSaveMenuOpen(false);
-                        void props.onSaveLocalDraft(
-                          props.loadedLocalDraftSummary ? "update" : undefined,
-                        );
+                        if (OFFLINE_EMERGENCY_MODE.disableLoginRequirement) {
+                          void props.onSaveLocalDraft(
+                            props.loadedLocalDraftSummary ? "update" : undefined,
+                          );
+                        } else {
+                          void props.onSaveReport();
+                        }
                       }}
                       disabled={props.submitting || props.isEditLoading || isFormBlockedByHoliday}
                       title={isFormBlockedByHoliday ? `Pengisian dinonaktifkan pada hari libur (${holidayInfo.name || "Akhir Pekan"})` : undefined}
@@ -1824,7 +1906,9 @@ export function EntryView(props: EntryViewProps) {
                         <>
                           <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                           <span className="whitespace-nowrap inline">
-                            {props.loadedLocalDraftSummary ? "Perbarui draft" : "Simpan sebagai draft baru"}
+                            {OFFLINE_EMERGENCY_MODE.disableLoginRequirement
+                              ? (props.loadedLocalDraftSummary ? "Perbarui draft" : "Simpan sebagai draft baru")
+                              : (props.duplicateReport ? "Perbarui laporan" : "Simpan laporan")}
                           </span>
                         </>
                       )}
@@ -1849,20 +1933,40 @@ export function EntryView(props: EntryViewProps) {
                         }}
                       >
                         {/* Database Upload Option */}
-                        <button
-                          type="button"
-                          disabled={true}
-                          title="Fungsi pengiriman ke database sedang dinonaktifkan sementara karena database offline."
-                          className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-muted)] opacity-50 cursor-not-allowed"
-                        >
-                          <span className="flex items-center gap-2">
-                            <UploadCloudIcon className="h-4 w-4 text-[var(--text-muted)]" />
-                            <span>Kirim ke Database</span>
-                          </span>
-                          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                            Offline
-                          </span>
-                        </button>
+                        {OFFLINE_EMERGENCY_MODE.disableLoginRequirement ? (
+                          <button
+                            type="button"
+                            disabled={true}
+                            title="Fungsi pengiriman ke database sedang dinonaktifkan sementara karena database offline."
+                            className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-muted)] opacity-50 cursor-not-allowed"
+                          >
+                            <span className="flex items-center gap-2">
+                              <UploadCloudIcon className="h-4 w-4 text-[var(--text-muted)]" />
+                              <span>Kirim ke Database</span>
+                            </span>
+                            <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                              Offline
+                            </span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSaveMenuOpen(false);
+                              void props.onSaveReport();
+                            }}
+                            disabled={props.submitting || props.isEditLoading || isFormBlockedByHoliday}
+                            className="flex w-full items-center justify-between rounded-[14px] px-3 py-2 text-left text-sm text-[var(--text-primary)] transition hover:bg-[var(--surface-muted)]"
+                          >
+                            <span className="flex items-center gap-2">
+                              <UploadCloudIcon className="h-4 w-4 text-[var(--primary)]" />
+                              <span>{props.duplicateReport ? "Perbarui laporan" : "Kirim ke Database"}</span>
+                            </span>
+                            <span className="text-[10px] font-semibold text-[var(--success)]">
+                              Database
+                            </span>
+                          </button>
+                        )}
 
                         <div className="my-1.5 border-t border-[var(--border-soft)]/60" />
 

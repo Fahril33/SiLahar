@@ -13,19 +13,32 @@ function buildTemplateCacheUrl(template: ExcelReportTemplate) {
 }
 
 async function fetchTemplateArrayBuffer(template: ExcelReportTemplate) {
-  const response = await fetch(template.publicUrl);
-
-  if (!response.ok) {
+  try {
+    const response = await fetch(template.publicUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+    return {
+      response,
+      buffer: await response.clone().arrayBuffer(),
+    };
+  } catch (err) {
+    if (template.publicUrl !== "/template-laporan-harian.xlsx") {
+      console.warn("Gagal mengambil template Excel dari server, memakai template lokal bawaan:", err);
+      const fallbackResponse = await fetch("/template-laporan-harian.xlsx");
+      if (fallbackResponse.ok) {
+        return {
+          response: fallbackResponse,
+          buffer: await fallbackResponse.clone().arrayBuffer(),
+        };
+      }
+    }
     throw new Error(
-      `Template Excel belum bisa diambil (${response.status} ${response.statusText}).`,
+      `Template Excel belum bisa diambil (${err instanceof Error ? err.message : "Gagal memuat"}).`,
     );
   }
-
-  return {
-    response,
-    buffer: await response.clone().arrayBuffer(),
-  };
 }
+
 
 async function pruneTemplateCache(activeTemplateCacheUrl: string) {
   if (!isCacheApiSupported()) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime, formatWitaDate } from "../lib/time";
 import type {
@@ -233,6 +234,63 @@ function PencilIcon(props: { className?: string }) {
   );
 }
 
+function TrashIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-4 w-4"}
+    >
+      <path d="M3 6h18" />
+      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
+function DatabaseIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-3.5 w-3.5"}
+    >
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </svg>
+  );
+}
+
+function HardDriveIcon(props: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={props.className || "h-3.5 w-3.5"}
+    >
+      <line x1="22" y1="12" x2="2" y2="12" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+      <line x1="6" y1="16" x2="6.01" y2="16" />
+      <line x1="10" y1="16" x2="10.01" y2="16" />
+    </svg>
+  );
+}
+
 export function HistoryView(props: {
   loading: boolean;
   historyDate: string;
@@ -249,6 +307,7 @@ export function HistoryView(props: {
   ) => Promise<void>;
   onHandleSaveAsPdf: (report: Report) => Promise<void>;
   onHandleUnsupportedMobilePrint: () => Promise<void>;
+  onHandleDeleteReport?: (report: Report) => Promise<void>;
   excelExportingReportId: string | null;
   pdfExportingReportId: string | null;
   editLoadingReportId: string | null;
@@ -280,6 +339,7 @@ export function HistoryView(props: {
     onHandlePrint,
     onHandleSaveAsPdf,
     onHandleUnsupportedMobilePrint,
+    onHandleDeleteReport,
     excelExportingReportId,
     pdfExportingReportId,
     editLoadingReportId,
@@ -310,6 +370,12 @@ export function HistoryView(props: {
   >({});
   const [showSearchCapsule, setShowSearchCapsule] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Admin delete confirmation modal state
+  const [reportToDelete, setReportToDelete] = useState<Report | null>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [isDeletingReport, setIsDeletingReport] = useState(false);
+  const [copiedPattern, setCopiedPattern] = useState(false);
 
   // Month and Year selector for chronological view
   const [chronoMonth, setChronoMonth] = useState(() => new Date().getMonth());
@@ -359,7 +425,13 @@ export function HistoryView(props: {
           rDate.getMonth() === chronoMonth && rDate.getFullYear() === chronoYear
         );
       })
-      .sort((a: Report, b: Report) => b.reportDate.localeCompare(a.reportDate));
+      .sort((a: Report, b: Report) => {
+        const dateCompare = b.reportDate.localeCompare(a.reportDate);
+        if (dateCompare !== 0) return dateCompare;
+        if (a.source === "db" && b.source !== "db") return -1;
+        if (b.source === "db" && a.source !== "db") return 1;
+        return (b.createdAt || "").localeCompare(a.createdAt || "");
+      });
   }, [
     allReports,
     showChronologicalView,
@@ -382,10 +454,11 @@ export function HistoryView(props: {
   const consistencyStats = useMemo(() => {
     if (!showChronologicalView || !props.userSession) return null;
 
-    // Start date of the month
+    // Start date of the month, clamped to effectiveStartDate
     const yyyy = String(chronoYear);
     const mm = String(chronoMonth + 1).padStart(2, "0");
-    const startOfMonth = `${yyyy}-${mm}-01`;
+    const rawStart = `${yyyy}-${mm}-01`;
+    const effectiveStart = rawStart < effectiveStartDate ? effectiveStartDate : rawStart;
 
     // End date of the month
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
@@ -393,13 +466,20 @@ export function HistoryView(props: {
 
     // Clamp the end date to today if the selected period is the current month and year
     const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
-    const effectiveStart = startOfMonth;
 
-    // Get expected working days in this range
+    if (effectiveStart > effectiveEnd) {
+      return {
+        percentage: 0,
+        submitted: 0,
+        target: 0,
+      };
+    }
+
+    // Get expected working days in this range (hari wajib)
     const expectedStats = getEffectiveWorkingDaysInRange(
       effectiveStart,
       effectiveEnd,
-      { systemStartDate: effectiveStartDate },
+      { enforceSystemStartDate: true, systemStartDate: effectiveStartDate },
     );
     const targetDays = expectedStats.totalWorkingDays;
 
@@ -411,8 +491,7 @@ export function HistoryView(props: {
           (d) =>
             d >= effectiveStart &&
             d <= effectiveEnd &&
-            isWorkDay(d) &&
-            d >= effectiveStartDate,
+            isWorkDay(d),
         ),
     ).size;
 
@@ -445,9 +524,9 @@ export function HistoryView(props: {
     const yyyy = String(chronoYear);
     const mm = String(chronoMonth + 1).padStart(2, "0");
 
-    // Start of month or effectiveStartDate (whichever is later)
-    const startOfMonth = `${yyyy}-${mm}-01`;
-    const effectiveStart = startOfMonth > effectiveStartDate ? startOfMonth : effectiveStartDate;
+    // Start of month, clamped to effectiveStartDate
+    const rawStart = `${yyyy}-${mm}-01`;
+    const effectiveStart = rawStart < effectiveStartDate ? effectiveStartDate : rawStart;
 
     // End of month or today (whichever is earlier)
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
@@ -473,6 +552,8 @@ export function HistoryView(props: {
       const mStr = String(current.getMonth() + 1).padStart(2, "0");
       const dStr = String(current.getDate()).padStart(2, "0");
       const dateStr = `${yStr}-${mStr}-${dStr}`;
+
+      // Khususkan untuk hari wajib saja (Senin - Jumat non-libur nasional)
       if (isWorkDay(dateStr)) {
         days.push(dateStr);
       }
@@ -498,14 +579,23 @@ export function HistoryView(props: {
 
     const sortedDates = Array.from(allDates).sort((a, b) => b.localeCompare(a));
 
-    return sortedDates.map(date => {
-      const report = chronoReports.find(r => r.reportDate === date);
-      if (report) {
-        return { type: "report" as const, date, report };
+    const items: Array<
+      | { type: "report"; date: string; report: Report }
+      | { type: "missing"; date: string; report: null }
+    > = [];
+
+    sortedDates.forEach((date) => {
+      const reportsForDate = chronoReports.filter((r) => r.reportDate === date);
+      if (reportsForDate.length > 0) {
+        reportsForDate.forEach((report) => {
+          items.push({ type: "report", date, report });
+        });
       } else {
-        return { type: "missing" as const, date, report: null };
+        items.push({ type: "missing", date, report: null });
       }
     });
+
+    return items;
   }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays]);
 
   const handleScrollToDate = (targetDate: string) => {
@@ -545,8 +635,10 @@ export function HistoryView(props: {
     }
   }, [showSearchCapsule]);
 
+  // Lock body scroll and listen for Escape key when any modal is open
   useEffect(() => {
-    if (!showDraftsModal) return;
+    const isAnyModalOpen = Boolean(showDraftsModal) || Boolean(reportToDelete);
+    if (!isAnyModalOpen) return;
 
     const originalBodyOverflow = document.body.style.overflow;
     const originalHtmlOverflow = document.documentElement.style.overflow;
@@ -557,7 +649,13 @@ export function HistoryView(props: {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setShowDraftsModal(false);
+        if (reportToDelete && !isDeletingReport) {
+          setReportToDelete(null);
+          setDeleteConfirmInput("");
+        }
+        if (showDraftsModal) {
+          setShowDraftsModal(false);
+        }
       }
     };
 
@@ -568,7 +666,7 @@ export function HistoryView(props: {
       document.documentElement.style.overflow = originalHtmlOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [showDraftsModal]);
+  }, [showDraftsModal, reportToDelete, isDeletingReport]);
 
   const toggleExpand = (name: string) => {
     setExpandedCardNames((prev) => ({
@@ -649,58 +747,61 @@ export function HistoryView(props: {
       {/* Desktop & Tablet Filter Panels */}
       <div className="hidden md:block w-full animate-fadeIn">
         <div className="flex flex-col gap-3 panel-glass rounded-[28px] p-5">
-          {/* Top Row: Stats Capsule & Search/Date Pill */}
+          {/* Top Row: Mode Switcher, Stats Capsule & Search/Date Pill */}
           <div className="flex md:flex-row md:items-center md:justify-between gap-4">
-            {/* Stats Capsule */}
-            {props.userSession || showChronologicalView ? (
-              <div className="flex flex-wrap items-center gap-4 pl-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">
-                    Periode:
-                  </span>
-                  <select
-                    value={chronoMonth}
-                    onChange={(e) => setChronoMonth(Number(e.target.value))}
-                    className="field-input py-1 px-2 text-xs rounded-lg min-w-[100px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
-                  >
-                    {BULAN_LABELS.map((label, idx) => (
-                      <option key={idx} value={idx}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={chronoYear}
-                    onChange={(e) => setChronoYear(Number(e.target.value))}
-                    className="field-input py-1 px-2 text-xs rounded-lg min-w-[70px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
-                  >
-                    {[2026, 2027, 2028].map((y) => (
-                      <option key={y} value={y}>
-                        {y}
-                      </option>
-                    ))}
-                  </select>
+            <div className="flex items-center gap-3">
+              {/* Stats Capsule / Month-Year Selector */}
+              {showChronologicalView ? (
+                <div className="flex flex-wrap items-center gap-4 pl-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">
+                      Periode:
+                    </span>
+                    <select
+                      value={chronoMonth}
+                      onChange={(e) => setChronoMonth(Number(e.target.value))}
+                      className="field-input py-1 px-2 text-xs rounded-lg min-w-[100px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
+                    >
+                      {BULAN_LABELS.map((label, idx) => (
+                        <option key={idx} value={idx}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={chronoYear}
+                      onChange={(e) => setChronoYear(Number(e.target.value))}
+                      className="field-input py-1 px-2 text-xs rounded-lg min-w-[70px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
+                    >
+                      {[2026, 2027, 2028].map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
-                <span className="text-[var(--success)]">
-                  {submissionStats.done} Sudah isi
-                </span>
-                <span className="mx-3 text-[var(--border-soft)]">|</span>
-                <span className="text-[var(--danger)]">
-                  {submissionStats.pending} Belum isi
-                </span>
-                <span className="mx-3 text-[var(--border-soft)]">|</span>
-                <span>Total {submissionStats.total}</span>
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-sm font-bold text-[var(--text-primary)] justify-center shrink-0">
+                  <span className="text-[var(--success)]">
+                    {submissionStats.done} Sudah isi
+                  </span>
+                  <span className="mx-3 text-[var(--border-soft)]">|</span>
+                  <span className="text-[var(--danger)]">
+                    {submissionStats.pending} Belum isi
+                  </span>
+                  <span className="mx-3 text-[var(--border-soft)]">|</span>
+                  <span>Total {submissionStats.total}</span>
+                </div>
+              )}
+            </div>
 
-            {/* Unified Search Pill */}
+            {/* Unified Search / Date Pill */}
             <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
-              {/* Desktop Inline Search */}
+              {/* Only show staff search for Admin / Unauthenticated */}
               {!props.userSession && (
                 <>
+                  {/* Desktop Inline Search */}
                   <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
                     <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
                     <input
@@ -781,7 +882,7 @@ export function HistoryView(props: {
             </div>
           </div>
 
-          {/* Tablet Collapsible Search Capsule */}
+          {/* Tablet Collapsible Search Capsule (Admin/Unauthenticated only) */}
           {!props.userSession && showSearchCapsule && (
             <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
               <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
@@ -799,7 +900,7 @@ export function HistoryView(props: {
       </div>
 
       {/* Mobile Filter Panel */}
-      {!props.userSession && !showChronologicalView && (
+      {!showChronologicalView && (
         <div className="flex flex-col gap-3 md:hidden panel-glass rounded-[28px] p-4">
           {/* Row 1: Stats Capsule */}
           <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm text-xs font-bold text-[var(--text-primary)] justify-center w-full">
@@ -873,7 +974,7 @@ export function HistoryView(props: {
             </button>
           </div>
 
-          {/* Row 3: Mobile Search Capsule */}
+          {/* Mobile Search Capsule */}
           {showSearchCapsule && (
             <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
               <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
@@ -1092,13 +1193,58 @@ export function HistoryView(props: {
                       <div>
                         <div className="flex flex-col md:flex-row md:items-center md:justify-between">
                           <div className="flex items-center gap-3 min-w-0">
-                            <div className="h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 bg-purple-500/10 text-purple-500">
-                              <CalendarIcon className="h-5 w-5" />
+                            <div
+                              className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 bg-purple-500/10 text-purple-500 ${
+                                props.adminSession
+                                  ? "relative group/avatar cursor-pointer hover:bg-red-500/15"
+                                  : ""
+                              }`}
+                              onClick={(e) => {
+                                if (props.adminSession) {
+                                  e.stopPropagation();
+                                  setReportToDelete(report);
+                                  setDeleteConfirmInput("");
+                                }
+                              }}
+                              title={
+                                props.adminSession
+                                  ? "Hapus Laporan (Admin)"
+                                  : undefined
+                              }
+                            >
+                              <CalendarIcon
+                                className={`h-5 w-5 transition-transform duration-200 ${
+                                  props.adminSession
+                                    ? "group-hover/avatar:scale-0 group-hover/avatar:opacity-0"
+                                    : ""
+                                }`}
+                              />
+                              {props.adminSession && (
+                                <div className="absolute inset-0 bg-red-500 text-white rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-all duration-200 shadow-md">
+                                  <TrashIcon className="h-5 w-5" />
+                                </div>
+                              )}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-bold text-[var(--text-primary)] truncate text-sm">
-                                {formatWitaDate(report.reportDate)}
-                              </p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-bold text-[var(--text-primary)] truncate text-sm">
+                                  {formatWitaDate(report.reportDate)}
+                                </p>
+                                {report.source === "local" ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 shadow-2xs">
+                                    <HardDriveIcon className="h-3 w-3" />
+                                    <span>cadangan perangkat anda</span>
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0 shadow-2xs"
+                                    title="Data tersimpan di Database Cloud"
+                                  >
+                                    <DatabaseIcon className="h-3 w-3" />
+                                    <span>Database</span>
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
                                 TIM {report.tim || "TRC"} •{" "}
                                 {report.activities.length} Aktivitas •{" "}
@@ -1232,10 +1378,10 @@ export function HistoryView(props: {
                         </div>
                       </div>
 
-                      {/* Mobile Actions Row */}
-                      {report.activities.length > 0 ? (
+                      {/* Mobile Actions Container */}
+                      {isExpanded ? (
                         <div
-                          className="md:hidden border-t border-[var(--border-soft)] mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
+                          className="md:hidden flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[var(--border-soft)]"
                           onClick={(e) => e.stopPropagation()}
                         >
                           {/* Edit Button */}
@@ -1448,14 +1594,61 @@ export function HistoryView(props: {
                             row.done
                               ? "bg-emerald-500/10 text-emerald-500"
                               : "bg-red-500/10 text-red-500"
+                          } ${
+                            props.adminSession && row.done && row.report
+                              ? "relative group/avatar cursor-pointer hover:bg-red-500/15"
+                              : ""
                           }`}
+                          onClick={(e) => {
+                            if (props.adminSession && row.done && row.report) {
+                              e.stopPropagation();
+                              setReportToDelete(row.report);
+                              setDeleteConfirmInput("");
+                            }
+                          }}
+                          title={
+                            props.adminSession && row.done && row.report
+                              ? "Hapus Laporan (Admin)"
+                              : undefined
+                          }
                         >
-                          {row.name.substring(0, 2).toUpperCase()}
+                          <span
+                            className={`transition-transform duration-200 ${
+                              props.adminSession && row.done && row.report
+                                ? "group-hover/avatar:scale-0 group-hover/avatar:opacity-0"
+                                : ""
+                            }`}
+                          >
+                            {row.name.substring(0, 2).toUpperCase()}
+                          </span>
+                          {props.adminSession && row.done && row.report && (
+                            <div className="absolute inset-0 bg-red-500 text-white rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-all duration-200 shadow-md">
+                              <TrashIcon className="h-5 w-5" />
+                            </div>
+                          )}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-[var(--text-primary)] truncate text-sm">
-                            {row.name}
-                          </p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-bold text-[var(--text-primary)] truncate text-sm">
+                              {row.name}
+                            </p>
+                            {row.done && row.report && (
+                              row.report.source === "local" ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 shadow-2xs">
+                                  <HardDriveIcon className="h-3 w-3" />
+                                  <span>cadangan perangkat anda</span>
+                                </span>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0 shadow-2xs"
+                                  title="Data tersimpan di Database Cloud"
+                                >
+                                  <DatabaseIcon className="h-3 w-3" />
+                                  <span>Database</span>
+                                </span>
+                              )
+                            )}
+                          </div>
                           {row.done && row.report ? (
                             <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
                               {row.report.activities.length} Aktivitas •{" "}
@@ -1575,8 +1768,8 @@ export function HistoryView(props: {
                         style={{
                           maxHeight: isExpanded ? "1000px" : "0px",
                           opacity: isExpanded ? 1 : 0,
-                          marginTop: isExpanded ? "8px" : "0px",
-                          paddingTop: isExpanded ? "4px" : "0px",
+                          marginTop: isExpanded ? "12px" : "0px",
+                          paddingTop: isExpanded ? "8px" : "0px",
                           borderTopColor: isExpanded
                             ? "var(--border-soft)"
                             : "transparent",
@@ -1585,31 +1778,34 @@ export function HistoryView(props: {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
-                          {row.report.activities.map((activity) => (
-                            <li
-                              key={`${row.report!.id}-${activity.no}`}
-                              className="leading-relaxed py-2"
-                            >
-                              <div className="font-semibold text-[var(--text-primary)]">
-                                {activity.no}. {activity.description}
-                              </div>
-                              <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
-                                <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
-                                <span>
-                                  {activity.startTime} - {activity.endTime} WITA
+                          {row.report.activities.map(
+                            (activity: ReportActivity) => (
+                              <li
+                                key={`${row.report!.id}-${activity.no}`}
+                                className="leading-relaxed py-2"
+                              >
+                                <div className="font-semibold text-[var(--text-primary)]">
+                                  {activity.no}. {activity.description}
+                                </div>
+                                <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
+                                  <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                                  <span>
+                                    {activity.startTime} - {activity.endTime}{" "}
+                                    WITA
+                                  </span>
                                 </span>
-                              </span>
-                            </li>
-                          ))}
+                              </li>
+                            ),
+                          )}
                         </ul>
                       </div>
                     )}
                   </div>
 
-                  {/* Mobile Actions Row */}
-                  {row.done && row.report ? (
+                  {/* Mobile Actions Container */}
+                  {row.done && row.report && isExpanded ? (
                     <div
-                      className="md:hidden border-t border-[var(--border-soft)] mt-2 pt-3 flex flex-wrap items-center justify-end gap-1.5"
+                      className="md:hidden flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[var(--border-soft)]"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* Edit Button */}
@@ -1704,6 +1900,228 @@ export function HistoryView(props: {
           </div>
         )}
       </div>
+
+      {/* Admin Delete Report Confirmation Modal via Portal */}
+      {reportToDelete && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-3.5 sm:p-6 bg-black/70 backdrop-blur-md animate-fadeIn"
+          onClick={() => {
+            if (!isDeletingReport) {
+              setReportToDelete(null);
+              setDeleteConfirmInput("");
+            }
+          }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="surface-card rounded-[28px] p-6 max-w-lg w-full border border-red-500/30 shadow-2xl space-y-5 animate-scaleUp overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header with Close Button */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3.5">
+                <div className="h-11 w-11 rounded-2xl bg-red-500/15 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                  <TrashIcon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-[var(--text-primary)]">
+                    Konfirmasi Hapus Laporan
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                    Tindakan ini permanen dan akan menghapus laporan beserta seluruh foto bukti dari sistem.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isDeletingReport) {
+                    setReportToDelete(null);
+                    setDeleteConfirmInput("");
+                  }
+                }}
+                disabled={isDeletingReport}
+                className="h-8 w-8 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] transition shrink-0"
+                title="Tutup dialog"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Report Details Card */}
+            <div className="rounded-2xl bg-[var(--surface-panel-strong)] p-4 border border-[var(--border-soft)] space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--text-muted)] font-semibold">Nama Petugas:</span>
+                <strong className="text-[var(--text-primary)] text-right truncate max-w-[220px]">{reportToDelete.nama}</strong>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--text-muted)] font-semibold">Tanggal Laporan:</span>
+                <strong className="text-[var(--text-primary)]">
+                  {formatWitaDate(reportToDelete.reportDate)}
+                </strong>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[var(--text-muted)] font-semibold">Rincian:</span>
+                <strong className="text-[var(--text-primary)]">
+                  TIM {reportToDelete.tim || "TRC"} • {reportToDelete.activities.length} Aktivitas
+                </strong>
+              </div>
+            </div>
+
+            {/* Form for submission with Enter key */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!onHandleDeleteReport || !reportToDelete || isDeletingReport) return;
+                const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                const isMatch = typed === target1 || typed === target2;
+                if (!isMatch) return;
+
+                setIsDeletingReport(true);
+                try {
+                  await onHandleDeleteReport(reportToDelete);
+                  setReportToDelete(null);
+                  setDeleteConfirmInput("");
+                } catch {
+                  // error handled in hook
+                } finally {
+                  setIsDeletingReport(false);
+                }
+              }}
+              className="space-y-3"
+            >
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold text-[var(--text-primary)]">
+                    Ketik nama dan tanggal untuk konfirmasi:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
+                      setDeleteConfirmInput(pattern);
+                      if (navigator.clipboard) {
+                        void navigator.clipboard.writeText(pattern);
+                        setCopiedPattern(true);
+                        setTimeout(() => setCopiedPattern(false), 2000);
+                      }
+                    }}
+                    className="text-[10px] font-bold text-[var(--primary)] hover:underline flex items-center gap-1 shrink-0"
+                  >
+                    <span>{copiedPattern ? "✓ Tersalin & Terisi" : "Isi Otomatis"}</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs font-mono font-bold text-red-600 dark:text-red-400 gap-2">
+                  <span className="select-all break-all">{reportToDelete.nama} {reportToDelete.reportDate}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
+                      if (navigator.clipboard) {
+                        void navigator.clipboard.writeText(pattern);
+                        setCopiedPattern(true);
+                        setTimeout(() => setCopiedPattern(false), 2000);
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-red-500/20 transition shrink-0"
+                    title="Salin teks konfirmasi"
+                  >
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                    </svg>
+                  </button>
+                </div>
+
+                <input
+                  type="text"
+                  value={deleteConfirmInput}
+                  onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                  placeholder={`Ketik: ${reportToDelete.nama} ${reportToDelete.reportDate}`}
+                  className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-red-500 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none transition shadow-inner text-[var(--text-primary)] font-medium"
+                  autoFocus
+                  disabled={isDeletingReport}
+                />
+
+                {(() => {
+                  const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                  const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                  const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                  const isMatch = typed === target1 || typed === target2;
+
+                  if (isMatch) {
+                    return (
+                      <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
+                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        <span>Teks konfirmasi cocok. Tekan Enter atau tombol Hapus Laporan untuk melanjutkan.</span>
+                      </p>
+                    );
+                  } else if (deleteConfirmInput.length > 0) {
+                    return (
+                      <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 animate-fadeIn">
+                        Teks belum sesuai dengan nama dan tanggal laporan.
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--border-soft)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReportToDelete(null);
+                    setDeleteConfirmInput("");
+                  }}
+                  disabled={isDeletingReport}
+                  className="btn-secondary px-4 py-2 text-xs"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    isDeletingReport ||
+                    !(
+                      (() => {
+                        const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                        const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                        const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
+                        return typed === target1 || typed === target2;
+                      })()
+                    )
+                  }
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold transition shadow-md shadow-red-600/20"
+                >
+                  {isDeletingReport ? (
+                    <>
+                      <SpinnerIcon />
+                      <span>Menghapus...</span>
+                    </>
+                  ) : (
+                    <>
+                      <TrashIcon className="h-4 w-4" />
+                      <span>Hapus Laporan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Drafts Modal Fallback */}
       {!onOpenSavedDrafts && (

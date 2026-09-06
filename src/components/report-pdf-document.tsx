@@ -1,4 +1,5 @@
 import type { Report } from "../types/report";
+import { supabase } from "../lib/supabase";
 
 export function ReportPdfDocument(props: { report: Report }) {
   const { report } = props;
@@ -49,19 +50,44 @@ export function ReportPdfDocument(props: { report: Report }) {
                 <td className="proof-cell">
                   {activity.photos.length > 0 ? (
                     <div className="proof-images-container">
-                      {activity.photos.map((photo) => (
-                        <img
-                          key={photo.id}
-                          src={photo.publicUrl}
-                          alt={photo.originalFileName}
-                          className="proof-image"
-                          loading="eager"
-                          decoding="sync"
-                          {...{ fetchpriority: "high" }}
-                          crossOrigin="anonymous"
-                          referrerPolicy="no-referrer"
-                        />
-                      ))}
+                      {activity.photos.map((photo) => {
+                        let photoUrl = photo.publicUrl;
+                        if (
+                          (!photoUrl ||
+                            photoUrl.trim() === "" ||
+                            photoUrl.includes("undefined")) &&
+                          photo.storagePath &&
+                          supabase
+                        ) {
+                          const { data } = supabase.storage
+                            .from("daily-report-proofs")
+                            .getPublicUrl(photo.storagePath);
+                          photoUrl = data?.publicUrl || "";
+                        }
+                        return (
+                          <img
+                            key={photo.id || photo.storagePath || photoUrl}
+                            src={photoUrl}
+                            alt={photo.originalFileName}
+                            className="proof-image"
+                            loading="eager"
+                            decoding="sync"
+                            {...{ fetchpriority: "high" }}
+                            crossOrigin="anonymous"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              if (photo.storagePath && supabase) {
+                                const { data } = supabase.storage
+                                  .from("daily-report-proofs")
+                                  .getPublicUrl(photo.storagePath);
+                                if (data?.publicUrl && e.currentTarget.src !== data.publicUrl) {
+                                  e.currentTarget.src = data.publicUrl;
+                                }
+                              }
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   ) : (
                     <span>-</span>

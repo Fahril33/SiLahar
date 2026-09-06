@@ -472,6 +472,7 @@ export default function App() {
             onHandlePrint={dashboard.handlePrint}
             onHandleSaveAsPdf={dashboard.handleSaveAsPdf}
             onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
+            onHandleDeleteReport={dashboard.handleAdminDirectDeleteReport}
             excelExportingReportId={dashboard.excelExportingReportId}
             pdfExportingReportId={dashboard.pdfExportingReportId}
             editLoadingReportId={dashboard.editLoadingReportId}

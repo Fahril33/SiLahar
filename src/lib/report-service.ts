@@ -271,7 +271,7 @@ export async function fetchReportRules(): Promise<ReportRules> {
 
 export async function fetchNotificationSettings() {
   const fallback: NotificationSettings = {
-    showAdminSoundSettings: false,
+    showAdminSoundSettings: true,
     disableSoundResponsesForAllUsers: false,
     success: {
       mode: "random",
@@ -301,7 +301,7 @@ export async function fetchNotificationSettings() {
     | NotificationSettingsRow
     | undefined;
   return {
-    showAdminSoundSettings: Boolean(row?.show_admin_sound_settings),
+    showAdminSoundSettings: row?.show_admin_sound_settings !== undefined ? Boolean(row.show_admin_sound_settings) : true,
     disableSoundResponsesForAllUsers: Boolean(
       row?.disable_sound_responses_for_all_users,
     ),

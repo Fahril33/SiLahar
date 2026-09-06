@@ -21,6 +21,7 @@ export type ReportActivity = {
 
 export type Report = {
   id: string;
+  source?: "db" | "local";
   templateId: string | null;
   tim: string;
   nama: string;

@@ -58,20 +58,12 @@ export function useConnectivity() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    // Initial check
+    // Initial check once on mount
     void checkServerStatus();
-
-    // Periodic check every 2 minutes if online
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void checkServerStatus();
-      }
-    }, 120000);
 
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
-      window.clearInterval(interval);
     };
   }, [checkServerStatus]);
 

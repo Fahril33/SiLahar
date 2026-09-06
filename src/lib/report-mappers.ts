@@ -1,4 +1,5 @@
 import type { Report, ReportActivity, ReportActivityPhoto } from "../types/report";
+import { supabase } from "./supabase";
 
 type PhotoRow = {
   id: string;
@@ -45,11 +46,16 @@ type ReportRow = {
 };
 
 function mapPhoto(row: PhotoRow): ReportActivityPhoto {
+  let publicUrl = row.public_url;
+  if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && supabase) {
+    const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
+    publicUrl = data?.publicUrl || "";
+  }
   return {
     id: row.id,
     activityId: row.activity_id,
     storagePath: row.storage_path,
-    publicUrl: row.public_url,
+    publicUrl: publicUrl || "",
     originalFileName: row.original_file_name,
     sortOrder: row.sort_order,
     createdAt: row.created_at,

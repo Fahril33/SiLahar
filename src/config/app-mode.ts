@@ -11,6 +11,6 @@
  *   forceAllowAnyReportDate: false,
  */
 export const OFFLINE_EMERGENCY_MODE = {
-  disableLoginRequirement: true,
-  forceAllowAnyReportDate: true,
+  disableLoginRequirement: false,
+  forceAllowAnyReportDate: false,
 };

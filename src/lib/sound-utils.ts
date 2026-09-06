@@ -30,7 +30,7 @@ const GLOBAL_RULES_STORAGE_KEY = "silahar:notification-settings";
 let runtimeNotificationSettings: NotificationSettings | null = null;
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
-  showAdminSoundSettings: false,
+  showAdminSoundSettings: true,
   disableSoundResponsesForAllUsers: false,
   success: {
     mode: "random",
@@ -100,10 +100,28 @@ export function preloadSounds() {
   });
 }
 
+const USER_SOUND_STORAGE_KEY = "silahar:user-sound-enabled";
+
+export function isUserSoundEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const stored = window.localStorage.getItem(USER_SOUND_STORAGE_KEY);
+  return stored === null ? true : stored === "true";
+}
+
+export function setUserSoundEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(USER_SOUND_STORAGE_KEY, enabled ? "true" : "false");
+}
+
 export function playSound(
   type: "success" | "fail",
   settingsOverride?: Partial<NotificationSettings>,
+  forcePlay?: boolean,
 ) {
+  if (!forcePlay && !isUserSoundEnabled()) {
+    return;
+  }
+
   const notificationSettings = {
     ...loadNotificationSettings(),
     ...settingsOverride,
