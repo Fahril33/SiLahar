@@ -821,30 +821,42 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
     updated_by_label: "Pengguna umum",
   };
 
-  if (existingReport) {
+  if (existingReport && existingReport.source !== "local") {
     const { data, error } = await supabase
       .from("daily_reports")
       .update(payload)
       .eq("id", existingReport.id)
       .select("id")
-      .single();
+      .maybeSingle();
 
     if (error) {
       throw error;
     }
 
+    if (!data) {
+      throw new Error(
+        "Laporan tidak dapat diperbarui. Kemungkinan tanggal laporan sudah lewat dan akses dibatasi oleh aturan sistem.",
+      );
+    }
+
     return data.id as string;
   }
 
-  payload.id = reportId;
+  payload.id = existingReport?.id ?? reportId;
   const { data, error } = await supabase
     .from("daily_reports")
-    .insert(payload)
+    .upsert(payload, { onConflict: "id" })
     .select("id")
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw error;
+  }
+
+  if (!data) {
+    throw new Error(
+      "Laporan tidak dapat disimpan. Kemungkinan tanggal laporan tidak diizinkan oleh aturan sistem.",
+    );
   }
 
   return data.id as string;
@@ -921,7 +933,7 @@ export async function saveReportToDatabase(
   // 3. Database operations (only executed if all storage uploads succeeded)
   onStage?.("prepare", "Memeriksa draft dan sinkronisasi data pelapor.");
 
-  if (existingReport) {
+  if (existingReport && existingReport.source !== "local") {
     const keptStoragePaths = new Set(
       draft.activities.flatMap((activity) => activity.photos.map((photo) => photo.storagePath)).filter(Boolean),
     );
