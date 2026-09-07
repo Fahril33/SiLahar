@@ -16,6 +16,15 @@ import { supabase } from "../lib/supabase";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
+  generateDeviceBackupExcel,
+  generateDeviceBackupJson,
+  getAllDeviceBackupReports,
+  bulkUploadDeviceBackupReportsToDatabase,
+  type BulkUploadItemProgress,
+  type BulkUploadProgressState,
+  type BulkUploadResult,
+} from "../lib/browser-cache-recovery";
+import {
   DEFAULT_LOCAL_EXCEL_TEMPLATE,
   activateExcelReportTemplate,
   buildAutoExcelTemplateName,
@@ -346,6 +355,8 @@ export function useReportDashboard() {
   const [pdfExportingReportId, setPdfExportingReportId] = useState<string | null>(null);
   const [pdfExportingDraftId, setPdfExportingDraftId] = useState<string | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
+  const [deviceBackupExporting, setDeviceBackupExporting] = useState(false);
+  const [deviceBackupBulkUploading, setDeviceBackupBulkUploading] = useState(false);
   const [editLoadingReportId, setEditLoadingReportId] = useState<string | null>(null);
   const [reporterNames, setReporterNames] = useState<string[]>(() => loadCachedReporterNames());
   const [deviceSubmittedNames, setDeviceSubmittedNames] = useState<string[]>(() => loadDeviceSubmittedNames());
@@ -1486,6 +1497,165 @@ export function useReportDashboard() {
     }
   }
 
+  async function handleDownloadDeviceBackupExcel(targetReports?: Report[]) {
+    setDeviceBackupExporting(true);
+    const toast = openProgressToast("Unduh Cadangan Perangkat", [
+      { id: "backup", label: "Menyusun Excel Cadangan" },
+    ]);
+
+    try {
+      const backupReports =
+        targetReports && targetReports.length > 0
+          ? targetReports
+          : await getAllDeviceBackupReports(reports);
+
+      if (backupReports.length === 0) {
+        toast.close();
+        await showError(
+          "Tidak ada cadangan",
+          "Tidak ditemukan data cadangan perangkat lokal atau draft di browser ini.",
+        );
+        return;
+      }
+
+      await generateDeviceBackupExcel({
+        reports: backupReports,
+        onProgress: (_stage, msg) => {
+          if (msg) toast.update("backup", msg);
+        },
+      });
+
+      toast.close();
+      const uniqueUsers = new Set(backupReports.map((r) => r.nama)).size;
+      await showSuccess(
+        "Unduhan selesai",
+        `Cadangan perangkat (${backupReports.length} laporan untuk ${uniqueUsers} petugas) berhasil diunduh dalam file Excel.`,
+      );
+    } catch (err) {
+      logSafeError(err, "Dashboard/DeviceBackupExport");
+      toast.close();
+      await showError(
+        "Gagal mengunduh cadangan",
+        err instanceof Error
+          ? err.message
+          : "Terjadi masalah saat membuat file Excel cadangan.",
+      );
+    } finally {
+      setDeviceBackupExporting(false);
+    }
+  }
+
+  async function handleDownloadDeviceBackupJson(
+    targetReports?: Report[],
+    userFilter?: string,
+  ) {
+    setDeviceBackupExporting(true);
+    const toast = openProgressToast("Unduh Cadangan JSON", [
+      { id: "backup-json", label: "Menyusun File JSON" },
+    ]);
+
+    try {
+      const backupReports =
+        targetReports && targetReports.length > 0
+          ? targetReports
+          : await getAllDeviceBackupReports(reports);
+
+      if (backupReports.length === 0) {
+        toast.close();
+        await showError(
+          "Tidak ada cadangan",
+          "Tidak ditemukan data cadangan perangkat lokal atau draft di browser ini.",
+        );
+        return;
+      }
+
+      await generateDeviceBackupJson({
+        reports: backupReports,
+        userFilter,
+        onProgress: (_stage, msg) => {
+          if (msg) toast.update("backup-json", msg);
+        },
+      });
+
+      toast.close();
+      const uniqueUsers = new Set(backupReports.map((r) => r.nama)).size;
+      await showSuccess(
+        "Unduhan berhasil",
+        `Cadangan JSON (${backupReports.length} laporan untuk ${uniqueUsers} petugas) berhasil diunduh.`,
+      );
+    } catch (err) {
+      logSafeError(err, "Dashboard/DeviceBackupJsonExport");
+      toast.close();
+      await showError(
+        "Gagal mengunduh cadangan JSON",
+        err instanceof Error
+          ? err.message
+          : "Terjadi masalah saat membuat file JSON cadangan.",
+      );
+    } finally {
+      setDeviceBackupExporting(false);
+    }
+  }
+
+  async function handleBulkUploadDeviceBackup(
+    backupReports: Report[],
+    selectedActivitiesByReportId: Record<string, number[]>,
+    onItemProgress?: (progress: BulkUploadItemProgress) => void,
+    onProgressStateChange?: (state: BulkUploadProgressState) => void,
+  ): Promise<BulkUploadResult> {
+    setDeviceBackupBulkUploading(true);
+    const toast = openProgressToast("Upload Cadangan ke Database", [
+      { id: "upload", label: "Mengunggah Data Cadangan" },
+    ]);
+
+    try {
+      const result = await bulkUploadDeviceBackupReportsToDatabase({
+        reports: backupReports,
+        selectedActivitiesByReportId,
+        onProgress: (progress) => {
+          toast.update(
+            "upload",
+            `${progress.stage} [${progress.current}/${progress.total}] ${progress.reportName || ""} (${progress.reportDate || ""})`,
+          );
+          onItemProgress?.(progress);
+        },
+        onProgressStateChange,
+      });
+
+      toast.close();
+
+      if (result.uploadedReportsCount > 0) {
+        await loadDashboardData();
+        await showSuccess(
+          "Upload Cadangan Berhasil",
+          `Berhasil mengunggah ${result.uploadedReportsCount} laporan (${result.uploadedActivitiesCount} aktivitas) ke database Supabase. Seluruh data lokal & cache perangkat Anda tetap aman tanpa dihapus.`,
+        );
+      } else if (result.errors.length > 0) {
+        await showError(
+          "Upload Belum Berhasil",
+          result.errors.join("\n"),
+        );
+      }
+
+      return result;
+    } catch (err: any) {
+      logSafeError(err, "Dashboard/BulkUploadDeviceBackup");
+      toast.close();
+      await showError(
+        "Gagal Mengunggah Cadangan",
+        err?.message || "Terjadi kesalahan saat mengunggah data cadangan ke database.",
+      );
+      return {
+        success: false,
+        uploadedReportsCount: 0,
+        uploadedActivitiesCount: 0,
+        errors: [err?.message || "Kesalahan tak terduga"],
+      };
+    } finally {
+      setDeviceBackupBulkUploading(false);
+    }
+  }
+
   async function handlePrint(
     report: Report,
     format?: "a4" | "f4" | "legal" | "letter",
@@ -2047,7 +2217,7 @@ export function useReportDashboard() {
     view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
     activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
     excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
-    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, pdfExportingDraftId, bulkExporting, editLoadingReportId,
+    adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, pdfExportingDraftId, bulkExporting, deviceBackupExporting, deviceBackupBulkUploading, editLoadingReportId,
     savedNames: deviceSubmittedNames, reporterNames, historyName, setHistoryName,
     historyDate, setHistoryDate, searchName, setSearchName, searchDate, setSearchDate,
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
@@ -2067,7 +2237,7 @@ export function useReportDashboard() {
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, moveActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleAdminDirectDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handlePrint, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handleDownloadDeviceBackupExcel, handleDownloadDeviceBackupJson, handleBulkUploadDeviceBackup, handlePrint, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,

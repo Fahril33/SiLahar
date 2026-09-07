@@ -574,6 +574,17 @@ export default function App() {
             onHandleDeleteReporterTrace={dashboard.handleDeleteReporterTrace}
             onHandleBulkExport={dashboard.handleBulkExport}
             bulkExporting={dashboard.bulkExporting}
+            onHandleDownloadDeviceBackupExcel={
+              dashboard.handleDownloadDeviceBackupExcel
+            }
+            onHandleDownloadDeviceBackupJson={
+              dashboard.handleDownloadDeviceBackupJson
+            }
+            deviceBackupExporting={dashboard.deviceBackupExporting}
+            onHandleBulkUploadDeviceBackup={
+              dashboard.handleBulkUploadDeviceBackup
+            }
+            deviceBackupBulkUploading={dashboard.deviceBackupBulkUploading}
             isOnline={isOnline}
           />
         ) : null}

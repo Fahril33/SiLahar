@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type { ReportRules } from "../types/report-rules";
 import type { AdminActiveAction } from "../hooks/use-report-dashboard";
 import { formatWitaDate, formatWitaDateTime } from "../lib/time";
@@ -30,6 +30,14 @@ import {
   setUserSoundEnabled,
 } from "../lib/sound-utils";
 import { isSameReporterName } from "../lib/reporter-name";
+import {
+  getAllDeviceBackupReports,
+  parseDeviceBackupJsonFile,
+  buildInitialBulkUploadProgressState,
+  type BulkUploadItemProgress,
+  type BulkUploadProgressState,
+  type BulkUploadResult,
+} from "../lib/browser-cache-recovery";
 
 const inputClassName = "field-input";
 
@@ -49,7 +57,13 @@ function SpinnerIcon(props: { className?: string }) {
   );
 }
 
-type AdminSection = "rules" | "reporters" | "templates" | "bulk-export" | "sounds";
+type AdminSection =
+  | "rules"
+  | "reporters"
+  | "templates"
+  | "bulk-export"
+  | "bulk-upload"
+  | "sounds";
 
 type AdminDashboardViewProps = {
   adminSession: AdminSessionState | null;
@@ -127,6 +141,19 @@ type AdminDashboardViewProps = {
   ) => Promise<void>;
   onHandleBulkExport: (reports: Report[]) => Promise<void>;
   bulkExporting: boolean;
+  onHandleDownloadDeviceBackupExcel?: (reports?: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupJson?: (
+    reports?: Report[],
+    userFilter?: string,
+  ) => Promise<void>;
+  deviceBackupExporting?: boolean;
+  onHandleBulkUploadDeviceBackup?: (
+    backupReports: Report[],
+    selectedActivitiesByReportId: Record<string, number[]>,
+    onItemProgress?: (progress: BulkUploadItemProgress) => void,
+    onProgressStateChange?: (state: BulkUploadProgressState) => void,
+  ) => Promise<BulkUploadResult>;
+  deviceBackupBulkUploading?: boolean;
   isOnline: boolean;
 };
 
@@ -144,6 +171,7 @@ function AdminSectionTabs({
         { key: "reporters" as const, label: "Kelola pengguna" },
         { key: "templates" as const, label: "Template Excel" },
         { key: "bulk-export" as const, label: "Bulk Export" },
+        { key: "bulk-upload" as const, label: "Bulk Upload Cadangan" },
         { key: "sounds" as const, label: "Suara Alert" },
       ].map((section) => (
         <button
@@ -357,9 +385,188 @@ function TemplateApproverCard(props: {
   );
 }
 
-function ReportRulesPanel(props: AdminDashboardViewProps) {
+function DeviceBackupSettingsCard(props: {
+  reports: Report[];
+  deviceBackupExporting?: boolean;
+  onHandleDownloadDeviceBackupExcel?: (reports?: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupJson?: (
+    reports?: Report[],
+    userFilter?: string,
+  ) => Promise<void>;
+  onNavigateBulkUpload?: () => void;
+}) {
+  const localReportsCount = useMemo(
+    () => (props.reports || []).filter((r) => r.source === "local").length,
+    [props.reports],
+  );
+
+  return (
+    <div className="surface-card rounded-[24px] p-5 border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent shadow-sm">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5">
+          <div className="h-11 w-11 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-6 w-6"
+            >
+              <rect width="20" height="8" x="2" y="2" rx="2" />
+              <rect width="20" height="8" x="2" y="14" rx="2" />
+              <line x1="6" x2="6.01" y1="6" y2="6" />
+              <line x1="6" x2="6.01" y1="18" y2="18" />
+            </svg>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-[var(--text-primary)]">
+                Cadangan Perangkat Lokal (Excel, JSON &amp; Bulk Upload)
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                Worksheet Tab per User
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/25">
+                Data per Tanggal &amp; Detail
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                Format JSON
+              </span>
+              {localReportsCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                  {localReportsCount} cadangan aktif
+                </span>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-[var(--text-muted)] max-w-2xl leading-relaxed">
+              Unduh seluruh data cadangan laporan yang tersimpan di perangkat/browser ini dalam format file Excel (.xlsx) atau JSON (.json).
+              Anda juga dapat mengunggah (bulk upload) seluruh data tersimpan langsung ke database Supabase tanpa batasan kelengkapan data.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() =>
+              props.onHandleDownloadDeviceBackupExcel &&
+              void props.onHandleDownloadDeviceBackupExcel()
+            }
+            disabled={props.deviceBackupExporting}
+            className="btn-primary h-[44px] px-4 text-xs font-bold flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white border-none shadow-md justify-center transition-all disabled:opacity-60"
+          >
+            {props.deviceBackupExporting ? (
+              <>
+                <SpinnerIcon />
+                <span>Menyusun...</span>
+              </>
+            ) : (
+              <>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download Excel (.xlsx)</span>
+              </>
+            )}
+          </button>
+
+          {props.onHandleDownloadDeviceBackupJson && (
+            <button
+              type="button"
+              onClick={() =>
+                props.onHandleDownloadDeviceBackupJson &&
+                void props.onHandleDownloadDeviceBackupJson()
+              }
+              disabled={props.deviceBackupExporting}
+              className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 justify-center transition-all disabled:opacity-60"
+            >
+              {props.deviceBackupExporting ? (
+                <>
+                  <SpinnerIcon />
+                  <span>Menyusun...</span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span>Download JSON (.json)</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {props.onNavigateBulkUpload && (
+            <button
+              type="button"
+              onClick={props.onNavigateBulkUpload}
+              className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-purple-500/40 text-purple-700 dark:text-purple-300 hover:bg-purple-500/10 justify-center transition-all"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span>Bulk Upload ke Database</span>
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="mt-3 pt-3 border-t border-[var(--border-soft)]/50 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
+        <span>💡 Termasuk data cache browser lokal, draft tersimpan offline, dan snapshot perangkat.</span>
+        <span className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Aman tanpa menghapus data</span>
+      </div>
+    </div>
+  );
+}
+
+function ReportRulesPanel(
+  props: AdminDashboardViewProps & { onNavigateBulkUpload?: () => void },
+) {
   return (
     <div className="grid gap-4">
+      {/* Cadangan Perangkat Lokal Excel & JSON */}
+      <DeviceBackupSettingsCard
+        reports={props.reports}
+        deviceBackupExporting={props.deviceBackupExporting}
+        onHandleDownloadDeviceBackupExcel={
+          props.onHandleDownloadDeviceBackupExcel
+        }
+        onHandleDownloadDeviceBackupJson={
+          props.onHandleDownloadDeviceBackupJson
+        }
+        onNavigateBulkUpload={props.onNavigateBulkUpload}
+      />
+
       <div className="surface-card rounded-[24px] p-5">
         <div className="space-y-4">
           <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
@@ -1078,11 +1285,22 @@ function BulkExportPanel(props: {
   reports: Report[];
   bulkExporting: boolean;
   onHandleBulkExport: (reports: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupExcel?: (reports?: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupJson?: (
+    reports?: Report[],
+    userFilter?: string,
+  ) => Promise<void>;
+  deviceBackupExporting?: boolean;
 }) {
   const [keyword, setKeyword] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const localBackupReportsCount = useMemo(
+    () => props.reports.filter((r) => r.source === "local").length,
+    [props.reports],
+  );
 
   const visibleReports = useMemo(() => {
     const search = keyword.trim().toLowerCase();
@@ -1147,6 +1365,120 @@ function BulkExportPanel(props: {
 
   return (
     <div className="grid gap-4">
+      {/* Kartu Khusus Cadangan Perangkat Excel & JSON */}
+      <div className="surface-card rounded-[24px] p-5 border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
+        <div className="flex items-start gap-3.5">
+          <div className="h-11 w-11 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-6 w-6"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-[var(--text-primary)]">
+                Download Cadangan Perangkat (Excel &amp; JSON)
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                Worksheet Tab per User
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                Format JSON
+              </span>
+              {localBackupReportsCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                  {localBackupReportsCount} cadangan aktif
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-[var(--text-muted)] mt-1 max-w-2xl leading-relaxed">
+              Unduh seluruh data cadangan lokal yang tersimpan di perangkat ini dalam format Excel (.xlsx) atau JSON (.json).
+              File Excel otomatis dikelompokkan berdasarkan worksheet tab per user dengan data per tanggal dan detail kegiatan lengkap.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full md:w-auto">
+          <button
+            type="button"
+            onClick={() =>
+              props.onHandleDownloadDeviceBackupExcel &&
+              void props.onHandleDownloadDeviceBackupExcel()
+            }
+            disabled={props.deviceBackupExporting}
+            className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition shadow-sm justify-center"
+          >
+            {props.deviceBackupExporting ? (
+              <>
+                <SpinnerIcon />
+                <span>Menyusun...</span>
+              </>
+            ) : (
+              <>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download Excel (.xlsx)</span>
+              </>
+            )}
+          </button>
+
+          {props.onHandleDownloadDeviceBackupJson && (
+            <button
+              type="button"
+              onClick={() =>
+                props.onHandleDownloadDeviceBackupJson &&
+                void props.onHandleDownloadDeviceBackupJson()
+              }
+              disabled={props.deviceBackupExporting}
+              className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition shadow-sm justify-center"
+            >
+              {props.deviceBackupExporting ? (
+                <>
+                  <SpinnerIcon />
+                  <span>Menyusun...</span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span>Download JSON (.json)</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="surface-card rounded-[24px] p-5">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-2">
@@ -1197,19 +1529,81 @@ function BulkExportPanel(props: {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-[var(--text-muted)]">
             Terfilter: {visibleReports.length} laporan | Terpilih:{" "}
             {selectedReports.length} laporan
           </p>
-          <button
-            type="button"
-            onClick={() => void props.onHandleBulkExport(selectedReports)}
-            disabled={props.bulkExporting || selectedReports.length === 0}
-            className="btn-primary h-[42px] px-5 text-sm disabled:opacity-60"
-          >
-            {props.bulkExporting ? <SpinnerIcon /> : "Export Terpilih"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {props.onHandleDownloadDeviceBackupExcel && (
+              <button
+                type="button"
+                onClick={() =>
+                  props.onHandleDownloadDeviceBackupExcel &&
+                  void props.onHandleDownloadDeviceBackupExcel(selectedReports)
+                }
+                disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                title="Ekspor laporan terpilih ke 1 file Excel dikelompokkan per worksheet tab per user"
+              >
+                {props.deviceBackupExporting ? (
+                  <SpinnerIcon />
+                ) : (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                )}
+                <span>Excel Terpilih</span>
+              </button>
+            )}
+            {props.onHandleDownloadDeviceBackupJson && (
+              <button
+                type="button"
+                onClick={() =>
+                  props.onHandleDownloadDeviceBackupJson &&
+                  void props.onHandleDownloadDeviceBackupJson(selectedReports)
+                }
+                disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                title="Ekspor laporan terpilih dalam format JSON"
+              >
+                {props.deviceBackupExporting ? (
+                  <SpinnerIcon />
+                ) : (
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-4 w-4"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                )}
+                <span>JSON Terpilih</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void props.onHandleBulkExport(selectedReports)}
+              disabled={props.bulkExporting || selectedReports.length === 0}
+              className="btn-primary h-[42px] px-5 text-sm disabled:opacity-60"
+            >
+              {props.bulkExporting ? <SpinnerIcon /> : "Export Terpilih"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1294,6 +1688,1217 @@ function BulkExportPanel(props: {
   );
 }
 
+function BulkUploadPanel(props: {
+  reports: Report[];
+  onHandleBulkUploadDeviceBackup?: (
+    backupReports: Report[],
+    selectedActivitiesByReportId: Record<string, number[]>,
+    onItemProgress?: (progress: BulkUploadItemProgress) => void,
+    onProgressStateChange?: (state: BulkUploadProgressState) => void,
+  ) => Promise<BulkUploadResult>;
+  deviceBackupBulkUploading?: boolean;
+}) {
+  const [viewMode, setViewMode] = useState<"selection" | "progress">("selection");
+  const [sourceType, setSourceType] = useState<"device" | "json">("device");
+  const [deviceReports, setDeviceReports] = useState<Report[]>([]);
+  const [importedReports, setImportedReports] = useState<Report[]>([]);
+  const [importedFileName, setImportedFileName] = useState("");
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [selectedActivities, setSelectedActivities] = useState<
+    Record<string, number[]>
+  >({});
+  const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [expandedReports, setExpandedReports] = useState<
+    Record<string, boolean>
+  >({});
+  const [liveProgressState, setLiveProgressState] =
+    useState<BulkUploadProgressState | null>(null);
+  const [uploadResult, setUploadResult] = useState<BulkUploadResult | null>(
+    null,
+  );
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadFromDevice = async () => {
+    setDeviceLoading(true);
+    setUploadResult(null);
+    try {
+      const data = await getAllDeviceBackupReports(props.reports);
+      setDeviceReports(data);
+      const sel: Record<string, number[]> = {};
+      const expU: Record<string, boolean> = {};
+      data.forEach((r) => {
+        sel[r.id] = (r.activities || []).map((a) => a.no);
+        expU[r.nama] = true;
+      });
+      setSelectedActivities(sel);
+      setExpandedUsers(expU);
+    } catch {
+      // safe fallback
+    } finally {
+      setDeviceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadFromDevice();
+  }, [props.reports]);
+
+  const handleJsonFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setImportedFileName(file.name);
+      const parsed = await parseDeviceBackupJsonFile(file);
+      setImportedReports(parsed);
+      setSourceType("json");
+      setUploadResult(null);
+      const sel: Record<string, number[]> = {};
+      const expU: Record<string, boolean> = {};
+      parsed.forEach((r) => {
+        sel[r.id] = (r.activities || []).map((a) => a.no);
+        expU[r.nama] = true;
+      });
+      setSelectedActivities(sel);
+      setExpandedUsers(expU);
+    } catch (err: any) {
+      alert(
+        "Gagal membaca file JSON: " + (err?.message || "Format tidak valid"),
+      );
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const currentDataset =
+    sourceType === "device" ? deviceReports : importedReports;
+
+  const visibleReports = useMemo(() => {
+    const q = keyword.trim().toLowerCase();
+    return currentDataset
+      .filter((report) => {
+        if (
+          q &&
+          !report.nama.toLowerCase().includes(q) &&
+          !report.activities.some((a) => a.description.toLowerCase().includes(q))
+        ) {
+          return false;
+        }
+        if (dateFrom && report.reportDate < dateFrom) {
+          return false;
+        }
+        if (dateTo && report.reportDate > dateTo) {
+          return false;
+        }
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const byDate = b.reportDate.localeCompare(a.reportDate);
+        if (byDate !== 0) return byDate;
+        return a.nama.localeCompare(b.nama);
+      });
+  }, [currentDataset, keyword, dateFrom, dateTo]);
+
+  // Group by User
+  const groupedByUser = useMemo(() => {
+    const map = new Map<string, Report[]>();
+    for (const report of visibleReports) {
+      const user = report.nama || "Tanpa Nama";
+      if (!map.has(user)) {
+        map.set(user, []);
+      }
+      map.get(user)!.push(report);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [visibleReports]);
+
+  const selectedActivitiesCount = useMemo(() => {
+    return visibleReports.reduce((sum, r) => {
+      const selected = selectedActivities[r.id] || [];
+      return sum + selected.length;
+    }, 0);
+  }, [visibleReports, selectedActivities]);
+
+  const totalVisibleActivities = useMemo(() => {
+    return visibleReports.reduce(
+      (sum, r) => sum + (r.activities?.length || 0),
+      0,
+    );
+  }, [visibleReports]);
+
+  const selectedReportsCount = useMemo(() => {
+    return visibleReports.filter(
+      (r) => (selectedActivities[r.id] || []).length > 0,
+    ).length;
+  }, [visibleReports, selectedActivities]);
+
+  const selectedUsersCount = useMemo(() => {
+    const users = new Set<string>();
+    visibleReports.forEach((r) => {
+      if ((selectedActivities[r.id] || []).length > 0) {
+        users.add(r.nama);
+      }
+    });
+    return users.size;
+  }, [visibleReports, selectedActivities]);
+
+  const toggleActivity = (reportId: string, activityNo: number) => {
+    setSelectedActivities((prev) => {
+      const current = prev[reportId] || [];
+      const next = current.includes(activityNo)
+        ? current.filter((no) => no !== activityNo)
+        : [...current, activityNo];
+      return { ...prev, [reportId]: next };
+    });
+  };
+
+  const toggleReport = (report: Report) => {
+    const allNos = (report.activities || []).map((a) => a.no);
+    const current = selectedActivities[report.id] || [];
+    const isAllSelected =
+      allNos.length > 0 && current.length === allNos.length;
+    setSelectedActivities((prev) => ({
+      ...prev,
+      [report.id]: isAllSelected ? [] : allNos,
+    }));
+  };
+
+  const toggleUser = (userReports: Report[]) => {
+    const isUserAllSelected = userReports.every((r) => {
+      const selected = selectedActivities[r.id] || [];
+      return (
+        r.activities.length > 0 && selected.length === r.activities.length
+      );
+    });
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      userReports.forEach((r) => {
+        next[r.id] = isUserAllSelected
+          ? []
+          : (r.activities || []).map((a) => a.no);
+      });
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      visibleReports.forEach((r) => {
+        next[r.id] = (r.activities || []).map((a) => a.no);
+      });
+      return next;
+    });
+  };
+
+  const clearAllVisible = () => {
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      visibleReports.forEach((r) => {
+        next[r.id] = [];
+      });
+      return next;
+    });
+  };
+
+  const toggleExpandUser = (user: string) => {
+    setExpandedUsers((prev) => ({ ...prev, [user]: !prev[user] }));
+  };
+
+  const toggleExpandReport = (reportId: string) => {
+    setExpandedReports((prev) => ({ ...prev, [reportId]: !prev[reportId] }));
+  };
+
+  const expandAll = () => {
+    const expU: Record<string, boolean> = {};
+    const expR: Record<string, boolean> = {};
+    visibleReports.forEach((r) => {
+      expU[r.nama] = true;
+      expR[r.id] = true;
+    });
+    setExpandedUsers(expU);
+    setExpandedReports(expR);
+  };
+
+  const collapseAll = () => {
+    setExpandedUsers({});
+    setExpandedReports({});
+  };
+
+  const handleStartUpload = async () => {
+    if (!props.onHandleBulkUploadDeviceBackup) return;
+    if (selectedActivitiesCount === 0) {
+      alert("Pilih setidaknya satu aktivitas untuk diunggah.");
+      return;
+    }
+
+    const initialProgress = buildInitialBulkUploadProgressState(
+      currentDataset,
+      selectedActivities,
+    );
+    setLiveProgressState(initialProgress);
+    setViewMode("progress");
+    setUploadResult(null);
+
+    try {
+      const result = await props.onHandleBulkUploadDeviceBackup(
+        currentDataset,
+        selectedActivities,
+        undefined,
+        (state) => {
+          setLiveProgressState({ ...state });
+        },
+      );
+      setUploadResult(result);
+      if (result.progressState) {
+        setLiveProgressState(result.progressState);
+      }
+    } catch (err: any) {
+      setUploadResult({
+        success: false,
+        uploadedReportsCount: 0,
+        uploadedActivitiesCount: 0,
+        errors: [err?.message || "Kesalahan tak terduga saat upload"],
+      });
+    }
+  };
+
+  return (
+    <div className="grid gap-5">
+      {/* Kartu Header & Pilihan Sumber Cadangan */}
+      <div className="surface-card rounded-[28px] p-5 sm:p-6 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 via-purple-500/5 to-transparent shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="h-12 w-12 rounded-2xl bg-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-6 w-6"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  Bulk Upload Cadangan Perangkat ke Database
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/30">
+                  Akses Admin
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                  Tanpa Batasan Kelengkapan
+                </span>
+              </div>
+              <p className="mt-1.5 text-xs text-[var(--text-muted)] max-w-3xl leading-relaxed">
+                Sinkronisasikan seluruh data tersimpan (cache browser lokal,
+                draft offline, atau file JSON cadangan) langsung ke database
+                Supabase. Anda dapat memilih secara terperinci per pengguna, per
+                tanggal laporan, hingga per setiap rincian aktivitas terkait.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                setSourceType("device");
+                void loadFromDevice();
+              }}
+              disabled={deviceLoading || props.deviceBackupBulkUploading}
+              className={`h-[42px] px-4 text-xs font-bold rounded-xl transition flex items-center gap-2 border ${
+                sourceType === "device"
+                  ? "bg-purple-600 text-white border-purple-600 shadow-md"
+                  : "bg-[var(--surface-muted)] text-[var(--text-primary)] border-[var(--border-soft)] hover:bg-[var(--surface-panel-strong)]"
+              }`}
+            >
+              {deviceLoading ? (
+                <SpinnerIcon />
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <rect width="20" height="14" x="2" y="3" rx="2" />
+                  <line x1="8" x2="16" y1="21" y2="21" />
+                  <line x1="12" x2="12" y1="17" y2="21" />
+                </svg>
+              )}
+              <span>Data Perangkat Ini ({deviceReports.length})</span>
+            </button>
+
+            <label
+              className={`h-[42px] px-4 text-xs font-bold rounded-xl transition flex items-center gap-2 border cursor-pointer ${
+                props.deviceBackupBulkUploading ? "opacity-50 pointer-events-none" : ""
+              } ${
+                sourceType === "json"
+                  ? "bg-purple-600 text-white border-purple-600 shadow-md"
+                  : "bg-[var(--surface-muted)] text-[var(--text-primary)] border-[var(--border-soft)] hover:bg-[var(--surface-panel-strong)]"
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleJsonFileUpload}
+                disabled={props.deviceBackupBulkUploading}
+                className="hidden"
+              />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+              <span>
+                {importedFileName
+                  ? `File: ${importedFileName.slice(0, 16)}...`
+                  : "Import File JSON Cadangan"}
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {/* Security & Safety Note & View Switcher */}
+        <div className="pt-3 border-t border-[var(--border-soft)]/50 flex flex-wrap items-center justify-between gap-3 text-[11.5px] text-[var(--text-muted)]">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-500 font-bold text-sm">✓</span>
+            <span className="font-medium">
+              <strong>100% Aman &amp; Terlindungi:</strong> Tindakan ini TIDAK
+              akan menghapus, membersihkan, atau mengubah identitas cache lokal
+              dan draft di perangkat Anda.
+            </span>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setViewMode("selection")}
+              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition ${
+                viewMode === "selection"
+                  ? "bg-purple-600 text-white shadow-xs"
+                  : "bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+              }`}
+            >
+              1. Pemilihan Data
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("progress")}
+              disabled={!liveProgressState}
+              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1.5 ${
+                viewMode === "progress"
+                  ? "bg-purple-600 text-white shadow-xs"
+                  : liveProgressState
+                    ? "bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                    : "opacity-40 cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-muted)]"
+              }`}
+            >
+              {props.deviceBackupBulkUploading && <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />}
+              <span>2. Progres Upload</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================= */}
+      {/* MODE 1: PROGRES UPLOAD PAGE (DEDICATED TREE PROGRESS VIEW) */}
+      {/* ========================================================= */}
+      {viewMode === "progress" && liveProgressState && (
+        <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-purple-500/20 shadow-sm animate-fadeIn">
+          {/* Header Progress Page */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+            <div className="flex items-center gap-3.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("selection")}
+                disabled={props.deviceBackupBulkUploading}
+                className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+                <span>Kembali ke Seleksi</span>
+              </button>
+              <div>
+                <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                  <span>Progres Sinkronisasi Bertahap ke Database</span>
+                  {props.deviceBackupBulkUploading ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-purple-500/20 text-purple-600 dark:text-purple-400 animate-pulse border border-purple-500/30">
+                      Sedang Berjalan...
+                    </span>
+                  ) : liveProgressState.overallStatus === "completed" ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      Selesai
+                    </span>
+                  ) : null}
+                </h4>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  Mengunggah data cadangan secara bertahap per user dan per laporan ke Supabase.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                Total: {liveProgressState.totalUsers} Petugas • {liveProgressState.totalReports} Laporan • {liveProgressState.totalActivities} Aktivitas
+              </span>
+            </div>
+          </div>
+
+          {/* Metric Status Cards & Progress Bar */}
+          <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+              <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400">
+                {props.deviceBackupBulkUploading ? (
+                  <SpinnerIcon className="h-4 w-4 animate-spin text-purple-600" />
+                ) : (
+                  <span className="text-emerald-500">✓</span>
+                )}
+                <span className="font-extrabold">{liveProgressState.currentMessage}</span>
+              </div>
+              <div className="text-[var(--text-muted)]">
+                {liveProgressState.totalReports > 0
+                  ? Math.round(
+                      (liveProgressState.uploadedReportsCount /
+                        liveProgressState.totalReports) *
+                        100,
+                    )
+                  : 0}
+                % Selesai ({liveProgressState.uploadedReportsCount}/
+                {liveProgressState.totalReports} Laporan)
+              </div>
+            </div>
+
+            {/* Main Animated Progress Bar */}
+            <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+              <div
+                className="h-full bg-gradient-to-r from-purple-600 via-indigo-600 to-emerald-500 transition-all duration-300 rounded-full"
+                style={{
+                  width: `${
+                    liveProgressState.totalReports > 0
+                      ? Math.min(
+                          100,
+                          (liveProgressState.uploadedReportsCount /
+                            liveProgressState.totalReports) *
+                            100,
+                        )
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+
+            {/* Quick Metrics Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">Petugas Aktif</span>
+                <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                  {liveProgressState.currentUserName || "-"}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">Laporan Diproses</span>
+                <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                  {liveProgressState.uploadedReportsCount} / {liveProgressState.totalReports}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">Aktivitas Terunggah</span>
+                <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                  {liveProgressState.uploadedActivitiesCount} / {liveProgressState.totalActivities}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">Status Keamanan</span>
+                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                  Cache Utuh 100%
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* =============================================================== */}
+          {/* HIERARCHICAL TREE VIEW (COMPACT PER USER & PER REPORT PROGRESS) */}
+          {/* Format:                                                        */}
+          {/* o user1                                                        */}
+          {/*   - o date1                                                    */}
+          {/*   - o date2                                                    */}
+          {/* o user2                                                        */}
+          {/* =============================================================== */}
+          <div className="space-y-3">
+            <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+              <span>Struktur Antrean &amp; Status Unggah</span>
+            </h5>
+
+            <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+              {liveProgressState.users.map((userGroup, uIdx) => {
+                const isUserUploading = userGroup.status === "uploading";
+                const isUserSuccess = userGroup.status === "success";
+                const isUserError = userGroup.status === "error";
+
+                return (
+                  <div
+                    key={userGroup.userName}
+                    className={`p-3.5 sm:p-4 space-y-2.5 transition ${
+                      isUserUploading
+                        ? "bg-purple-500/5"
+                        : isUserError
+                          ? "bg-red-500/5"
+                          : ""
+                    }`}
+                  >
+                    {/* Level 1: Compact User Progress Node ('o user') */}
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {/* Status Icon / Loader 'o' */}
+                        <div className="shrink-0 flex items-center justify-center">
+                          {isUserUploading ? (
+                            <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold border border-purple-500/50 shadow-xs animate-pulse">
+                              <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                            </span>
+                          ) : isUserSuccess ? (
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
+                              ✓
+                            </span>
+                          ) : isUserError ? (
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
+                              ✕
+                            </span>
+                          ) : (
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
+                              ○
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                            {userGroup.userName}
+                          </span>
+                          <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                            (Petugas #{uIdx + 1} • {userGroup.completedReports}/{userGroup.totalReports} selesai)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isUserUploading && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30 flex items-center gap-1">
+                            <SpinnerIcon className="h-3 w-3 animate-spin" />
+                            <span>Mengunggah...</span>
+                          </span>
+                        )}
+                        {isUserSuccess && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            Selesai ✓
+                          </span>
+                        )}
+                        {isUserError && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                            Error ✕
+                          </span>
+                        )}
+                        {userGroup.status === "pending" && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                            Menunggu Antrean
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Level 2: Nested Reports Nodes ('- o date') with vertical tree guide */}
+                    <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-purple-500/30 dark:border-purple-800/40 space-y-1.5 py-0.5">
+                      {userGroup.reports.map((reportItem) => {
+                        const isRepUploading = reportItem.status === "uploading";
+                        const isRepSuccess = reportItem.status === "success";
+                        const isRepError = reportItem.status === "error";
+
+                        return (
+                          <div
+                            key={reportItem.reportId}
+                            className={`flex flex-wrap items-center justify-between gap-2.5 py-1.5 px-3 rounded-xl border transition-all text-xs ${
+                              isRepUploading
+                                ? "bg-purple-500/10 border-purple-500/40 ring-1 ring-purple-500/20"
+                                : isRepSuccess
+                                  ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
+                                  : isRepError
+                                    ? "bg-red-500/10 border-red-500/30"
+                                    : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
+                                └─
+                              </span>
+
+                              {/* Loader / Icon 'o' for Report Date */}
+                              <div className="shrink-0 flex items-center justify-center">
+                                {isRepUploading ? (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-purple-500/25 text-purple-600 dark:text-purple-300 font-bold border border-purple-500/50 animate-spin">
+                                    <SpinnerIcon className="h-3 w-3" />
+                                  </span>
+                                ) : isRepSuccess ? (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                    ✓
+                                  </span>
+                                ) : isRepError ? (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
+                                    ✕
+                                  </span>
+                                ) : (
+                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
+                                    ○
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-[var(--text-primary)]">
+                                  {formatWitaDate(reportItem.reportDate)}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                  Tim {reportItem.tim || "TRC"}
+                                </span>
+                                <span className="text-[var(--text-muted)] text-[11px]">
+                                  • {reportItem.selectedActivitiesCount} Aktivitas
+                                </span>
+                                {reportItem.errorMessage && (
+                                  <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                                    ({reportItem.errorMessage})
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Status Pill on the Right */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isRepUploading && (
+                                <span className="font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1 animate-pulse text-[11px]">
+                                  <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                  <span>Mengunggah...</span>
+                                </span>
+                              )}
+                              {isRepSuccess && (
+                                <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                  Tersinkronisasi ✓
+                                </span>
+                              )}
+                              {isRepError && (
+                                <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
+                                  Gagal ✕
+                                </span>
+                              )}
+                              {reportItem.status === "pending" && (
+                                <span className="text-[11px] text-[var(--text-muted)] italic">
+                                  Menunggu...
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Action Footer on Progress Page */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
+            <button
+              type="button"
+              onClick={() => setViewMode("selection")}
+              disabled={props.deviceBackupBulkUploading}
+              className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40"
+            >
+              ← Kembali ke Pemilihan Data
+            </button>
+
+            {uploadResult && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode("selection");
+                    void loadFromDevice();
+                  }}
+                  className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-purple-600 hover:bg-purple-700 text-white"
+                >
+                  Selesai &amp; Muat Ulang Data
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODE 2: SELECTION VIEW (FILTER & COMPACT SELECTION TREE)  */}
+      {/* ========================================================= */}
+      {viewMode === "selection" && (
+        <>
+          {/* Filter Toolbar & Quick Actions */}
+          <div className="surface-card rounded-[24px] p-5 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Cari Nama Petugas / Uraian
+                </span>
+                <input
+                  type="text"
+                  placeholder="Ketik kata kunci..."
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                  className={inputClassName}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Dari Tanggal
+                </span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className={inputClassName}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Sampai Tanggal
+                </span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className={inputClassName}
+                />
+              </label>
+              <div className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Aksi Seleksi Cepat
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={selectAllVisible}
+                    disabled={visibleReports.length === 0}
+                    className="btn-secondary h-[44px] flex-1 px-3 text-xs font-semibold disabled:opacity-50"
+                  >
+                    Pilih Semua
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAllVisible}
+                    disabled={selectedActivitiesCount === 0}
+                    className="btn-secondary h-[44px] flex-1 px-3 text-xs font-semibold disabled:opacity-50"
+                  >
+                    Lepas Semua
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Header & Upload Bar */}
+            <div className="mt-2 flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-[var(--border-soft)] pt-4">
+              <div className="flex items-center gap-3 flex-wrap text-xs text-[var(--text-muted)]">
+                <div className="flex items-center gap-1.5 bg-purple-500/10 text-purple-600 dark:text-purple-400 px-3 py-1.5 rounded-xl font-bold border border-purple-500/20">
+                  <span>Terpilih:</span>
+                  <strong className="text-[var(--text-primary)]">
+                    {selectedUsersCount}
+                  </strong>
+                  <span>Petugas |</span>
+                  <strong className="text-[var(--text-primary)]">
+                    {selectedReportsCount}
+                  </strong>
+                  <span>Laporan |</span>
+                  <strong className="text-purple-600 dark:text-purple-300 font-extrabold text-sm">
+                    {selectedActivitiesCount}
+                  </strong>
+                  <span>/ {totalVisibleActivities} Aktivitas</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={expandAll}
+                    className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] underline cursor-pointer"
+                  >
+                    Buka Semua
+                  </button>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={collapseAll}
+                    className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] underline cursor-pointer"
+                  >
+                    Tutup Semua
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleStartUpload}
+                  disabled={
+                    props.deviceBackupBulkUploading ||
+                    selectedActivitiesCount === 0 ||
+                    !props.onHandleBulkUploadDeviceBackup
+                  }
+                  className="btn-primary h-[46px] px-6 text-sm font-bold shadow-lg flex items-center gap-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white border-none w-full md:w-auto justify-center transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {props.deviceBackupBulkUploading ? (
+                    <>
+                      <SpinnerIcon className="h-5 w-5" />
+                      <span>Mengunggah ke Database...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-5 w-5"
+                      >
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span>
+                        Upload ke Database ({selectedActivitiesCount} Aktivitas)
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Feedback Result Banners */}
+          {uploadResult && (
+            <div
+              className={`rounded-2xl p-4 sm:p-5 border space-y-2 animate-fadeIn ${
+                uploadResult.uploadedReportsCount > 0
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                  : "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 font-bold text-sm">
+                  <span>{uploadResult.uploadedReportsCount > 0 ? "✓" : "✕"}</span>
+                  <span>
+                    {uploadResult.uploadedReportsCount > 0
+                      ? `Sukses mengunggah ${uploadResult.uploadedReportsCount} laporan (${uploadResult.uploadedActivitiesCount} aktivitas) ke Supabase!`
+                      : "Tidak ada laporan yang berhasil diunggah."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("progress")}
+                  className="text-xs font-bold underline cursor-pointer"
+                >
+                  Lihat Detail Progres
+                </button>
+              </div>
+              {uploadResult.errors.length > 0 && (
+                <div className="text-xs space-y-1 mt-1 font-mono text-red-600 dark:text-red-400">
+                  {uploadResult.errors.map((e, idx) => (
+                    <div key={idx}>• {e}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Compact Unified Selection Tree Container */}
+          <div className="space-y-4">
+            {groupedByUser.length === 0 ? (
+              <div className="surface-card rounded-[24px] p-8 text-center space-y-3">
+                <div className="h-12 w-12 rounded-full bg-[var(--surface-muted)] mx-auto flex items-center justify-center text-[var(--text-muted)]">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-6 w-6"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <h4 className="text-sm font-bold text-[var(--text-primary)]">
+                  Tidak Ada Data Laporan Cadangan yang Ditemukan
+                </h4>
+                <p className="text-xs text-[var(--text-muted)] max-w-md mx-auto">
+                  Belum ada data laporan tersimpan pada cache perangkat ini atau
+                  file JSON yang sesuai dengan filter Anda.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+                {groupedByUser.map(([userName, userReports]) => {
+                  const isUserExpanded = expandedUsers[userName] ?? true;
+                  const userTotalActivities = userReports.reduce(
+                    (sum, r) => sum + (r.activities?.length || 0),
+                    0,
+                  );
+                  const userSelectedActivities = userReports.reduce((sum, r) => {
+                    const sel = selectedActivities[r.id] || [];
+                    return sum + sel.length;
+                  }, 0);
+
+                  const isUserFullyChecked =
+                    userTotalActivities > 0 &&
+                    userSelectedActivities === userTotalActivities;
+                  const isUserPartiallyChecked =
+                    userSelectedActivities > 0 && !isUserFullyChecked;
+
+                  return (
+                    <div key={userName} className="transition">
+                      {/* Level 1: Compact User Row */}
+                      <div className="p-3 sm:p-3.5 flex items-center justify-between gap-3 hover:bg-[var(--surface-muted)]/30 transition">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isUserFullyChecked}
+                            ref={(el) => {
+                              if (el) el.indeterminate = isUserPartiallyChecked;
+                            }}
+                            onChange={() => toggleUser(userReports)}
+                            className="h-4 w-4 accent-purple-600 rounded cursor-pointer shrink-0"
+                          />
+                          <div
+                            onClick={() => toggleExpandUser(userName)}
+                            className="flex items-center gap-2.5 cursor-pointer select-none min-w-0"
+                          >
+                            <div className="h-7 w-7 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-400 font-bold flex items-center justify-center text-xs shrink-0">
+                              {userName.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                              <h4 className="text-sm font-bold text-[var(--text-primary)] truncate">
+                                {userName}
+                              </h4>
+                              <span className="text-xs text-[var(--text-muted)] font-medium">
+                                ({userReports.length} Tanggal • {userSelectedActivities}/{userTotalActivities} Aktivitas Terpilih)
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandUser(userName)}
+                            className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 cursor-pointer py-1 px-2 rounded-lg hover:bg-[var(--surface-muted)]"
+                          >
+                            <span>{isUserExpanded ? "Sembunyikan" : "Buka"}</span>
+                            <svg
+                              viewBox="0 0 24 24"
+                              className={`h-3.5 w-3.5 transition-transform ${
+                                isUserExpanded ? "rotate-180" : ""
+                              }`}
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Level 2: Compact Reports List with Tree Guideline */}
+                      {isUserExpanded && (
+                        <div className="ml-3 sm:ml-4 pl-3.5 sm:pl-4 border-l-2 border-dashed border-purple-500/30 dark:border-purple-800/40 pr-3 sm:pr-4 pb-3 pt-1 space-y-2 bg-[var(--surface-muted)]/10">
+                          {userReports.map((report) => {
+                            const isReportExpanded =
+                              expandedReports[report.id] ?? false;
+                            const reportActivities = report.activities || [];
+                            const reportSelectedNos =
+                              selectedActivities[report.id] || [];
+                            const isReportFullyChecked =
+                              reportActivities.length > 0 &&
+                              reportSelectedNos.length === reportActivities.length;
+                            const isReportPartiallyChecked =
+                              reportSelectedNos.length > 0 && !isReportFullyChecked;
+
+                            return (
+                              <div
+                                key={report.id}
+                                className="rounded-xl border border-[var(--border-soft)]/60 bg-[var(--surface-panel-strong)] p-2.5 sm:p-3 space-y-2"
+                              >
+                                {/* Report Date Header */}
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      checked={isReportFullyChecked}
+                                      ref={(el) => {
+                                        if (el)
+                                          el.indeterminate = isReportPartiallyChecked;
+                                      }}
+                                      onChange={() => toggleReport(report)}
+                                      className="h-3.5 w-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
+                                    />
+                                    <div
+                                      onClick={() => toggleExpandReport(report.id)}
+                                      className="flex items-center gap-2 cursor-pointer select-none flex-wrap"
+                                    >
+                                      <span className="text-xs sm:text-sm font-bold text-[var(--text-primary)]">
+                                        {formatWitaDate(report.reportDate)}
+                                      </span>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                        Tim {report.tim || "TRC"}
+                                      </span>
+                                      <span className="text-[11px] text-[var(--text-muted)]">
+                                        ({reportSelectedNos.length}/
+                                        {reportActivities.length} aktivitas)
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleExpandReport(report.id)}
+                                    className="text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <span>
+                                      {isReportExpanded ? "Tutup Rincian" : "Rincian Aktivitas"}
+                                    </span>
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      className={`h-3 w-3 transition-transform ${
+                                        isReportExpanded ? "rotate-180" : ""
+                                      }`}
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <polyline points="6 9 12 15 18 9" />
+                                    </svg>
+                                  </button>
+                                </div>
+
+                                {/* Level 3: Compact Individual Activities List */}
+                                {isReportExpanded && (
+                                  <div className="pl-4 sm:pl-6 space-y-1.5 pt-2 border-t border-[var(--border-soft)]/50">
+                                    {reportActivities.length === 0 ? (
+                                      <p className="text-xs text-[var(--text-muted)] italic py-1">
+                                        Tidak ada aktivitas tercatat pada laporan ini.
+                                      </p>
+                                    ) : (
+                                      reportActivities.map((activity, actIdx) => {
+                                        const isActChecked = reportSelectedNos.includes(
+                                          activity.no,
+                                        );
+                                        const photosCount =
+                                          activity.photos?.length || 0;
+
+                                        return (
+                                          <label
+                                            key={activity.no ?? actIdx}
+                                            className={`flex items-start gap-2.5 cursor-pointer select-none py-1.5 px-2.5 rounded-lg transition text-xs ${
+                                              isActChecked
+                                                ? "bg-purple-500/8 text-[var(--text-primary)] font-medium"
+                                                : "opacity-60 hover:opacity-100"
+                                            }`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isActChecked}
+                                              onChange={() =>
+                                                toggleActivity(report.id, activity.no)
+                                              }
+                                              className="mt-0.5 h-3.5 w-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
+                                            />
+                                            <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                              <span className="font-bold text-purple-600 dark:text-purple-400">
+                                                #{activity.no ?? actIdx + 1}
+                                              </span>
+                                              <span className="text-[var(--text-muted)]">
+                                                [{activity.startTime && activity.endTime ? `${activity.startTime}-${activity.endTime}` : "-"}]
+                                              </span>
+                                              <span className="text-[var(--text-primary)] truncate">
+                                                {activity.description || "(Tanpa uraian)"}
+                                              </span>
+                                              {photosCount > 0 && (
+                                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                                                  {photosCount} Foto
+                                                </span>
+                                              )}
+                                            </div>
+                                          </label>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AdminLoadingOverlay() {
   return (
     <div className="flex min-h-[300px] flex-col items-center justify-center space-y-4">
@@ -1332,6 +2937,12 @@ function UserProfilePanel(props: {
   reports?: Report[];
   bulkExporting?: boolean;
   onHandleBulkExport?: (reports: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupExcel?: (reports?: Report[]) => Promise<void>;
+  onHandleDownloadDeviceBackupJson?: (
+    reports?: Report[],
+    userFilter?: string,
+  ) => Promise<void>;
+  deviceBackupExporting?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState<"profile" | "sound" | "bulk-export">("profile");
   const [name, setName] = useState(props.userSession.fullName);
@@ -1590,6 +3201,63 @@ function UserProfilePanel(props: {
               </button>
             </div>
           </form>
+
+          {/* Card Cadangan Perangkat Lokal untuk User */}
+          <div className="mt-6 pt-5 border-t border-[var(--border-soft)] space-y-3">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                Cadangan Perangkat Saya
+              </h4>
+              <p className="text-[11.5px] text-[var(--text-muted)] mt-0.5">
+                Unduh salinan data laporan yang tersimpan di perangkat ini dalam format Excel atau JSON.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {props.onHandleDownloadDeviceBackupExcel && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    props.onHandleDownloadDeviceBackupExcel &&
+                    void props.onHandleDownloadDeviceBackupExcel(myReports)
+                  }
+                  disabled={props.deviceBackupExporting}
+                  className="btn-secondary py-2.5 px-3 text-xs font-bold flex items-center justify-center gap-2 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon />
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  )}
+                  <span>Excel (.xlsx)</span>
+                </button>
+              )}
+              {props.onHandleDownloadDeviceBackupJson && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    props.onHandleDownloadDeviceBackupJson &&
+                    void props.onHandleDownloadDeviceBackupJson(myReports, props.userSession.fullName)
+                  }
+                  disabled={props.deviceBackupExporting}
+                  className="btn-secondary py-2.5 px-3 text-xs font-bold flex items-center justify-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon />
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
+                  <span>JSON (.json)</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       ) : activeTab === "sound" ? (
         <div className="surface-card rounded-[28px] p-6 max-w-md mx-auto border border-[var(--border-soft)] shadow-sm space-y-5 animate-fadeIn">
@@ -1670,6 +3338,86 @@ function UserProfilePanel(props: {
         </div>
       ) : (
         <div className="grid gap-4">
+          {/* Card Cadangan Perangkat User */}
+          <div className="surface-card rounded-[28px] p-5 sm:p-6 border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3.5">
+              <div className="h-11 w-11 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-6 w-6"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base font-bold text-[var(--text-primary)]">
+                    Cadangan Data Perangkat ({props.userSession.fullName})
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                    Excel &amp; JSON
+                  </span>
+                </div>
+                <p className="text-xs text-[var(--text-muted)] mt-1 max-w-2xl leading-relaxed">
+                  Unduh seluruh riwayat dan cache laporan Anda di perangkat ini dalam format Excel (.xlsx) atau JSON (.json) lengkap.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full md:w-auto">
+              {props.onHandleDownloadDeviceBackupExcel && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    props.onHandleDownloadDeviceBackupExcel &&
+                    void props.onHandleDownloadDeviceBackupExcel(myReports)
+                  }
+                  disabled={props.deviceBackupExporting}
+                  className="btn-secondary h-[42px] px-4 text-xs font-bold flex items-center gap-2 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 justify-center"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon />
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  )}
+                  <span>Download Excel (.xlsx)</span>
+                </button>
+              )}
+              {props.onHandleDownloadDeviceBackupJson && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    props.onHandleDownloadDeviceBackupJson &&
+                    void props.onHandleDownloadDeviceBackupJson(myReports, props.userSession.fullName)
+                  }
+                  disabled={props.deviceBackupExporting}
+                  className="btn-secondary h-[42px] px-4 text-xs font-bold flex items-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 justify-center"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon />
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
+                  <span>Download JSON (.json)</span>
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="surface-card rounded-[28px] p-5 sm:p-6 border border-[var(--border-soft)] shadow-sm">
             <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[var(--border-soft)] pb-4">
               <div>
@@ -1677,7 +3425,7 @@ function UserProfilePanel(props: {
                   Unduh Massal Laporan ({props.userSession.fullName})
                 </h3>
                 <p className="text-xs text-[var(--text-muted)]">
-                  Pilih rentang tanggal dan unduh laporan-laporan Anda ke file Excel sekaligus
+                  Pilih rentang tanggal dan unduh laporan-laporan Anda ke file Excel atau JSON sekaligus
                 </p>
               </div>
               <span className="inline-flex items-center gap-1.5 self-start rounded-full bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-600 dark:text-purple-400">
@@ -1748,28 +3496,74 @@ function UserProfilePanel(props: {
                 </span>
               </div>
 
-              <button
-                type="button"
-                onClick={() => props.onHandleBulkExport && void props.onHandleBulkExport(selectedReports)}
-                disabled={Boolean(props.bulkExporting) || selectedReports.length === 0}
-                className="btn-primary h-[42px] px-5 text-xs font-semibold disabled:opacity-50 flex items-center gap-2"
-              >
-                {props.bulkExporting ? (
-                  <>
-                    <SpinnerIcon className="h-4 w-4" />
-                    <span>Mengunduh...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    <span>Unduh Terpilih ({selectedReports.length})</span>
-                  </>
+              <div className="flex flex-wrap items-center gap-2">
+                {props.onHandleDownloadDeviceBackupExcel && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      props.onHandleDownloadDeviceBackupExcel &&
+                      void props.onHandleDownloadDeviceBackupExcel(selectedReports)
+                    }
+                    disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                    className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                    title="Unduh laporan terpilih dalam format Excel"
+                  >
+                    {props.deviceBackupExporting ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    )}
+                    <span>Excel Terpilih</span>
+                  </button>
                 )}
-              </button>
+                {props.onHandleDownloadDeviceBackupJson && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      props.onHandleDownloadDeviceBackupJson &&
+                      void props.onHandleDownloadDeviceBackupJson(selectedReports, props.userSession.fullName)
+                    }
+                    disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                    className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                    title="Unduh laporan terpilih dalam format JSON"
+                  >
+                    {props.deviceBackupExporting ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                      </svg>
+                    )}
+                    <span>JSON Terpilih</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => props.onHandleBulkExport && void props.onHandleBulkExport(selectedReports)}
+                  disabled={Boolean(props.bulkExporting) || selectedReports.length === 0}
+                  className="btn-primary h-[42px] px-5 text-xs font-semibold disabled:opacity-50 flex items-center gap-2"
+                >
+                  {props.bulkExporting ? (
+                    <>
+                      <SpinnerIcon className="h-4 w-4" />
+                      <span>Mengunduh...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                      <span>Unduh Terpilih ({selectedReports.length})</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1883,6 +3677,7 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
         stored === "reporters" ||
         stored === "templates" ||
         stored === "bulk-export" ||
+        stored === "bulk-upload" ||
         stored === "sounds"
       ) {
         return stored as AdminSection;
@@ -1936,6 +3731,13 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
           reports={props.reports}
           bulkExporting={props.bulkExporting}
           onHandleBulkExport={props.onHandleBulkExport}
+          onHandleDownloadDeviceBackupExcel={
+            props.onHandleDownloadDeviceBackupExcel
+          }
+          onHandleDownloadDeviceBackupJson={
+            props.onHandleDownloadDeviceBackupJson
+          }
+          deviceBackupExporting={props.deviceBackupExporting}
         />
       ) : (
 
@@ -1966,7 +3768,10 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
               </div>
 
               {activeSection === "rules" ? (
-                <ReportRulesPanel {...props} />
+                <ReportRulesPanel
+                  {...props}
+                  onNavigateBulkUpload={() => setActiveSection("bulk-upload")}
+                />
               ) : null}
               {activeSection === "reporters" ? (
                 <ReporterManagementPanel
@@ -1985,6 +3790,22 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                   reports={props.reports}
                   bulkExporting={props.bulkExporting}
                   onHandleBulkExport={props.onHandleBulkExport}
+                  onHandleDownloadDeviceBackupExcel={
+                    props.onHandleDownloadDeviceBackupExcel
+                  }
+                  onHandleDownloadDeviceBackupJson={
+                    props.onHandleDownloadDeviceBackupJson
+                  }
+                  deviceBackupExporting={props.deviceBackupExporting}
+                />
+              ) : null}
+              {activeSection === "bulk-upload" ? (
+                <BulkUploadPanel
+                  reports={props.reports}
+                  onHandleBulkUploadDeviceBackup={
+                    props.onHandleBulkUploadDeviceBackup
+                  }
+                  deviceBackupBulkUploading={props.deviceBackupBulkUploading}
                 />
               ) : null}
               {activeSection === "sounds" ? (
