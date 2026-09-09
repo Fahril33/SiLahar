@@ -1002,7 +1002,10 @@ export function useReportDashboard() {
     setPendingPreviews(c => { (c[activityNo] ?? []).forEach(p => URL.revokeObjectURL(p.url)); const n = { ...c }; delete n[activityNo]; return n; });
   }
 
-  async function setActivityFiles(activityNo: number, files: FileList | null) {
+  async function setActivityFiles(
+    activityNo: number,
+    files: FileList | File[] | null,
+  ) {
     const sel = files ? Array.from(files) : [];
     const target = draft.activities.find(a => a.no === activityNo);
     const existing = target?.photos ?? [];
