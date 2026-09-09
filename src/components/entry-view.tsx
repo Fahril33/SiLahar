@@ -13,6 +13,7 @@ import { AutocompleteInput } from "./autocomplete-input";
 import { DeviceNameHistory } from "./device-name-history";
 import { FileUploadInput } from "./file-upload-input";
 import { ReportPdfDocument } from "./report-pdf-document";
+import { extractImageFilesFromClipboard } from "../lib/image-optimizer";
 import pdfStyles from "../styles/report-pdf.css?inline";
 
 const inputClassName = "field-input";
@@ -275,7 +276,7 @@ type EntryViewProps = {
   onMoveActivity?: (index: number, direction: "up" | "down") => void;
   onSetActivityFiles: (
     activityNo: number,
-    files: FileList | null,
+    files: FileList | File[] | null,
   ) => Promise<void>;
   onClearActivityFiles: (activityNo: number) => void;
   onRestoreActivityFiles: (activityNo: number) => void;
@@ -637,6 +638,28 @@ export function EntryView(props: EntryViewProps) {
   const isMobileOrTablet = useMediaQuery("(max-width: 1023px)");
   const [bypassHolidayBlock, setBypassHolidayBlock] = useState(false);
   const [showEmergencyNotice, setShowEmergencyNotice] = useState(true);
+  const [hoveredActivityNo, setHoveredActivityNo] = useState<number | null>(null);
+  const [focusedActivityNo, setFocusedActivityNo] = useState<number | null>(null);
+
+  // Global paste handler: menangkap paste gambar saat hover di atas aktivitas atau saat sedang fokus di dalam field aktivitas
+  useEffect(() => {
+    const handleGlobalPaste = (e: globalThis.ClipboardEvent) => {
+      const targetActivityNo = hoveredActivityNo ?? focusedActivityNo;
+      if (targetActivityNo == null || props.isEditLoading) return;
+
+      const imageFiles = extractImageFilesFromClipboard(e.clipboardData);
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        void props.onSetActivityFiles(targetActivityNo, imageFiles);
+      }
+    };
+
+    window.addEventListener("paste", handleGlobalPaste);
+    return () => {
+      window.removeEventListener("paste", handleGlobalPaste);
+    };
+  }, [hoveredActivityNo, focusedActivityNo, props.isEditLoading, props.onSetActivityFiles]);
 
   useEffect(() => {
     setBypassHolidayBlock(false);
@@ -1078,6 +1101,33 @@ export function EntryView(props: EntryViewProps) {
                         <motion.article
                           layout
                           key={activity.id}
+                          onMouseEnter={() => setHoveredActivityNo(activity.no)}
+                          onMouseLeave={() =>
+                            setHoveredActivityNo((curr) =>
+                              curr === activity.no ? null : curr,
+                            )
+                          }
+                          onFocusCapture={() => setFocusedActivityNo(activity.no)}
+                          onBlurCapture={(e) => {
+                            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                              setFocusedActivityNo((curr) =>
+                                curr === activity.no ? null : curr,
+                              );
+                            }
+                          }}
+                          onPaste={(e) => {
+                            const imageFiles = extractImageFilesFromClipboard(
+                              e.clipboardData,
+                            );
+                            if (imageFiles.length > 0) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void props.onSetActivityFiles(
+                                activity.no,
+                                imageFiles,
+                              );
+                            }
+                          }}
                           className={`relative surface-muted p-4 sm:p-5 rounded-[24px] ${props.activityCompletionStates[index] ? "border-2 border-green-400" : ""}`}
                         >
                           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1222,7 +1272,7 @@ export function EntryView(props: EntryViewProps) {
                           <div className="min-w-0 flex-1">
                             <FileUploadInput
                               label={`Foto bukti dokumentasi (Maks. ${props.reportRules.maxPhotosPerActivity} foto per aktivitas)`}
-                              accept="image/png,image/jpeg,image/webp"
+                              accept="image/*,.heic,.HEIC,.heif,.HEIF,image/heic,image/heif,image/png,image/jpeg,image/webp"
                               multiple={
                                 Math.max(
                                   0,
