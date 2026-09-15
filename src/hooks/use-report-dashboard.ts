@@ -1603,6 +1603,7 @@ export function useReportDashboard() {
   async function handleBulkUploadDeviceBackup(
     backupReports: Report[],
     selectedActivitiesByReportId: Record<string, number[]>,
+    conflictResolutions?: Record<string, "overwrite" | "skip">,
     onItemProgress?: (progress: BulkUploadItemProgress) => void,
     onProgressStateChange?: (state: BulkUploadProgressState) => void,
   ): Promise<BulkUploadResult> {
@@ -1615,6 +1616,7 @@ export function useReportDashboard() {
       const result = await bulkUploadDeviceBackupReportsToDatabase({
         reports: backupReports,
         selectedActivitiesByReportId,
+        conflictResolutions,
         onProgress: (progress) => {
           toast.update(
             "upload",

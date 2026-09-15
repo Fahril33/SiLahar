@@ -1,10 +1,11 @@
 import { saveAs } from "file-saver";
 import type { Report, ReportActivity } from "../types/report";
 import { supabase } from "./supabase";
-import { loadCachedReports } from "./storage";
+import { loadCachedReports, saveCachedReports } from "./storage";
 import {
   listLocalReportDrafts,
   loadLocalReportDraft,
+  deleteLocalReportDraft,
 } from "./local-report-drafts";
 import { formatWitaDate, formatWitaDateTime, getWitaToday } from "./time";
 import { logSafeError } from "./logger";
@@ -12,6 +13,7 @@ import {
   formatReporterNameForDatabase,
   isSameReporterName,
 } from "./reporter-name";
+import { exportReportAsPdf } from "./exporters";
 
 const EXCEL_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -936,6 +938,7 @@ export function buildInitialBulkUploadProgressState(
 export async function bulkUploadDeviceBackupReportsToDatabase(params: {
   reports: Report[];
   selectedActivitiesByReportId: Record<string, number[]>; // reportId -> selected activity numbers
+  conflictResolutions?: Record<string, "overwrite" | "skip">; // reportId -> decision
   onProgress?: (progress: BulkUploadItemProgress) => void;
   onProgressStateChange?: (state: BulkUploadProgressState) => void;
 }): Promise<BulkUploadResult> {
@@ -945,7 +948,13 @@ export async function bulkUploadDeviceBackupReportsToDatabase(params: {
     );
   }
 
-  const { reports, selectedActivitiesByReportId, onProgress, onProgressStateChange } = params;
+  const {
+    reports,
+    selectedActivitiesByReportId,
+    conflictResolutions,
+    onProgress,
+    onProgressStateChange,
+  } = params;
 
   // Inisialisasi progress state pohon hierarkis
   const progressState = buildInitialBulkUploadProgressState(
@@ -1008,6 +1017,16 @@ export async function bulkUploadDeviceBackupReportsToDatabase(params: {
         reportItem.errorMessage = "Data laporan tidak ditemukan dalam memori.";
         hasUserError = true;
         progressState.errors.push(`Data laporan ${reportItem.reportDate} hilang.`);
+        onProgressStateChange?.({ ...progressState });
+        continue;
+      }
+
+      // Cek apakah admin memilih untuk skip / mempertahankan data DB lama
+      if (conflictResolutions?.[report.id] === "skip") {
+        reportItem.status = "success";
+        reportItem.errorMessage = "Dipertahankan (Skip - Data DB lama dipakai)";
+        userGroup.completedReports++;
+        progressState.uploadedReportsCount++;
         onProgressStateChange?.({ ...progressState });
         continue;
       }
@@ -1252,3 +1271,236 @@ export async function bulkUploadDeviceBackupReportsToDatabase(params: {
     progressState,
   };
 }
+
+/**
+ * Menghapus data cadangan lokal (IndexedDB local drafts & localStorage reports cache) berdasarkan ID laporan
+ */
+export async function deleteDeviceBackupReports(
+  reportIds: string[],
+): Promise<{ deletedCount: number }> {
+  if (!reportIds || reportIds.length === 0) return { deletedCount: 0 };
+
+  const idSet = new Set(reportIds);
+
+  // 1. Hapus dari IndexedDB local report drafts
+  try {
+    const draftSummaries = await listLocalReportDrafts();
+    for (const summary of draftSummaries) {
+      const syntheticId = `draft-${summary.id}`;
+      if (idSet.has(summary.id) || idSet.has(syntheticId)) {
+        await deleteLocalReportDraft(summary.id);
+      }
+    }
+  } catch (err) {
+    logSafeError(err, "DeviceBackup/DeleteIndexedDBDrafts");
+  }
+
+  // 2. Hapus dari localStorage reports cache
+  try {
+    const cachedReports = loadCachedReports();
+    const updatedReports = cachedReports.filter((report) => {
+      const syntheticId = `draft-${report.id}`;
+      return !idSet.has(report.id) && !idSet.has(syntheticId);
+    });
+
+    if (updatedReports.length !== cachedReports.length) {
+      saveCachedReports(updatedReports);
+    }
+  } catch (err) {
+    logSafeError(err, "DeviceBackup/DeleteCachedReports");
+  }
+
+  return { deletedCount: reportIds.length };
+}
+
+export type BulkPdfItemProgress = {
+  reportId: string;
+  userName: string;
+  reportDate: string;
+  tim: string;
+  activitiesCount: number;
+  status: "pending" | "downloading" | "success" | "error";
+  errorMessage?: string;
+};
+
+export type BulkPdfUserGroup = {
+  userName: string;
+  totalReports: number;
+  completedReports: number;
+  status: "pending" | "downloading" | "success" | "error";
+  reports: BulkPdfItemProgress[];
+};
+
+export type BulkPdfProgressState = {
+  totalUsers: number;
+  totalReports: number;
+  totalActivities: number;
+  downloadedReportsCount: number;
+  downloadedActivitiesCount: number;
+  currentUserName: string;
+  currentMessage: string;
+  overallStatus: "running" | "completed" | "error";
+  users: BulkPdfUserGroup[];
+  errors: string[];
+};
+
+export function buildInitialBulkPdfProgressState(
+  reports: Report[],
+  selectedActivitiesByReportId: Record<string, number[]>,
+): BulkPdfProgressState {
+  const selectedReports = reports.filter((r) => {
+    const sel = selectedActivitiesByReportId[r.id] || [];
+    return sel.length > 0;
+  });
+
+  const userMap = new Map<string, Report[]>();
+  for (const report of selectedReports) {
+    const user = report.nama || "Tanpa Nama";
+    if (!userMap.has(user)) {
+      userMap.set(user, []);
+    }
+    userMap.get(user)!.push(report);
+  }
+
+  const userGroups: BulkPdfUserGroup[] = Array.from(userMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([userName, userReports]) => {
+      const sortedReports = userReports
+        .slice()
+        .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+
+      return {
+        userName,
+        totalReports: sortedReports.length,
+        completedReports: 0,
+        status: "pending",
+        reports: sortedReports.map((r) => ({
+          reportId: r.id,
+          userName: r.nama || "Tanpa Nama",
+          reportDate: r.reportDate,
+          tim: r.tim || "TRC",
+          activitiesCount: (selectedActivitiesByReportId[r.id] || []).length,
+          status: "pending",
+        })),
+      };
+    });
+
+  const totalReportsCount = selectedReports.length;
+  const totalActivitiesCount = selectedReports.reduce((sum, r) => {
+    return sum + (selectedActivitiesByReportId[r.id] || []).length;
+  }, 0);
+
+  return {
+    totalUsers: userGroups.length,
+    totalReports: totalReportsCount,
+    totalActivities: totalActivitiesCount,
+    downloadedReportsCount: 0,
+    downloadedActivitiesCount: 0,
+    currentUserName: "",
+    currentMessage: "Menyiapkan antrean pembuatan dokumen PDF...",
+    overallStatus: "running",
+    users: userGroups,
+    errors: [],
+  };
+}
+
+export async function executeBulkPdfDownload(
+  reports: Report[],
+  selectedActivitiesByReportId: Record<string, number[]>,
+  paperFormat: "a4" | "f4" | "legal" | "letter" = "a4",
+  onProgressStateChange?: (state: BulkPdfProgressState) => void,
+): Promise<{ success: boolean; downloadedCount: number; errors: string[] }> {
+  const initialProgress = buildInitialBulkPdfProgressState(
+    reports,
+    selectedActivitiesByReportId,
+  );
+  const progressState: BulkPdfProgressState = JSON.parse(
+    JSON.stringify(initialProgress),
+  );
+  onProgressStateChange?.({ ...progressState });
+
+  const selectedReportsMap = new Map<string, Report>();
+  reports.forEach((r) => selectedReportsMap.set(r.id, r));
+
+  for (const userGroup of progressState.users) {
+    userGroup.status = "downloading";
+    progressState.currentUserName = userGroup.userName;
+    let hasUserError = false;
+
+    for (const reportItem of userGroup.reports) {
+      reportItem.status = "downloading";
+      progressState.currentMessage = `Merender PDF ${userGroup.userName} (${formatWitaDate(reportItem.reportDate)})...`;
+      onProgressStateChange?.({ ...progressState });
+
+      const fullReport = selectedReportsMap.get(reportItem.reportId);
+      if (!fullReport) {
+        reportItem.status = "error";
+        reportItem.errorMessage = "Data laporan tidak ditemukan";
+        hasUserError = true;
+        progressState.errors.push(
+          `Gagal PDF ${userGroup.userName} (${reportItem.reportDate}): Data tidak ditemukan`,
+        );
+        onProgressStateChange?.({ ...progressState });
+        continue;
+      }
+
+      try {
+        const selectedNos = selectedActivitiesByReportId[fullReport.id] || [];
+        const filteredReport: Report = {
+          ...fullReport,
+          activities: (fullReport.activities || []).filter((a) =>
+            selectedNos.includes(a.no),
+          ),
+        };
+
+        await exportReportAsPdf(filteredReport, paperFormat);
+        await new Promise((res) => setTimeout(res, 350));
+
+        reportItem.status = "success";
+        userGroup.completedReports++;
+        progressState.downloadedReportsCount++;
+        progressState.downloadedActivitiesCount += filteredReport.activities.length;
+      } catch (err: any) {
+        logSafeError(
+          err,
+          `BulkPdf/Report_${userGroup.userName}_${reportItem.reportDate}`,
+        );
+        reportItem.status = "error";
+        reportItem.errorMessage = err?.message || "Gagal membuat PDF";
+        hasUserError = true;
+        progressState.errors.push(
+          `Gagal PDF ${userGroup.userName} (${reportItem.reportDate}): ${err?.message || "Gagal membuat PDF"}`,
+        );
+      }
+
+      onProgressStateChange?.({ ...progressState });
+    }
+
+    userGroup.status = hasUserError
+      ? userGroup.completedReports > 0
+        ? "success"
+        : "error"
+      : "success";
+    onProgressStateChange?.({ ...progressState });
+  }
+
+  progressState.overallStatus =
+    progressState.errors.length === 0
+      ? "completed"
+      : progressState.downloadedReportsCount > 0
+        ? "completed"
+        : "error";
+  progressState.currentMessage =
+    progressState.downloadedReportsCount > 0
+      ? `Proses Selesai! ${progressState.downloadedReportsCount} file PDF harian berhasil diunduh.`
+      : "Gagal mengunduh file PDF.";
+
+  onProgressStateChange?.({ ...progressState });
+
+  return {
+    success: progressState.downloadedReportsCount > 0,
+    downloadedCount: progressState.downloadedReportsCount,
+    errors: progressState.errors,
+  };
+}
+
