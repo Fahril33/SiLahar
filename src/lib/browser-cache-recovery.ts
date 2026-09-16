@@ -10,6 +10,7 @@ import {
 import { formatWitaDate, formatWitaDateTime, getWitaToday } from "./time";
 import { logSafeError } from "./logger";
 import {
+  deduplicateReporterNames,
   formatReporterNameForDatabase,
   isSameReporterName,
 } from "./reporter-name";
@@ -101,6 +102,80 @@ export async function getAllDeviceBackupReports(
     } catch {
       // Abaikan jika kosong
     }
+  }
+
+  return Array.from(reportsMap.values());
+}
+
+/**
+ * Menggabungkan seluruh data laporan dari Database (dbReports)
+ * dengan data cadangan/draft lokal yang tersimpan di perangkat (IndexedDB/localStorage)
+ */
+export async function getAllCombinedReports(
+  dbReports: Report[] = [],
+): Promise<Report[]> {
+  const reportsMap = new Map<string, Report>();
+
+  // 1. Masukkan semua laporan dari database (dbReports)
+  for (const report of dbReports) {
+    if (report && report.id) {
+      reportsMap.set(report.id, report);
+    }
+  }
+
+  // 2. Ambil dari localStorage (silahar:reports-cache)
+  try {
+    const cachedReports = loadCachedReports();
+    for (const report of cachedReports) {
+      if (!reportsMap.has(report.id)) {
+        reportsMap.set(report.id, report);
+      }
+    }
+  } catch (err) {
+    logSafeError(err, "DeviceBackup/LoadCachedReports");
+  }
+
+  // 3. Ambil dari IndexedDB (silahar-local-report-drafts)
+  try {
+    const draftSummaries = await listLocalReportDrafts();
+    for (const summary of draftSummaries) {
+      const fullRecord = await loadLocalReportDraft(summary.id);
+      if (fullRecord && fullRecord.draft) {
+        const draft = fullRecord.draft;
+        const syntheticId = `draft-${fullRecord.id}`;
+        if (!reportsMap.has(syntheticId) && !reportsMap.has(fullRecord.id)) {
+          reportsMap.set(syntheticId, {
+            id: syntheticId,
+            source: "local",
+            templateId: draft.templateId ?? null,
+            tim: draft.tim || "TRC",
+            nama: draft.nama || "Tanpa Nama",
+            tanggal: draft.tanggal || draft.reportDate,
+            reportDate: draft.reportDate,
+            activities: draft.activities || [],
+            approverCoordinatorTemplateId:
+              draft.approverCoordinatorTemplateId ?? null,
+            approverCoordinator: draft.approverCoordinator || "",
+            approverCoordinatorNip: draft.approverCoordinatorNip || "",
+            approverCoordinatorLabel: draft.approverCoordinatorLabel || "",
+            approverDivisionHeadTemplateId:
+              draft.approverDivisionHeadTemplateId ?? null,
+            approverDivisionHead: draft.approverDivisionHead || "",
+            approverDivisionHeadTitle: draft.approverDivisionHeadTitle || "",
+            approverDivisionHeadNip: draft.approverDivisionHeadNip || "",
+            notes: draft.notes || [],
+            createdAt: fullRecord.createdAt,
+            updatedAt: fullRecord.updatedAt,
+            createdByRole: "anonymous",
+            createdByLabel: "Draft Lokal Perangkat",
+            updatedByRole: "anonymous",
+            updatedByLabel: "Draft Lokal Perangkat",
+          });
+        }
+      }
+    }
+  } catch (err) {
+    logSafeError(err, "DeviceBackup/LoadIndexedDBDrafts");
   }
 
   return Array.from(reportsMap.values());
@@ -629,7 +704,7 @@ export async function generateDeviceBackupJson(
     (a.reportDate || "").localeCompare(b.reportDate || ""),
   );
 
-  const uniqueUsers = Array.from(new Set(sortedReports.map((r) => r.nama)));
+  const uniqueUsers = deduplicateReporterNames(sortedReports.map((r) => r.nama));
   const totalActivities = sortedReports.reduce(
     (sum, r) => sum + (r.activities?.length || 0),
     0,

@@ -30,9 +30,10 @@ import {
   isUserSoundEnabled,
   setUserSoundEnabled,
 } from "../lib/sound-utils";
-import { isSameReporterName } from "../lib/reporter-name";
+import { isSameReporterName, deduplicateReporterNames } from "../lib/reporter-name";
 import {
   getAllDeviceBackupReports,
+  getAllCombinedReports,
   parseDeviceBackupJsonFile,
   buildInitialBulkUploadProgressState,
   deleteDeviceBackupReports,
@@ -43,7 +44,7 @@ import {
   type BulkUploadResult,
   type BulkPdfProgressState,
 } from "../lib/browser-cache-recovery";
-import { askConfirmation, showSuccess, showInfo } from "../lib/alerts";
+import { askConfirmation, showSuccess, showInfo, showError } from "../lib/alerts";
 import { saveAs } from "file-saver";
 
 const inputClassName = "field-input";
@@ -1300,398 +1301,1443 @@ function BulkExportPanel(props: {
   ) => Promise<void>;
   deviceBackupExporting?: boolean;
 }) {
+  const [viewMode, setViewMode] = useState<"selection" | "pdf-progress">("selection");
+  const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "db" | "local">("all");
+  const [combinedReports, setCombinedReports] = useState<Report[]>(props.reports);
   const [keyword, setKeyword] = useState("");
+  const [selectedUserFilter, setSelectedUserFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "user_asc">("newest");
+  const [selectedActivities, setSelectedActivities] = useState<Record<string, number[]>>({});
+  const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
+  const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
+  const [livePdfProgressState, setLivePdfProgressState] = useState<BulkPdfProgressState | null>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
+  const [pdfResult, setPdfResult] = useState<{
+    success: boolean;
+    downloadedCount: number;
+    errors: string[];
+  } | null>(null);
+  const [exportProgressState, setExportProgressState] = useState<{
+    type: "pdf" | "excel" | "json" | "zip";
+    title: string;
+    status: "running" | "completed" | "error";
+    message: string;
+    count: number;
+    errorMessage?: string;
+  } | null>(null);
 
-  const localBackupReportsCount = useMemo(
-    () => props.reports.filter((r) => r.source === "local").length,
-    [props.reports],
-  );
+  // Load both DB and Local draft reports so all reports are combined
+  useEffect(() => {
+    let active = true;
+    const loadReports = async () => {
+      try {
+        const data = await getAllCombinedReports(props.reports);
+        if (active) {
+          setCombinedReports(data);
+          const sel: Record<string, number[]> = {};
+          const expU: Record<string, boolean> = {};
+          data.forEach((r) => {
+            sel[r.id] = (r.activities || []).map((a) => a.no);
+            expU[r.nama] = true;
+          });
+          setSelectedActivities(sel);
+          setExpandedUsers(expU);
+        }
+      } catch {
+        if (active) setCombinedReports(props.reports);
+      }
+    };
+    void loadReports();
+    return () => {
+      active = false;
+    };
+  }, [props.reports]);
 
+  // Determine base dataset based on user's source filter ("all" | "db" | "local")
+  const baseDataset = useMemo(() => {
+    if (sourceFilter === "db") {
+      return combinedReports.filter(
+        (r) => r.source !== "local" && !r.id.startsWith("draft-"),
+      );
+    }
+    if (sourceFilter === "local") {
+      return combinedReports.filter(
+        (r) => r.source === "local" || r.id.startsWith("draft-"),
+      );
+    }
+    return combinedReports;
+  }, [sourceFilter, combinedReports]);
+
+  // Unique users for filter dropdown
+  const allUniqueUsers = useMemo(() => {
+    return deduplicateReporterNames(
+      baseDataset.map((r) => r.nama || "Tanpa Nama"),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [baseDataset]);
+
+  // Filtering & Sorting
   const visibleReports = useMemo(() => {
     const search = keyword.trim().toLowerCase();
-    return props.reports
+    return baseDataset
       .filter((report) => {
-        if (search && !report.nama.toLowerCase().includes(search)) {
+        if (selectedUserFilter !== "all" && report.nama !== selectedUserFilter) {
           return false;
         }
-        if (dateFrom && report.reportDate < dateFrom) {
+        if (
+          search &&
+          !report.nama.toLowerCase().includes(search) &&
+          !report.reportDate.includes(search) &&
+          !(report.activities || []).some((a) =>
+            (a?.description || "").toLowerCase().includes(search),
+          )
+        ) {
           return false;
         }
-        if (dateTo && report.reportDate > dateTo) {
-          return false;
-        }
+        if (dateFrom && report.reportDate < dateFrom) return false;
+        if (dateTo && report.reportDate > dateTo) return false;
         return true;
       })
       .slice()
-      .sort((left, right) => {
-        const byDate = right.reportDate.localeCompare(left.reportDate);
-        if (byDate !== 0) {
-          return byDate;
+      .sort((a, b) => {
+        if (sortMode === "newest") {
+          const byDate = b.reportDate.localeCompare(a.reportDate);
+          if (byDate !== 0) return byDate;
+          return a.nama.localeCompare(b.nama);
+        } else if (sortMode === "oldest") {
+          const byDate = a.reportDate.localeCompare(b.reportDate);
+          if (byDate !== 0) return byDate;
+          return a.nama.localeCompare(b.nama);
+        } else {
+          const byUser = a.nama.localeCompare(b.nama);
+          if (byUser !== 0) return byUser;
+          return b.reportDate.localeCompare(a.reportDate);
         }
-        return right.updatedAt.localeCompare(left.updatedAt);
       });
-  }, [dateFrom, dateTo, keyword, props.reports]);
+  }, [baseDataset, keyword, selectedUserFilter, dateFrom, dateTo, sortMode]);
 
-  const selectedReports = useMemo(
-    () => visibleReports.filter((report) => selectedIds.includes(report.id)),
-    [selectedIds, visibleReports],
-  );
-
-  const groupedByDate = useMemo(
-    () =>
-      visibleReports.reduce<Record<string, Report[]>>((accumulator, report) => {
-        const current = accumulator[report.reportDate] ?? [];
-        current.push(report);
-        accumulator[report.reportDate] = current;
-        return accumulator;
-      }, {}),
-    [visibleReports],
-  );
-
-  function toggleSelect(reportId: string, checked: boolean) {
-    setSelectedIds((current) => {
-      if (checked) {
-        if (current.includes(reportId)) {
-          return current;
-        }
-        return [...current, reportId];
+  // Group by User
+  const groupedByUser = useMemo(() => {
+    const map = new Map<string, Report[]>();
+    for (const report of visibleReports) {
+      const user = report.nama || "Tanpa Nama";
+      if (!map.has(user)) {
+        map.set(user, []);
       }
-      return current.filter((id) => id !== reportId);
+      map.get(user)!.push(report);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [visibleReports]);
+
+  // Selection metrics
+  const selectedReports = useMemo(
+    () =>
+      visibleReports.filter(
+        (r) => (selectedActivities[r.id] || []).length > 0,
+      ),
+    [visibleReports, selectedActivities],
+  );
+  const selectedReportsCount = selectedReports.length;
+
+  const selectedActivitiesCount = useMemo(() => {
+    return visibleReports.reduce((sum, r) => {
+      const sel = selectedActivities[r.id] || [];
+      return sum + sel.length;
+    }, 0);
+  }, [visibleReports, selectedActivities]);
+
+  const totalActivitiesCount = useMemo(() => {
+    return visibleReports.reduce(
+      (sum, r) => sum + (r.activities?.length || 0),
+      0,
+    );
+  }, [visibleReports]);
+
+  const selectedUsersCount = useMemo(() => {
+    const selectedUserNames = selectedReports.map((r) => r.nama);
+    return deduplicateReporterNames(selectedUserNames).length;
+  }, [selectedReports]);
+
+  // Selection handlers
+  const toggleActivity = (reportId: string, activityNo: number) => {
+    setSelectedActivities((prev) => {
+      const current = prev[reportId] || [];
+      const next = current.includes(activityNo)
+        ? current.filter((no) => no !== activityNo)
+        : [...current, activityNo];
+      return { ...prev, [reportId]: next };
     });
-  }
+  };
 
-  function selectAllVisible() {
-    setSelectedIds(visibleReports.map((report) => report.id));
-  }
+  const toggleReport = (report: Report) => {
+    const allNos = (report.activities || []).map((a) => a.no);
+    const current = selectedActivities[report.id] || [];
+    const isAllSelected =
+      allNos.length > 0 && current.length === allNos.length;
+    setSelectedActivities((prev) => ({
+      ...prev,
+      [report.id]: isAllSelected ? [] : allNos,
+    }));
+  };
 
-  function clearSelection() {
-    setSelectedIds([]);
-  }
+  const toggleUser = (userReports: Report[]) => {
+    const isUserAllSelected = userReports.every((r) => {
+      const selected = selectedActivities[r.id] || [];
+      return (
+        (r.activities || []).length > 0 && selected.length === (r.activities || []).length
+      );
+    });
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      userReports.forEach((r) => {
+        next[r.id] = isUserAllSelected
+          ? []
+          : (r.activities || []).map((a) => a.no);
+      });
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      visibleReports.forEach((r) => {
+        next[r.id] = (r.activities || []).map((a) => a.no);
+      });
+      return next;
+    });
+  };
+
+  const clearAllVisible = () => {
+    setSelectedActivities((prev) => {
+      const next = { ...prev };
+      visibleReports.forEach((r) => {
+        next[r.id] = [];
+      });
+      return next;
+    });
+  };
+
+  const toggleExpandUser = (user: string) => {
+    setExpandedUsers((prev) => ({ ...prev, [user]: !prev[user] }));
+  };
+
+  const toggleExpandReport = (reportId: string) => {
+    setExpandedReports((prev) => ({ ...prev, [reportId]: !prev[reportId] }));
+  };
+
+  // Bulk PDF Export Handler
+  const handleStartBulkPdfExport = async () => {
+    if (selectedReportsCount === 0) {
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu laporan untuk diunduh sebagai dokumen PDF.",
+      );
+      return;
+    }
+
+    const confirmed = await askConfirmation(
+      "Export PDF Massal",
+      `Apakah Anda yakin ingin memulai export PDF massal untuk ${selectedReportsCount} laporan terpilih dengan format kertas ${paperFormat.toUpperCase()}?`,
+      "Ya, Unduh PDF",
+    );
+    if (!confirmed) return;
+
+    const initialPdfProgress = buildInitialBulkPdfProgressState(
+      visibleReports,
+      selectedActivities,
+    );
+    setLivePdfProgressState(initialPdfProgress);
+    setExportProgressState({
+      type: "pdf",
+      title: "Export PDF Massal Harian",
+      status: "running",
+      message: "Memulai proses rendering dokumen PDF massal...",
+      count: selectedReportsCount,
+    });
+    setViewMode("pdf-progress");
+    setPdfResult(null);
+    setPdfExporting(true);
+
+    try {
+      const result = await executeBulkPdfDownload(
+        visibleReports,
+        selectedActivities,
+        paperFormat,
+        (state) => {
+          setLivePdfProgressState({ ...state });
+        },
+      );
+      setPdfResult(result);
+      if (result.success) {
+        setExportProgressState((prev) =>
+          prev ? { ...prev, status: "completed", message: `Selesai! ${result.downloadedCount} file PDF berhasil diunduh.` } : null
+        );
+      } else {
+        setExportProgressState((prev) =>
+          prev ? { ...prev, status: "error", message: "Gagal membuat sebagian file PDF", errorMessage: result.errors.join(", ") } : null
+        );
+      }
+    } catch (err: any) {
+      setPdfResult({
+        success: false,
+        downloadedCount: 0,
+        errors: [
+          err?.message || "Kesalahan tak terduga saat membuat dokumen PDF",
+        ],
+      });
+      setExportProgressState((prev) =>
+        prev ? { ...prev, status: "error", message: "Gagal membuat dokumen PDF", errorMessage: err?.message } : null
+      );
+    } finally {
+      setPdfExporting(false);
+    }
+  };
+
+  const handleStartExcelExport = async () => {
+    if (!props.onHandleDownloadDeviceBackupExcel) return;
+    if (selectedReportsCount === 0) {
+      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke Excel.");
+      return;
+    }
+    setViewMode("pdf-progress");
+    setExportProgressState({
+      type: "excel",
+      title: "Ekspor Excel Tab User",
+      status: "running",
+      message: `Menyusun data Excel untuk ${selectedReportsCount} laporan terpilih (${selectedUsersCount} petugas)...`,
+      count: selectedReportsCount,
+    });
+    try {
+      await props.onHandleDownloadDeviceBackupExcel(selectedReports);
+      setExportProgressState({
+        type: "excel",
+        title: "Ekspor Excel Tab User",
+        status: "completed",
+        message: `Ekspor Excel berhasil! File cadangan berisi ${selectedReportsCount} laporan telah terunduh.`,
+        count: selectedReportsCount,
+      });
+    } catch (err: any) {
+      setExportProgressState({
+        type: "excel",
+        title: "Ekspor Excel Tab User",
+        status: "error",
+        message: "Gagal mengekspor data ke Excel.",
+        count: selectedReportsCount,
+        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file Excel.",
+      });
+    }
+  };
+
+  const handleStartJsonExport = async () => {
+    if (!props.onHandleDownloadDeviceBackupJson) return;
+    if (selectedReportsCount === 0) {
+      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke JSON.");
+      return;
+    }
+    setViewMode("pdf-progress");
+    setExportProgressState({
+      type: "json",
+      title: "Ekspor JSON Cadangan",
+      status: "running",
+      message: `Menyusun file JSON cadangan untuk ${selectedReportsCount} laporan terpilih...`,
+      count: selectedReportsCount,
+    });
+    try {
+      await props.onHandleDownloadDeviceBackupJson(selectedReports);
+      setExportProgressState({
+        type: "json",
+        title: "Ekspor JSON Cadangan",
+        status: "completed",
+        message: `Ekspor JSON berhasil! File JSON cadangan berisi ${selectedReportsCount} laporan telah terunduh.`,
+        count: selectedReportsCount,
+      });
+    } catch (err: any) {
+      setExportProgressState({
+        type: "json",
+        title: "Ekspor JSON Cadangan",
+        status: "error",
+        message: "Gagal mengekspor file JSON cadangan.",
+        count: selectedReportsCount,
+        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file JSON.",
+      });
+    }
+  };
+
+  const handleStartZipExport = async () => {
+    if (selectedReportsCount === 0) {
+      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke ZIP.");
+      return;
+    }
+    setViewMode("pdf-progress");
+    setExportProgressState({
+      type: "zip",
+      title: "Ekspor ZIP Excel Terpisah",
+      status: "running",
+      message: `Menyusun file arsip ZIP berisi Excel untuk ${selectedReportsCount} laporan terpilih...`,
+      count: selectedReportsCount,
+    });
+    try {
+      await props.onHandleBulkExport(selectedReports);
+      setExportProgressState({
+        type: "zip",
+        title: "Ekspor ZIP Excel Terpisah",
+        status: "completed",
+        message: `Ekspor ZIP Excel berhasil! File arsip ZIP per petugas telah terunduh.`,
+        count: selectedReportsCount,
+      });
+    } catch (err: any) {
+      setExportProgressState({
+        type: "zip",
+        title: "Ekspor ZIP Excel Terpisah",
+        status: "error",
+        message: "Gagal mengekspor arsip ZIP Excel.",
+        count: selectedReportsCount,
+        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file ZIP.",
+      });
+    }
+  };
 
   return (
-    <div className="grid gap-4">
-      {/* Kartu Khusus Cadangan Perangkat Excel & JSON */}
-      <div className="surface-card rounded-[24px] p-5 border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-start gap-3.5">
-          <div className="h-11 w-11 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-6 w-6"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-base font-bold text-[var(--text-primary)]">
-                Download Cadangan Perangkat (Excel &amp; JSON)
-              </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                Worksheet Tab per User
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
-                Format JSON
-              </span>
-              {localBackupReportsCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                  {localBackupReportsCount} cadangan aktif
-                </span>
-              )}
+    <div className="grid gap-5">
+      {/* Header Card */}
+      <div className="surface-card rounded-[28px] p-5 sm:p-6 border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="h-12 w-12 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-6 w-6"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
             </div>
-            <p className="text-xs text-[var(--text-muted)] mt-1 max-w-2xl leading-relaxed">
-              Unduh seluruh data cadangan lokal yang tersimpan di perangkat ini dalam format Excel (.xlsx) atau JSON (.json).
-              File Excel otomatis dikelompokkan berdasarkan worksheet tab per user dengan data per tanggal dan detail kegiatan lengkap.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full md:w-auto">
-          <button
-            type="button"
-            onClick={() =>
-              props.onHandleDownloadDeviceBackupExcel &&
-              void props.onHandleDownloadDeviceBackupExcel()
-            }
-            disabled={props.deviceBackupExporting}
-            className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition shadow-sm justify-center"
-          >
-            {props.deviceBackupExporting ? (
-              <>
-                <SpinnerIcon />
-                <span>Menyusun...</span>
-              </>
-            ) : (
-              <>
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-4 w-4"
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span>Download Excel (.xlsx)</span>
-              </>
-            )}
-          </button>
-
-          {props.onHandleDownloadDeviceBackupJson && (
-            <button
-              type="button"
-              onClick={() =>
-                props.onHandleDownloadDeviceBackupJson &&
-                void props.onHandleDownloadDeviceBackupJson()
-              }
-              disabled={props.deviceBackupExporting}
-              className="btn-secondary h-[44px] px-4 text-xs font-bold flex items-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition shadow-sm justify-center"
-            >
-              {props.deviceBackupExporting ? (
-                <>
-                  <SpinnerIcon />
-                  <span>Menyusun...</span>
-                </>
-              ) : (
-                <>
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                  <span>Download JSON (.json)</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="surface-card rounded-[24px] p-5">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label className="space-y-2">
-            <span className="text-sm font-medium">Cari nama petugas</span>
-            <input
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              placeholder="mis. Andi"
-              className={inputClassName}
-            />
-          </label>
-          <label className="space-y-2">
-            <span className="text-sm font-medium">Dari tanggal</span>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(event) => setDateFrom(event.target.value)}
-              className={inputClassName}
-            />
-          </label>
-          <label className="space-y-2">
-            <span className="text-sm font-medium">Sampai tanggal</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(event) => setDateTo(event.target.value)}
-              className={inputClassName}
-            />
-          </label>
-          <div className="grid gap-2">
-            <span className="text-sm font-medium">Aksi cepat</span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={selectAllVisible}
-                className="btn-secondary h-[44px] px-4 text-sm"
-              >
-                Pilih terlihat
-              </button>
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="btn-secondary h-[44px] px-4 text-sm"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-[var(--text-muted)]">
-            Terfilter: {visibleReports.length} laporan | Terpilih:{" "}
-            {selectedReports.length} laporan
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            {props.onHandleDownloadDeviceBackupExcel && (
-              <button
-                type="button"
-                onClick={() =>
-                  props.onHandleDownloadDeviceBackupExcel &&
-                  void props.onHandleDownloadDeviceBackupExcel(selectedReports)
-                }
-                disabled={props.deviceBackupExporting || selectedReports.length === 0}
-                className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-amber-500/30 text-amber-600 dark:text-amber-400"
-                title="Ekspor laporan terpilih ke 1 file Excel dikelompokkan per worksheet tab per user"
-              >
-                {props.deviceBackupExporting ? (
-                  <SpinnerIcon />
-                ) : (
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                )}
-                <span>Excel Terpilih</span>
-              </button>
-            )}
-            {props.onHandleDownloadDeviceBackupJson && (
-              <button
-                type="button"
-                onClick={() =>
-                  props.onHandleDownloadDeviceBackupJson &&
-                  void props.onHandleDownloadDeviceBackupJson(selectedReports)
-                }
-                disabled={props.deviceBackupExporting || selectedReports.length === 0}
-                className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                title="Ekspor laporan terpilih dalam format JSON"
-              >
-                {props.deviceBackupExporting ? (
-                  <SpinnerIcon />
-                ) : (
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
-                )}
-                <span>JSON Terpilih</span>
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => void props.onHandleBulkExport(selectedReports)}
-              disabled={props.bulkExporting || selectedReports.length === 0}
-              className="btn-primary h-[42px] px-5 text-sm disabled:opacity-60"
-            >
-              {props.bulkExporting ? <SpinnerIcon /> : "Export Terpilih"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {Object.keys(groupedByDate).length === 0 ? (
-        <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)]">
-          Belum ada laporan pada filter saat ini.
-        </div>
-      ) : null}
-
-      {Object.entries(groupedByDate).map(([reportDate, reports]) => {
-        const selectedInDate = reports.filter((report) =>
-          selectedIds.includes(report.id),
-        ).length;
-        const allChecked = reports.length > 0 && selectedInDate === reports.length;
-
-        return (
-          <div key={reportDate} className="surface-card rounded-[24px] p-4 sm:p-5">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold text-[var(--text-primary)]">
-                  {formatWitaDate(reportDate)}
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-[var(--text-primary)]">
+                  Bulk Export &amp; Download Dokumen Massal
                 </h3>
-                <p className="text-xs text-[var(--text-muted)]">
-                  {selectedInDate}/{reports.length} terpilih
-                </p>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+                  PDF Massal
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  Excel per User
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                  JSON
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (allChecked) {
-                    setSelectedIds((current) =>
-                      current.filter((id) => !reports.some((report) => report.id === id)),
-                    );
-                    return;
-                  }
-                  setSelectedIds((current) => {
-                    const next = [...current];
-                    reports.forEach((report) => {
-                      if (!next.includes(report.id)) {
-                        next.push(report.id);
-                      }
-                    });
-                    return next;
-                  });
-                }}
-                className="btn-secondary h-[38px] px-4 text-xs"
-              >
-                {allChecked ? "Lepas tanggal ini" : "Pilih tanggal ini"}
-              </button>
+              <p className="text-xs text-[var(--text-muted)] mt-1 max-w-2xl leading-relaxed">
+                Unduh laporan dalam berbagai format (PDF, Excel, JSON). Gunakan
+                filter di bawah untuk memilih sumber data (Database vs Cache
+                Perangkat Lokal), rentang tanggal, atau petugas tertentu.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewMode("selection")}
+              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer ${
+                viewMode === "selection"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+              }`}
+            >
+              1. Seleksi &amp; Filter
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("pdf-progress")}
+              disabled={!livePdfProgressState && !exportProgressState}
+              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1.5 cursor-pointer ${
+                viewMode === "pdf-progress"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : livePdfProgressState || exportProgressState
+                    ? "bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                    : "opacity-40 cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-muted)]"
+              }`}
+            >
+              {(pdfExporting || props.deviceBackupExporting || props.bulkExporting) && (
+                <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+              )}
+              <span>2. Progres Export</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* MODE 1: SELEKSI & FILTER */}
+      {viewMode === "selection" && (
+        <>
+          {/* Card Filter & Pencarian */}
+          <div className="surface-card rounded-[24px] p-5 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              {/* Cari Kata Kunci */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Cari kata kunci / nama
+                </span>
+                <input
+                  type="text"
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                  placeholder="mis. Andi / Kebakaran"
+                  className={inputClassName}
+                />
+              </label>
+
+              {/* Filter Petugas */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Filter Petugas
+                </span>
+                <select
+                  value={selectedUserFilter}
+                  onChange={(e) => setSelectedUserFilter(e.target.value)}
+                  className={inputClassName}
+                >
+                  <option value="all">
+                    Semua Petugas ({allUniqueUsers.length})
+                  </option>
+                  {allUniqueUsers.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {/* Sumber Data Filter */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Sumber Data
+                </span>
+                <select
+                  value={sourceFilter}
+                  onChange={(e) => setSourceFilter(e.target.value as any)}
+                  className={inputClassName}
+                >
+                  <option value="all">Semua (DB + Cache Lokal)</option>
+                  <option value="db">Hanya Database Supabase</option>
+                  <option value="local">Hanya Cache Lokal / Draft</option>
+                </select>
+              </label>
+
+              {/* Urutkan */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Urutan Laporan
+                </span>
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as any)}
+                  className={inputClassName}
+                >
+                  <option value="newest">Terbaru → Terlama</option>
+                  <option value="oldest">Terlama → Terbaru</option>
+                  <option value="user_asc">Nama Petugas A-Z</option>
+                </select>
+              </label>
+
+              {/* Dari Tanggal */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Dari Tanggal
+                </span>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className={inputClassName}
+                />
+              </label>
+
+              {/* Sampai Tanggal */}
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Sampai Tanggal
+                </span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className={inputClassName}
+                />
+              </label>
             </div>
 
-            <div className="grid gap-2">
-              {reports.map((report) => (
-                <label
-                  key={report.id}
-                  className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-3"
+            {/* Sub-bar Filter & Aksi Terpilih */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[var(--border-soft)]">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[var(--text-primary)]">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs">
+                  <span>Terfilter:</span>
+                  <strong className="text-emerald-600 dark:text-emerald-400">
+                    {visibleReports.length}
+                  </strong>
+                  <span className="text-[var(--text-muted)]">Laporan</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs">
+                  <span>Terpilih:</span>
+                  <strong className="text-purple-600 dark:text-purple-400">
+                    {selectedUsersCount}
+                  </strong>
+                  <span className="text-[var(--text-muted)]">Petugas •</span>
+                  <strong className="text-indigo-600 dark:text-indigo-400">
+                    {selectedReportsCount}
+                  </strong>
+                  <span className="text-[var(--text-muted)]">Laporan •</span>
+                  <strong className="text-rose-600 dark:text-rose-400">
+                    {selectedActivitiesCount}
+                  </strong>
+                  <span className="text-[var(--text-muted)]">
+                    /{totalActivitiesCount} Aktivitas
+                  </span>
+                </span>
+              </div>
+
+              {/* Quick Select Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllVisible}
+                  className="btn-secondary h-[36px] px-3 text-xs font-bold"
                 >
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(report.id)}
-                    onChange={(event) =>
-                      toggleSelect(report.id, event.target.checked)
-                    }
-                    className="mt-1 h-4 w-4 accent-[var(--primary)]"
-                  />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
-                      {report.nama}
-                    </p>
-                    <p className="text-xs text-[var(--text-muted)]">
-                      Update {formatWitaDateTime(report.updatedAt)} |{" "}
-                      {report.activities.length} aktivitas
+                  Pilih Terlihat
+                </button>
+                <button
+                  type="button"
+                  onClick={clearAllVisible}
+                  className="btn-secondary h-[36px] px-3 text-xs font-bold"
+                >
+                  Reset Pilihan
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Bar (Export Buttons Grouped) */}
+          <div className="surface-card rounded-[24px] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3 border border-[var(--border-soft)] shadow-sm">
+            <span className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4 text-emerald-500"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Pilihan Ekspor Dokumen:</span>
+            </span>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Group 1: PDF Export with Paper Size Selector */}
+              <div className="flex items-center gap-0 rounded-xl overflow-hidden border border-rose-500/30 bg-rose-500/5 shadow-2xs">
+                <select
+                  value={paperFormat}
+                  onChange={(e) => setPaperFormat(e.target.value as any)}
+                  className="h-[40px] py-0 px-2.5 text-xs font-extrabold bg-transparent text-rose-600 dark:text-rose-400 border-none cursor-pointer outline-none appearance-auto"
+                  title="Ukuran kertas dokumen PDF"
+                >
+                  <option value="a4">Kertas A4</option>
+                  <option value="f4">Kertas F4</option>
+                  <option value="legal">Kertas Legal</option>
+                  <option value="letter">Kertas Letter</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleStartBulkPdfExport}
+                  disabled={pdfExporting || selectedReportsCount === 0}
+                  className="h-[40px] px-4 text-xs font-extrabold bg-rose-500 text-white hover:bg-rose-600 flex items-center gap-2 transition disabled:opacity-40 cursor-pointer shadow-xs border-l border-rose-500/30"
+                  title="Unduh dokumen PDF massal harian per petugas"
+                >
+                  {pdfExporting ? (
+                    <SpinnerIcon className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
+                  <span>Export PDF ({selectedReportsCount})</span>
+                </button>
+              </div>
+
+              {/* Group 2: Excel Export (Worksheet Tab per User) */}
+              {props.onHandleDownloadDeviceBackupExcel && (
+                <button
+                  type="button"
+                  onClick={handleStartExcelExport}
+                  disabled={
+                    props.deviceBackupExporting || selectedReportsCount === 0
+                  }
+                  className="btn-secondary h-[40px] px-3.5 text-xs font-bold border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-2 shadow-2xs cursor-pointer"
+                  title="Ekspor laporan terpilih ke 1 file Excel dikelompokkan per tab worksheet per user"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
+                  <span>Excel Tab User ({selectedReportsCount})</span>
+                </button>
+              )}
+
+              {/* Group 3: JSON Export */}
+              {props.onHandleDownloadDeviceBackupJson && (
+                <button
+                  type="button"
+                  onClick={handleStartJsonExport}
+                  disabled={
+                    props.deviceBackupExporting || selectedReportsCount === 0
+                  }
+                  className="btn-secondary h-[40px] px-3.5 text-xs font-bold border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 flex items-center gap-2 shadow-2xs cursor-pointer"
+                  title="Ekspor laporan terpilih ke file JSON cadangan"
+                >
+                  {props.deviceBackupExporting ? (
+                    <SpinnerIcon className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                    </svg>
+                  )}
+                  <span>JSON ({selectedReportsCount})</span>
+                </button>
+              )}
+
+              {/* Group 4: ZIP Excel Export */}
+              <button
+                type="button"
+                onClick={handleStartZipExport}
+                disabled={props.bulkExporting || selectedReportsCount === 0}
+                className="btn-secondary h-[40px] px-3.5 text-xs font-bold border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 flex items-center gap-2 shadow-2xs cursor-pointer"
+                title="Ekspor file Excel terpisah dalam ZIP"
+              >
+                {props.bulkExporting ? (
+                  <SpinnerIcon className="h-4 w-4 animate-spin" />
+                ) : null}
+                <span>ZIP Excel ({selectedReportsCount})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Grouped Tree List per User */}
+          {groupedByUser.length === 0 ? (
+            <div className="surface-card rounded-[24px] p-8 text-center text-sm text-[var(--text-muted)] space-y-2">
+              <p className="font-semibold text-[var(--text-primary)]">
+                Tidak ada laporan yang sesuai dengan filter.
+              </p>
+              <p className="text-xs">
+                Coba ubah kata kunci pencarian, sumber data, atau rentang tanggal.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {groupedByUser.map(([userName, userReports]) => {
+                const isExpanded = expandedUsers[userName] ?? true;
+                const isUserAllSelected = userReports.every((r) => {
+                  const selected = selectedActivities[r.id] || [];
+                  return (
+                    r.activities.length > 0 &&
+                    selected.length === r.activities.length
+                  );
+                });
+                const isUserSomeSelected = userReports.some((r) => {
+                  const selected = selectedActivities[r.id] || [];
+                  return selected.length > 0;
+                });
+
+                return (
+                  <div
+                    key={userName}
+                    className="surface-card rounded-[24px] p-4 sm:p-5 space-y-3 border border-[var(--border-soft)] shadow-2xs"
+                  >
+                    {/* User Node Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[var(--border-soft)]/60">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={isUserAllSelected}
+                          ref={(el) => {
+                            if (el)
+                              el.indeterminate =
+                                !isUserAllSelected && isUserSomeSelected;
+                          }}
+                          onChange={() => toggleUser(userReports)}
+                          className="h-4 w-4 accent-[var(--primary)] cursor-pointer shrink-0"
+                        />
+                        <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                          <h4 className="text-base font-bold text-[var(--text-primary)] truncate">
+                            {userName}
+                          </h4>
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-muted)]">
+                            {userReports.length} Laporan
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => toggleExpandUser(userName)}
+                        className="btn-secondary h-[34px] px-3 text-xs font-bold flex items-center gap-1.5"
+                      >
+                        <span>{isExpanded ? "Tutup" : "Buka"}</span>
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className={`h-3.5 w-3.5 transition-transform ${
+                            isExpanded ? "rotate-180" : ""
+                          }`}
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                    </div>
+
+                    {/* User Reports List */}
+                    {isExpanded && (
+                      <div className="grid gap-3 pl-2 sm:pl-4 border-l-2 border-[var(--border-soft)]">
+                        {userReports.map((report) => {
+                          const isReportExpanded =
+                            expandedReports[report.id] ?? false;
+                          const allNos = (report.activities || []).map(
+                            (a) => a.no,
+                          );
+                          const selNos = selectedActivities[report.id] || [];
+                          const isReportAllSelected =
+                            allNos.length > 0 &&
+                            selNos.length === allNos.length;
+                          const isReportSomeSelected =
+                            selNos.length > 0 && selNos.length < allNos.length;
+                          const isDraft =
+                            report.source === "local" ||
+                            report.id.startsWith("draft-");
+
+                          return (
+                            <div
+                              key={report.id}
+                              className="rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-3 sm:p-4 space-y-2"
+                            >
+                              {/* Report Header */}
+                              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={isReportAllSelected}
+                                    ref={(el) => {
+                                      if (el)
+                                        el.indeterminate = isReportSomeSelected;
+                                    }}
+                                    onChange={() => toggleReport(report)}
+                                    className="h-4 w-4 accent-[var(--primary)] cursor-pointer shrink-0"
+                                  />
+                                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-bold text-[var(--text-primary)]">
+                                      {formatWitaDate(report.reportDate)}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-md text-[10.5px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                      Tim {report.tim || "TRC"}
+                                    </span>
+                                    {isDraft ? (
+                                      <span className="px-2 py-0.5 rounded-md text-[10.5px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                        Draft Lokal
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-md text-[10.5px] font-extrabold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                        DB Synced
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-[var(--text-muted)]">
+                                      • {selNos.length}/{report.activities.length}{" "}
+                                      Aktivitas terpilih
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpandReport(report.id)}
+                                  className="text-xs font-semibold text-[var(--primary)] hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>
+                                    {isReportExpanded
+                                      ? "Sembunyikan Rincian"
+                                      : "Lihat Rincian Aktivitas"}
+                                  </span>
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    className={`h-3.5 w-3.5 transition-transform ${
+                                      isReportExpanded ? "rotate-180" : ""
+                                    }`}
+                                  >
+                                    <polyline points="6 9 12 15 18 9" />
+                                  </svg>
+                                </button>
+                              </div>
+
+                              {/* Expanded Activities List */}
+                              {isReportExpanded && (
+                                <div className="mt-2 pl-6 space-y-1.5 pt-2 border-t border-[var(--border-soft)]/50">
+                                  {report.activities.map((act) => {
+                                    const isActSelected = selNos.includes(
+                                      act.no,
+                                    );
+                                    return (
+                                      <label
+                                        key={act.no}
+                                        className="flex items-start gap-2.5 py-1 px-2 rounded-lg hover:bg-[var(--surface-muted)] cursor-pointer text-xs"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isActSelected}
+                                          onChange={() =>
+                                            toggleActivity(report.id, act.no)
+                                          }
+                                          className="mt-0.5 h-3.5 w-3.5 accent-[var(--primary)]"
+                                        />
+                                        <span className="font-bold text-[var(--text-muted)] shrink-0">
+                                          #{act.no}
+                                        </span>
+                                        <span className="text-[var(--text-primary)] line-clamp-2 min-w-0">
+                                          {act.description}
+                                        </span>
+                                        {act.photos &&
+                                          act.photos.length > 0 && (
+                                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400">
+                                              {act.photos.length} Foto
+                                            </span>
+                                          )}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* MODE 2: PROGRES EXPORT DOKUMEN PAGE */}
+      {viewMode === "pdf-progress" && (
+        <>
+          {/* A. Progress Card for Excel / JSON / ZIP Export */}
+          {exportProgressState && exportProgressState.type !== "pdf" && (
+            <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-emerald-500/20 shadow-sm animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+                <div className="flex items-center gap-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    disabled={props.deviceBackupExporting || props.bulkExporting}
+                    className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    <span>Kembali ke Seleksi Data</span>
+                  </button>
+                  <div>
+                    <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                      <span>Progres {exportProgressState.title}</span>
+                      {exportProgressState.status === "running" ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 animate-pulse border border-emerald-500/30 flex items-center gap-1">
+                          <SpinnerIcon className="h-3 w-3 animate-spin" />
+                          <span>Memproses...</span>
+                        </span>
+                      ) : exportProgressState.status === "completed" ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                          Selesai ✓
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30">
+                          Gagal ✕
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                      Progres ekspor dokumen massal ke perangkat Anda.
                     </p>
                   </div>
-                </label>
-              ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    Target: {exportProgressState.count} Laporan Terpilih
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+                  <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                    {exportProgressState.status === "running" ? (
+                      <SpinnerIcon className="h-4 w-4 animate-spin text-emerald-600" />
+                    ) : exportProgressState.status === "completed" ? (
+                      <span className="text-emerald-500 font-extrabold text-sm">✓</span>
+                    ) : (
+                      <span className="text-red-500 font-extrabold text-sm">✕</span>
+                    )}
+                    <span>{exportProgressState.message}</span>
+                  </div>
+                  <div className="text-[var(--text-muted)]">
+                    {exportProgressState.status === "running"
+                      ? "Sedang Mengolah Dokumen..."
+                      : exportProgressState.status === "completed"
+                        ? "100% Selesai & Terunduh"
+                        : "Proses Terhenti"}
+                  </div>
+                </div>
+
+                <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+                  <div
+                    className={`h-full transition-all duration-500 rounded-full ${
+                      exportProgressState.status === "running"
+                        ? "bg-gradient-to-r from-amber-500 via-emerald-500 to-teal-500 animate-pulse w-3/4"
+                        : exportProgressState.status === "completed"
+                          ? "bg-emerald-500 w-full"
+                          : "bg-red-500 w-full"
+                    }`}
+                  />
+                </div>
+
+                {exportProgressState.errorMessage && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-600 dark:text-red-400 font-medium">
+                    <strong>Detail Kesalahan:</strong> {exportProgressState.errorMessage}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("selection")}
+                  disabled={props.deviceBackupExporting || props.bulkExporting}
+                  className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
+                >
+                  ← Kembali ke Seleksi Data
+                </button>
+
+                {exportProgressState.status !== "running" && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                  >
+                    Selesai &amp; Kembali
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          )}
+
+          {/* B. Progress Page for PDF Massal Export */}
+          {livePdfProgressState && (!exportProgressState || exportProgressState.type === "pdf") && (
+            <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
+              {/* Header Progress PDF Page */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+                <div className="flex items-center gap-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    disabled={pdfExporting}
+                    className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <polyline points="15 18 9 12 15 6" />
+                    </svg>
+                    <span>Kembali ke Seleksi Data</span>
+                  </button>
+                  <div>
+                    <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                      <span>Progres Export PDF Massal Harian</span>
+                      {pdfExporting ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
+                          Sedang Merender...
+                        </span>
+                      ) : livePdfProgressState.overallStatus === "completed" ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                          Selesai
+                        </span>
+                      ) : null}
+                    </h4>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                      Mengunduh dokumen PDF harian per petugas secara otomatis ke
+                      perangkat Anda.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                    Total: {livePdfProgressState.totalUsers} Petugas •{" "}
+                    {livePdfProgressState.totalReports} PDF •{" "}
+                    {livePdfProgressState.totalActivities} Aktivitas
+                  </span>
+                </div>
+              </div>
+
+              {/* Metric Status Cards & Progress Bar */}
+              <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+                  <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                    {pdfExporting ? (
+                      <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
+                    ) : (
+                      <span className="text-emerald-500">✓</span>
+                    )}
+                    <span className="font-extrabold">
+                      {livePdfProgressState.currentMessage}
+                    </span>
+                  </div>
+                  <div className="text-[var(--text-muted)]">
+                    {livePdfProgressState.totalReports > 0
+                      ? Math.round(
+                          (livePdfProgressState.downloadedReportsCount /
+                            livePdfProgressState.totalReports) *
+                            100,
+                        )
+                      : 0}
+                    % Selesai ({livePdfProgressState.downloadedReportsCount}/
+                    {livePdfProgressState.totalReports} File PDF)
+                  </div>
+                </div>
+
+                {/* Main Animated Progress Bar */}
+                <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+                  <div
+                    className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
+                    style={{
+                      width: `${
+                        livePdfProgressState.totalReports > 0
+                          ? Math.min(
+                              100,
+                              (livePdfProgressState.downloadedReportsCount /
+                                livePdfProgressState.totalReports) *
+                                100,
+                            )
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+
+                {/* Quick Metrics Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                      Petugas Aktif
+                    </span>
+                    <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                      {livePdfProgressState.currentUserName || "-"}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                      PDF Terunduh
+                    </span>
+                    <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                      {livePdfProgressState.downloadedReportsCount} /{" "}
+                      {livePdfProgressState.totalReports}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                      Aktivitas Tercover
+                    </span>
+                    <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                      {livePdfProgressState.downloadedActivitiesCount} /{" "}
+                      {livePdfProgressState.totalActivities}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                      Ukuran Kertas
+                    </span>
+                    <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
+                      {paperFormat}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Hierarchical Progress Tree View */}
+              <div className="space-y-3">
+                <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+                  <span>Struktur Antrean &amp; Status Download PDF</span>
+                </h5>
+
+                <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+                  {livePdfProgressState.users.map((userGroup, uIdx) => {
+                    const isUserDownloading = userGroup.status === "downloading";
+                    const isUserSuccess = userGroup.status === "success";
+                    const isUserError = userGroup.status === "error";
+
+                    return (
+                      <div
+                        key={userGroup.userName}
+                        className={`p-3.5 sm:p-4 space-y-2.5 transition ${
+                          isUserDownloading
+                            ? "bg-rose-500/5"
+                            : isUserError
+                              ? "bg-red-500/5"
+                              : ""
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="shrink-0 flex items-center justify-center">
+                              {isUserDownloading ? (
+                                <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
+                                  <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                                </span>
+                              ) : isUserSuccess ? (
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
+                                  ✓
+                                </span>
+                              ) : isUserError ? (
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
+                                  ✕
+                                </span>
+                              ) : (
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
+                                  ○
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                                {userGroup.userName}
+                              </span>
+                              <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                                (Petugas #{uIdx + 1} • {userGroup.completedReports}/
+                                {userGroup.totalReports} PDF selesai)
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {isUserDownloading && (
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                                <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                <span>Merender PDF...</span>
+                              </span>
+                            )}
+                            {isUserSuccess && (
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                PDF Selesai ✓
+                              </span>
+                            )}
+                            {isUserError && (
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                                Error ✕
+                              </span>
+                            )}
+                            {userGroup.status === "pending" && (
+                              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                                Menunggu Antrean
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
+                          {userGroup.reports.map((reportItem) => {
+                            const isRepDownloading =
+                              reportItem.status === "downloading";
+                            const isRepSuccess = reportItem.status === "success";
+                            const isRepError = reportItem.status === "error";
+
+                            return (
+                              <div
+                                key={reportItem.reportId}
+                                className={`flex flex-wrap items-center justify-between gap-2.5 py-1.5 px-3 rounded-xl border transition-all text-xs ${
+                                  isRepDownloading
+                                    ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
+                                    : isRepSuccess
+                                      ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
+                                      : isRepError
+                                        ? "bg-red-500/10 border-red-500/30"
+                                        : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
+                                    └─
+                                  </span>
+
+                                  <div className="shrink-0 flex items-center justify-center">
+                                    {isRepDownloading ? (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
+                                        <SpinnerIcon className="h-3 w-3" />
+                                      </span>
+                                    ) : isRepSuccess ? (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                        ✓
+                                      </span>
+                                    ) : isRepError ? (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
+                                        ✕
+                                      </span>
+                                    ) : (
+                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
+                                        ○
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                    <span className="font-bold text-[var(--text-primary)]">
+                                      {formatWitaDate(reportItem.reportDate)}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                      Tim {reportItem.tim || "TRC"}
+                                    </span>
+                                    <span className="text-[var(--text-muted)] text-[11px]">
+                                      • {reportItem.activitiesCount} Aktivitas
+                                    </span>
+                                    {reportItem.errorMessage && (
+                                      <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                                        ({reportItem.errorMessage})
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {isRepDownloading && (
+                                    <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
+                                      <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                      <span>Merender PDF...</span>
+                                    </span>
+                                  )}
+                                  {isRepSuccess && (
+                                    <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                      Dokumen Terunduh ✓
+                                    </span>
+                                  )}
+                                  {isRepError && (
+                                    <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
+                                      Gagal ✕
+                                    </span>
+                                  )}
+                                  {reportItem.status === "pending" && (
+                                    <span className="text-[11px] text-[var(--text-muted)] italic">
+                                      Menunggu...
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Action Footer on Progress Page */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("selection")}
+                  disabled={pdfExporting}
+                  className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
+                >
+                  ← Kembali ke Seleksi Data
+                </button>
+
+                {pdfResult && (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+                  >
+                    Selesai &amp; Kembali
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1707,8 +2753,7 @@ function BulkUploadPanel(props: {
   ) => Promise<BulkUploadResult>;
   deviceBackupBulkUploading?: boolean;
 }) {
-  const [viewMode, setViewMode] = useState<"selection" | "progress" | "pdf-progress">("selection");
-  const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
+  const [viewMode, setViewMode] = useState<"selection" | "progress">("selection");
   const [sourceType, setSourceType] = useState<"device" | "json">("device");
   const [deviceReports, setDeviceReports] = useState<Report[]>([]);
   const [importedReports, setImportedReports] = useState<Report[]>([]);
@@ -1732,17 +2777,9 @@ function BulkUploadPanel(props: {
   >({});
   const [liveProgressState, setLiveProgressState] =
     useState<BulkUploadProgressState | null>(null);
-  const [livePdfProgressState, setLivePdfProgressState] =
-    useState<BulkPdfProgressState | null>(null);
-  const [pdfExporting, setPdfExporting] = useState(false);
   const [uploadResult, setUploadResult] = useState<BulkUploadResult | null>(
     null,
   );
-  const [pdfResult, setPdfResult] = useState<{
-    success: boolean;
-    downloadedCount: number;
-    errors: string[];
-  } | null>(null);
   const [showConflictModal, setShowConflictModal] = useState(false);
   const [conflictingItems, setConflictingItems] = useState<
     Array<{ backupReport: Report; dbReport: Report }>
@@ -1808,7 +2845,8 @@ function BulkUploadPanel(props: {
       setSelectedActivities(sel);
       setExpandedUsers(expU);
     } catch (err: any) {
-      alert(
+      await showError(
+        "Gagal Membaca JSON",
         "Gagal membaca file JSON: " + (err?.message || "Format tidak valid"),
       );
     } finally {
@@ -1822,9 +2860,9 @@ function BulkUploadPanel(props: {
 
   // Daftar nama user unik untuk dropdown filter
   const allUniqueUsers = useMemo(() => {
-    const users = new Set<string>();
-    currentDataset.forEach((r) => users.add(r.nama || "Tanpa Nama"));
-    return Array.from(users).sort((a, b) => a.localeCompare(b));
+    return deduplicateReporterNames(
+      currentDataset.map((r) => r.nama || "Tanpa Nama")
+    ).sort((a, b) => a.localeCompare(b));
   }, [currentDataset]);
 
   // Logika Filtering & Sorting
@@ -1847,7 +2885,9 @@ function BulkUploadPanel(props: {
           q &&
           !report.nama.toLowerCase().includes(q) &&
           !report.reportDate.includes(q) &&
-          !report.activities.some((a) => a.description.toLowerCase().includes(q))
+          !(report.activities || []).some((a) =>
+            (a?.description || "").toLowerCase().includes(q),
+          )
         ) {
           return false;
         }
@@ -1921,13 +2961,10 @@ function BulkUploadPanel(props: {
   }, [visibleReports, selectedActivities]);
 
   const selectedUsersCount = useMemo(() => {
-    const users = new Set<string>();
-    visibleReports.forEach((r) => {
-      if ((selectedActivities[r.id] || []).length > 0) {
-        users.add(r.nama);
-      }
-    });
-    return users.size;
+    const selectedUserNames = visibleReports
+      .filter((r) => (selectedActivities[r.id] || []).length > 0)
+      .map((r) => r.nama);
+    return deduplicateReporterNames(selectedUserNames).length;
   }, [visibleReports, selectedActivities]);
 
   const draftReportsCount = useMemo(() => {
@@ -1965,7 +3002,7 @@ function BulkUploadPanel(props: {
     const isUserAllSelected = userReports.every((r) => {
       const selected = selectedActivities[r.id] || [];
       return (
-        r.activities.length > 0 && selected.length === r.activities.length
+        (r.activities || []).length > 0 && selected.length === (r.activities || []).length
       );
     });
     setSelectedActivities((prev) => {
@@ -2177,52 +3214,6 @@ function BulkUploadPanel(props: {
     }
   };
 
-  const handleStartBulkPdfExport = async () => {
-    if (selectedReportsCount === 0) {
-      await showInfo(
-        "Pilih Data",
-        "Pilih setidaknya satu laporan cadangan untuk diunduh sebagai dokumen PDF.",
-      );
-      return;
-    }
-
-    const confirmed = await askConfirmation(
-      "Export PDF Massal",
-      `Apakah Anda yakin ingin memulai export PDF massal untuk ${selectedReportsCount} laporan cadangan terpilih dengan format kertas ${paperFormat.toUpperCase()}?`,
-      "Ya, Unduh PDF",
-    );
-    if (!confirmed) return;
-
-    const initialPdfProgress = buildInitialBulkPdfProgressState(
-      currentDataset,
-      selectedActivities,
-    );
-    setLivePdfProgressState(initialPdfProgress);
-    setViewMode("pdf-progress");
-    setPdfResult(null);
-    setPdfExporting(true);
-
-    try {
-      const result = await executeBulkPdfDownload(
-        currentDataset,
-        selectedActivities,
-        paperFormat,
-        (state) => {
-          setLivePdfProgressState({ ...state });
-        },
-      );
-      setPdfResult(result);
-    } catch (err: any) {
-      setPdfResult({
-        success: false,
-        downloadedCount: 0,
-        errors: [err?.message || "Kesalahan tak terduga saat membuat dokumen PDF"],
-      });
-    } finally {
-      setPdfExporting(false);
-    }
-  };
-
   return (
     <div className="grid gap-5">
       {/* Kartu Header & Pilihan Sumber Cadangan */}
@@ -2422,21 +3413,6 @@ function BulkUploadPanel(props: {
             >
               {props.deviceBackupBulkUploading && <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />}
               <span>2. Progres Upload</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("pdf-progress")}
-              disabled={!livePdfProgressState}
-              className={`px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === "pdf-progress"
-                  ? "bg-rose-600 text-white shadow-xs"
-                  : livePdfProgressState
-                    ? "bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
-                    : "opacity-40 cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-muted)]"
-              }`}
-            >
-              {pdfExporting && <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />}
-              <span>3. Progres PDF Export</span>
             </button>
           </div>
         </div>
@@ -2774,334 +3750,6 @@ function BulkUploadPanel(props: {
       )}
 
       {/* ========================================================= */}
-      {/* MODE 3: PROGRES EXPORT PDF MASSAL PAGE (PROGRESS TREE)   */}
-      {/* ========================================================= */}
-      {viewMode === "pdf-progress" && livePdfProgressState && (
-        <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
-          {/* Header Progress PDF Page */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
-            <div className="flex items-center gap-3.5">
-              <button
-                type="button"
-                onClick={() => setViewMode("selection")}
-                disabled={pdfExporting}
-                className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-4 w-4"
-                >
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-                <span>Kembali ke Kelola Data</span>
-              </button>
-              <div>
-                <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
-                  <span>Progres Export PDF Massal Harian</span>
-                  {pdfExporting ? (
-                    <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
-                      Sedang Merender...
-                    </span>
-                  ) : livePdfProgressState.overallStatus === "completed" ? (
-                    <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                      Selesai
-                    </span>
-                  ) : null}
-                </h4>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Mengunduh dokumen PDF harian per petugas secara otomatis ke perangkat Anda.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-                Total: {livePdfProgressState.totalUsers} Petugas • {livePdfProgressState.totalReports} PDF • {livePdfProgressState.totalActivities} Aktivitas
-              </span>
-            </div>
-          </div>
-
-          {/* Metric Status Cards & Progress Bar */}
-          <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
-              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                {pdfExporting ? (
-                  <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
-                ) : (
-                  <span className="text-emerald-500">✓</span>
-                )}
-                <span className="font-extrabold">{livePdfProgressState.currentMessage}</span>
-              </div>
-              <div className="text-[var(--text-muted)]">
-                {livePdfProgressState.totalReports > 0
-                  ? Math.round(
-                      (livePdfProgressState.downloadedReportsCount /
-                        livePdfProgressState.totalReports) *
-                        100,
-                    )
-                  : 0}
-                % Selesai ({livePdfProgressState.downloadedReportsCount}/
-                {livePdfProgressState.totalReports} File PDF)
-              </div>
-            </div>
-
-            {/* Main Animated Progress Bar */}
-            <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
-              <div
-                className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
-                style={{
-                  width: `${
-                    livePdfProgressState.totalReports > 0
-                      ? Math.min(
-                          100,
-                          (livePdfProgressState.downloadedReportsCount /
-                            livePdfProgressState.totalReports) *
-                            100,
-                        )
-                      : 0
-                  }%`,
-                }}
-              />
-            </div>
-
-            {/* Quick Metrics Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Petugas Aktif</span>
-                <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
-                  {livePdfProgressState.currentUserName || "-"}
-                </p>
-              </div>
-              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">PDF Terunduh</span>
-                <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                  {livePdfProgressState.downloadedReportsCount} / {livePdfProgressState.totalReports}
-                </p>
-              </div>
-              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Aktivitas Tercover</span>
-                <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                  {livePdfProgressState.downloadedActivitiesCount} / {livePdfProgressState.totalActivities}
-                </p>
-              </div>
-              <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Ukuran Kertas</span>
-                <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
-                  {paperFormat}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Hierarchical Progress Tree View */}
-          <div className="space-y-3">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
-              <span>Struktur Antrean &amp; Status Download PDF</span>
-            </h5>
-
-            <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
-              {livePdfProgressState.users.map((userGroup, uIdx) => {
-                const isUserDownloading = userGroup.status === "downloading";
-                const isUserSuccess = userGroup.status === "success";
-                const isUserError = userGroup.status === "error";
-
-                return (
-                  <div
-                    key={userGroup.userName}
-                    className={`p-3.5 sm:p-4 space-y-2.5 transition ${
-                      isUserDownloading
-                        ? "bg-rose-500/5"
-                        : isUserError
-                          ? "bg-red-500/5"
-                          : ""
-                    }`}
-                  >
-                    {/* Level 1: Compact User Progress Node */}
-                    <div className="flex flex-wrap items-center justify-between gap-2.5">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="shrink-0 flex items-center justify-center">
-                          {isUserDownloading ? (
-                            <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
-                              <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
-                            </span>
-                          ) : isUserSuccess ? (
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
-                              ✓
-                            </span>
-                          ) : isUserError ? (
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
-                              ✕
-                            </span>
-                          ) : (
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
-                              ○
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-[var(--text-primary)] truncate">
-                            {userGroup.userName}
-                          </span>
-                          <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                            (Petugas #{uIdx + 1} • {userGroup.completedReports}/{userGroup.totalReports} PDF selesai)
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {isUserDownloading && (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
-                            <SpinnerIcon className="h-3 w-3 animate-spin" />
-                            <span>Merender PDF...</span>
-                          </span>
-                        )}
-                        {isUserSuccess && (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                            PDF Selesai ✓
-                          </span>
-                        )}
-                        {isUserError && (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
-                            Error ✕
-                          </span>
-                        )}
-                        {userGroup.status === "pending" && (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
-                            Menunggu Antrean
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Level 2: Nested Reports Nodes */}
-                    <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
-                      {userGroup.reports.map((reportItem) => {
-                        const isRepDownloading = reportItem.status === "downloading";
-                        const isRepSuccess = reportItem.status === "success";
-                        const isRepError = reportItem.status === "error";
-
-                        return (
-                          <div
-                            key={reportItem.reportId}
-                            className={`flex flex-wrap items-center justify-between gap-2.5 py-1.5 px-3 rounded-xl border transition-all text-xs ${
-                              isRepDownloading
-                                ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
-                                : isRepSuccess
-                                  ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
-                                  : isRepError
-                                    ? "bg-red-500/10 border-red-500/30"
-                                    : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
-                                └─
-                              </span>
-
-                              <div className="shrink-0 flex items-center justify-center">
-                                {isRepDownloading ? (
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
-                                    <SpinnerIcon className="h-3 w-3" />
-                                  </span>
-                                ) : isRepSuccess ? (
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
-                                    ✓
-                                  </span>
-                                ) : isRepError ? (
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
-                                    ✕
-                                  </span>
-                                ) : (
-                                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
-                                    ○
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                                <span className="font-bold text-[var(--text-primary)]">
-                                  {formatWitaDate(reportItem.reportDate)}
-                                </span>
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
-                                  Tim {reportItem.tim || "TRC"}
-                                </span>
-                                <span className="text-[var(--text-muted)] text-[11px]">
-                                  • {reportItem.activitiesCount} Aktivitas
-                                </span>
-                                {reportItem.errorMessage && (
-                                  <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
-                                    ({reportItem.errorMessage})
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0">
-                              {isRepDownloading && (
-                                <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
-                                  <SpinnerIcon className="h-3 w-3 animate-spin" />
-                                  <span>Merender PDF...</span>
-                                </span>
-                              )}
-                              {isRepSuccess && (
-                                <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
-                                  PDF Terunduh ✓
-                                </span>
-                              )}
-                              {isRepError && (
-                                <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
-                                  Gagal ✕
-                                </span>
-                              )}
-                              {reportItem.status === "pending" && (
-                                <span className="text-[11px] text-[var(--text-muted)] italic">
-                                  Menunggu...
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Action Footer */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
-            <button
-              type="button"
-              onClick={() => setViewMode("selection")}
-              disabled={pdfExporting}
-              className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
-            >
-              ← Kembali ke Kelola Data
-            </button>
-
-            {pdfResult && (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("selection")}
-                  className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
-                >
-                  Selesai &amp; Kembali
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
       {/* MODE 2: SELECTION & MANAGEMENT VIEW (FULL FILTERING & ACTIONS) */}
       {/* ========================================================= */}
       {viewMode === "selection" && (
@@ -3313,38 +3961,6 @@ function BulkUploadPanel(props: {
             <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border-soft)]/60">
               {/* ── Group 1: Export Actions (left) ── */}
               <div className="flex items-center gap-1.5 flex-wrap">
-                {/* Paper Format + Export PDF */}
-                <div className="flex items-center gap-0 rounded-xl overflow-hidden border border-rose-500/25">
-                  <select
-                    value={paperFormat}
-                    onChange={(e) => setPaperFormat(e.target.value as any)}
-                    className="h-[38px] py-0 px-2.5 text-[11px] font-bold bg-rose-500/5 text-rose-600 dark:text-rose-400 border-none cursor-pointer outline-none appearance-auto"
-                    title="Ukuran kertas PDF"
-                  >
-                    <option value="a4">A4</option>
-                    <option value="f4">F4</option>
-                    <option value="legal">Legal</option>
-                    <option value="letter">Letter</option>
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleStartBulkPdfExport}
-                    disabled={pdfExporting || selectedReportsCount === 0}
-                    className="h-[38px] px-3 text-[11px] font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center gap-1.5 transition disabled:opacity-40 cursor-pointer border-l border-rose-500/25"
-                    title="Unduh PDF harian per petugas"
-                  >
-                    {pdfExporting ? (
-                      <SpinnerIcon className="h-3.5 w-3.5" />
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                      </svg>
-                    )}
-                    PDF ({selectedReportsCount})
-                  </button>
-                </div>
-
                 {/* Export JSON */}
                 <button
                   type="button"

@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import { AutocompleteInput } from "./autocomplete-input";
+import { isSameReporterName, resolveCanonicalName } from "../lib/reporter-name";
 import bpbdIcon from "../assets/image/icon-bpbd.png";
 
 type LoginViewProps = {
@@ -32,13 +33,41 @@ export function LoginView(props: LoginViewProps) {
   const [showUserPass, setShowUserPass] = useState(false);
   const [showRegisterPass, setShowRegisterPass] = useState(false);
   const [showAdminPass, setShowAdminPass] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError("");
+
     if (activeTab === "user-login") {
-      await props.onUserLogin(userName, userPassword);
+      const trimmedName = userName.trim();
+      if (!trimmedName) {
+        setLoginError("Nama petugas wajib diisi.");
+        return;
+      }
+      // Validate: name must exist in reporterNames (case-insensitive)
+      const existsInDirectory = props.reporterNames.some(n => isSameReporterName(n, trimmedName));
+      if (!existsInDirectory) {
+        setLoginError("Nama belum terdaftar. Gunakan tab 'Daftar Baru' untuk mendaftar.");
+        return;
+      }
+      // Use canonical name from DB to prevent case mismatch
+      const canonicalName = resolveCanonicalName(trimmedName, props.reporterNames);
+      await props.onUserLogin(canonicalName, userPassword);
     } else if (activeTab === "user-register") {
-      await props.onUserRegister(registerName, registerPassword);
+      const trimmedName = registerName.trim();
+      if (!trimmedName) {
+        setLoginError("Nama petugas baru wajib diisi.");
+        return;
+      }
+      // Validate: name must NOT exist in reporterNames (case-insensitive)
+      const alreadyExists = props.reporterNames.some(n => isSameReporterName(n, trimmedName));
+      if (alreadyExists) {
+        const existingName = resolveCanonicalName(trimmedName, props.reporterNames);
+        setLoginError(`Nama "${existingName}" sudah terdaftar. Gunakan tab 'Masuk Petugas'.`);
+        return;
+      }
+      await props.onUserRegister(trimmedName, registerPassword);
     } else {
       await props.onAdminLogin();
     }
@@ -104,7 +133,7 @@ export function LoginView(props: LoginViewProps) {
               <label className="block text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">Nama Lengkap Petugas</label>
               <AutocompleteInput
                 value={userName}
-                onChange={setUserName}
+                onChange={(val) => { setUserName(val); setLoginError(""); }}
                 options={props.reporterNames}
                 placeholder="Ketik/Pilih nama lengkap Anda"
                 className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-purple-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition shadow-inner"
@@ -149,6 +178,13 @@ export function LoginView(props: LoginViewProps) {
               </p>
             </div>
 
+            {loginError && activeTab === "user-login" && (
+              <div className="rounded-xl px-4 py-2.5 text-xs font-semibold bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 flex items-start gap-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                <span>{loginError}</span>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={props.userSubmitting}
@@ -179,7 +215,7 @@ export function LoginView(props: LoginViewProps) {
                 name="user-register-name"
                 autoComplete="username"
                 value={registerName}
-                onChange={(e) => setRegisterName(e.target.value)}
+                onChange={(e) => { setRegisterName(e.target.value); setLoginError(""); }}
                 placeholder="Masukkan nama lengkap baru Anda"
                 required
                 className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-purple-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition shadow-inner text-[var(--text-primary)]"
@@ -219,6 +255,13 @@ export function LoginView(props: LoginViewProps) {
                 </button>
               </div>
             </div>
+
+            {loginError && activeTab === "user-register" && (
+              <div className="rounded-xl px-4 py-2.5 text-xs font-semibold bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 flex items-start gap-2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                <span>{loginError}</span>
+              </div>
+            )}
 
             <button
               type="submit"

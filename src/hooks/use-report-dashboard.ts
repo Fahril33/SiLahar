@@ -18,7 +18,7 @@ import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
   generateDeviceBackupExcel,
   generateDeviceBackupJson,
-  getAllDeviceBackupReports,
+  getAllCombinedReports,
   bulkUploadDeviceBackupReportsToDatabase,
   type BulkUploadItemProgress,
   type BulkUploadProgressState,
@@ -37,9 +37,11 @@ import {
 import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
+  deduplicateReporterNames,
   formatReporterNameForDatabase,
   includesReporterName,
   isSameReporterName,
+  resolveCanonicalName,
 } from "../lib/reporter-name";
 import {
   createLocalDraftTitle,
@@ -689,15 +691,13 @@ export function useReportDashboard() {
       const deviceNames = loadDeviceSubmittedNames();
       const activeUserNames = currentUserSession?.fullName ? [currentUserSession.fullName] : [];
 
-      const allReporterNames = Array.from(
-        new Set([
-          ...dbRN,
-          ...cachedNames,
-          ...reportNames,
-          ...deviceNames,
-          ...activeUserNames,
-        ])
-      ).filter(Boolean);
+      const allReporterNames = deduplicateReporterNames([
+        ...dbRN,
+        ...cachedNames,
+        ...reportNames,
+        ...deviceNames,
+        ...activeUserNames,
+      ]);
 
       setReports(mergedReports);
       setReporterProfiles(mergedProfiles);
@@ -1510,7 +1510,7 @@ export function useReportDashboard() {
       const backupReports =
         targetReports && targetReports.length > 0
           ? targetReports
-          : await getAllDeviceBackupReports(reports);
+          : await getAllCombinedReports(reports);
 
       if (backupReports.length === 0) {
         toast.close();
@@ -1529,7 +1529,7 @@ export function useReportDashboard() {
       });
 
       toast.close();
-      const uniqueUsers = new Set(backupReports.map((r) => r.nama)).size;
+      const uniqueUsers = deduplicateReporterNames(backupReports.map((r) => r.nama)).length;
       await showSuccess(
         "Unduhan selesai",
         `Cadangan perangkat (${backupReports.length} laporan untuk ${uniqueUsers} petugas) berhasil diunduh dalam file Excel.`,
@@ -1561,7 +1561,7 @@ export function useReportDashboard() {
       const backupReports =
         targetReports && targetReports.length > 0
           ? targetReports
-          : await getAllDeviceBackupReports(reports);
+          : await getAllCombinedReports(reports);
 
       if (backupReports.length === 0) {
         toast.close();
@@ -1581,7 +1581,7 @@ export function useReportDashboard() {
       });
 
       toast.close();
-      const uniqueUsers = new Set(backupReports.map((r) => r.nama)).size;
+      const uniqueUsers = deduplicateReporterNames(backupReports.map((r) => r.nama)).length;
       await showSuccess(
         "Unduhan berhasil",
         `Cadangan JSON (${backupReports.length} laporan untuk ${uniqueUsers} petugas) berhasil diunduh.`,
@@ -1972,11 +1972,25 @@ export function useReportDashboard() {
       await showError("Data tidak lengkap", "Nama dan password wajib diisi.");
       return;
     }
+
+    // Use canonical name to prevent case mismatch
+    const canonicalName = resolveCanonicalName(name, reporterNamesRef.current);
+
+    // Guard: If there is an active session for a DIFFERENT user, ask for confirmation before switching
+    if (userSession && !isSameReporterName(userSession.fullName, canonicalName)) {
+      const confirmSwitch = await askConfirmation(
+        "Ganti Sesi Pengguna?",
+        `Saat ini sedang ada sesi aktif milik "${userSession.fullName}". Melanjutkan akan menggantikan sesi tersebut. Data draft yang belum disimpan bisa hilang.`,
+        "Ya, Ganti Sesi",
+      );
+      if (!confirmSwitch) return;
+    }
+
     setUserSubmitting(true);
     try {
       let profile: ReporterDirectoryProfile | null = null;
       try {
-        profile = await authenticateReporter(name, pass);
+        profile = await authenticateReporter(canonicalName, pass);
       } catch (authErr) {
         logSafeError(authErr, "Dashboard/AuthReporter");
       }
@@ -1994,7 +2008,7 @@ export function useReportDashboard() {
         }
 
         const activeSession = userSession || parsedSession;
-        if (activeSession && isSameReporterName(activeSession.fullName, name)) {
+        if (activeSession && isSameReporterName(activeSession.fullName, canonicalName)) {
           setUserSession(activeSession);
           setDraft((current) => normalizeDraft({ ...current, nama: activeSession.fullName }));
           setView("entry");
@@ -2025,6 +2039,17 @@ export function useReportDashboard() {
       await showError("Data tidak lengkap", "Nama dan password wajib diisi.");
       return;
     }
+
+    // Guard: reject if name already exists (case-insensitive)
+    const existingName = resolveCanonicalName(name, reporterNamesRef.current);
+    if (reporterNamesRef.current.some(n => isSameReporterName(n, name))) {
+      await showError(
+        "Nama Sudah Terdaftar",
+        `Nama "${existingName}" sudah terdaftar di sistem. Silakan gunakan tab 'Masuk Petugas'.`
+      );
+      return;
+    }
+
     setUserSubmitting(true);
     try {
       const profile = await registerReporter(name, pass);
