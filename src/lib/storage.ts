@@ -1,6 +1,7 @@
 import type { DraftReport, Report } from "../types/report";
 import {
   formatReporterNameForDatabase,
+  isAdminName,
   normalizeReporterName,
 } from "./reporter-name";
 
@@ -39,13 +40,14 @@ export function saveCachedReports(reports: Report[]) {
 }
 
 export function loadCachedReporterNames() {
-  return loadJson<string[]>(REPORTER_NAMES_CACHE_KEY, []);
+  return loadJson<string[]>(REPORTER_NAMES_CACHE_KEY, []).filter((name) => name && !isAdminName(name));
 }
 
 export function saveCachedReporterNames(names: string[]) {
   const uniqueNames = Array.from(
     names
       .reduce((map, name) => {
+        if (!name || isAdminName(name)) return map;
         const formatted = formatReporterNameForDatabase(name);
         const normalized = normalizeReporterName(formatted);
         if (formatted && !map.has(normalized)) {
@@ -63,13 +65,14 @@ export function saveCachedReporterNames(names: string[]) {
 }
 
 export function loadDeviceSubmittedNames() {
-  return loadJson<string[]>(DEVICE_SUBMITTED_NAMES_KEY, []);
+  return loadJson<string[]>(DEVICE_SUBMITTED_NAMES_KEY, []).filter((name) => name && !isAdminName(name));
 }
 
 export function saveDeviceSubmittedNames(names: string[]) {
   const uniqueNames = Array.from(
     names
       .reduce((map, name) => {
+        if (!name || isAdminName(name)) return map;
         const formatted = formatReporterNameForDatabase(name);
         const normalized = normalizeReporterName(formatted);
         if (formatted && !map.has(normalized)) {
@@ -87,6 +90,7 @@ export function saveDeviceSubmittedNames(names: string[]) {
 }
 
 export function pushDeviceSubmittedName(name: string) {
+  if (isAdminName(name)) return loadDeviceSubmittedNames();
   const current = loadDeviceSubmittedNames();
   const formatted = formatReporterNameForDatabase(name);
   const nextNames = [

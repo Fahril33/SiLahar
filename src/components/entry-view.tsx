@@ -8,6 +8,8 @@ import { supabase } from "../lib/supabase";
 import type { ReportRules } from "../types/report-rules";
 import type { LocalReportDraftSummary } from "../types/local-draft";
 import type { DraftReport, Report, ReporterDirectoryProfile } from "../types/report";
+import type { TeamType } from "../types/team-type";
+import { fetchTeamTypes, getHeaderLinesForTeam } from "../lib/report-template-service";
 import { AnchoredInlineWarning } from "./anchored-inline-warning";
 import { AutocompleteInput } from "./autocomplete-input";
 import { DeviceNameHistory } from "./device-name-history";
@@ -297,6 +299,7 @@ type EntryViewProps = {
   navbarPosition?: "top" | "left" | "right";
   navbarSlot?: ReactNode;
   isOnline: boolean;
+  teamTypes?: TeamType[];
 };
 
 function SaveIcon(props: { className?: string }) {
@@ -617,6 +620,23 @@ function getPaperPreview(paperFormat: "a4" | "f4" | "legal" | "letter") {
 }
 
 export function EntryView(props: EntryViewProps) {
+  const [localTeamTypes, setLocalTeamTypes] = useState<TeamType[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchTeamTypes().then((types) => {
+      if (alive) setLocalTeamTypes(types);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const activeTeamTypes =
+    props.teamTypes && props.teamTypes.length > 0
+      ? props.teamTypes
+      : localTeamTypes;
+
   const [previewScale, setPreviewScale] = useState(1);
   const [isApproverExpanded, setIsApproverExpanded] = useState(false);
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
@@ -1026,13 +1046,39 @@ export function EntryView(props: EntryViewProps) {
                   <span className="text-sm font-medium">Tim</span>
                   <select
                     value={props.draft.tim}
-                    onChange={(event) =>
-                      props.onChange("tim", event.target.value)
-                    }
+                    onChange={(event) => {
+                      const newTim = event.target.value;
+                      props.onChange("tim", newTim);
+                      const matchingTeam = activeTeamTypes.find(
+                        (t) =>
+                          (t.code ? t.code.toUpperCase() : t.name.toUpperCase()) === newTim.toUpperCase() ||
+                          t.name.toUpperCase() === newTim.toUpperCase(),
+                      );
+                      if (matchingTeam) {
+                        props.onChange("approverCoordinator", matchingTeam.coordinatorName || "");
+                        props.onChange("approverCoordinatorNip", matchingTeam.coordinatorNip || "");
+                        props.onChange(
+                          "approverCoordinatorLabel",
+                          matchingTeam.coordinatorLabel || `KOORDINATOR ${(matchingTeam.code || newTim).toUpperCase()}`,
+                        );
+                      }
+                    }}
                     className={inputClassName}
                   >
-                    <option value="PUSDALOPS">PUSDALOPS</option>
-                    <option value="TRC">TRC</option>
+                    {(activeTeamTypes.length > 0
+                      ? activeTeamTypes
+                      : [
+                          { id: "pusdalops", code: "pusdalops", name: "PUSDALOPS" },
+                          { id: "trc", code: "trc", name: "TRC" },
+                        ]
+                    ).map((t) => {
+                      const codeVal = t.code ? t.code.toUpperCase() : t.name.toUpperCase();
+                      return (
+                        <option key={t.id} value={codeVal}>
+                          {t.name}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
               </div>
@@ -1467,6 +1513,22 @@ export function EntryView(props: EntryViewProps) {
                           </div>
                         </div>
                         <div className="grid gap-4">
+                          <label className="space-y-2">
+                            <span className="text-sm font-medium">
+                              Label / Jabatan Koordinator
+                            </span>
+                            <input
+                              value={props.draft.approverCoordinatorLabel || ""}
+                              onChange={(event) =>
+                                props.onChange(
+                                  "approverCoordinatorLabel",
+                                  event.target.value,
+                                )
+                              }
+                              placeholder="e.g. KOORDINATOR TRC-PB"
+                              className={inputClassName}
+                            />
+                          </label>
                           <label className="space-y-2">
                             <span className="text-sm font-medium">
                               Nama pejabat
@@ -2136,7 +2198,10 @@ export function EntryView(props: EntryViewProps) {
                     __html: previewStyleTag,
                   }}
                 />
-                <ReportPdfDocument report={props.preview} />
+                <ReportPdfDocument
+                  report={props.preview}
+                  headerLines={getHeaderLinesForTeam(props.preview.tim, activeTeamTypes)}
+                />
               </div>
               <p className="mt-4 text-center text-sm font-medium text-[var(--text-muted)]">
                 Terakhir diperbarui:{" "}

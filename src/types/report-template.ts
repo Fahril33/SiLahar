@@ -22,6 +22,8 @@ export type ReportTemplateConfig = {
   templateName: string;
   organizationName: string;
   budgetYear: number | null;
+  headerLines?: string[];
+  teamTypeId?: string;
   isActive: boolean;
   updatedAt: string;
   notes: string[];

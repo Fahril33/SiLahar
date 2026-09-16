@@ -42,6 +42,11 @@ export const fallbackReportTemplateConfig: ReportTemplateConfig = {
   organizationName:
     "Badan Penanggulangan Bencana Daerah Provinsi Sulawesi Tengah",
   budgetYear: 2026,
+  headerLines: [
+    "LAPORAN HARIAN KINERJA TIM REAKSI CEPAT",
+    "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+    "TAHUN ANGGARAN 2026",
+  ],
   isActive: true,
   updatedAt: now,
   notes: [

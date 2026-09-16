@@ -523,6 +523,9 @@ export default function App() {
             adminActiveAction={dashboard.adminActiveAction}
             adminActiveItemId={dashboard.adminActiveItemId}
             adminRuleDraft={dashboard.adminRuleDraft}
+            adminHeaderLinesDraft={dashboard.adminHeaderLinesDraft}
+            setAdminHeaderLinesDraft={dashboard.setAdminHeaderLinesDraft}
+            onHandleSaveHeaderLines={dashboard.handleSaveHeaderLines}
             activeReportTemplateConfig={dashboard.activeReportTemplateConfig}
             notificationSettings={dashboard.notificationSettings}
             adminTemplateApproverDrafts={dashboard.adminTemplateApproverDrafts}

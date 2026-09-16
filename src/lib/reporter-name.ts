@@ -14,14 +14,29 @@ export function includesReporterName(source: string, keyword: string) {
   return normalizeReporterName(source).includes(normalizeReporterName(keyword));
 }
 
+export function isAdminName(name: string): boolean {
+  if (!name) return false;
+  const norm = normalizeReporterName(name);
+  return (
+    norm === "admin" ||
+    norm === "administrator" ||
+    norm.startsWith("admin@") ||
+    norm.startsWith("admin.") ||
+    norm.startsWith("admin_") ||
+    norm === "admin@bpbd.com" ||
+    norm.includes("admin@")
+  );
+}
+
 /**
  * Dedup nama secara case-insensitive, prioritaskan format pertama yang ditemukan.
+ * Mengabaikan nama/email akun admin.
  * ["Ahmad", "AHMAD", "ahmad"] → ["Ahmad"]
  */
 export function deduplicateReporterNames(names: string[]): string[] {
   const seen = new Map<string, string>();
   for (const name of names) {
-    if (!name) continue;
+    if (!name || isAdminName(name)) continue;
     const norm = normalizeReporterName(name);
     if (!seen.has(norm)) {
       seen.set(norm, name);

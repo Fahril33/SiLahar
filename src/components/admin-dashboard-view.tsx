@@ -15,6 +15,14 @@ import type {
 } from "../types/report-template";
 import type { NotificationSettings } from "../types/notification-settings";
 import type { Report, ReporterDirectoryProfile } from "../types/report";
+import type { TeamType, TeamTypeDraft } from "../types/team-type";
+import { DEFAULT_HEADER_LINES } from "../types/team-type";
+import {
+  fetchTeamTypes,
+  saveTeamType,
+  deleteTeamType,
+  saveTeamTypeHeaderLines,
+} from "../lib/report-template-service";
 import { adminGetReporterPasswords } from "../lib/report-service";
 import { AdminEditableListCard } from "./admin-editable-list-card";
 import { AdminReporterStatsView } from "./admin-reporter-stats-view";
@@ -88,6 +96,9 @@ type AdminDashboardViewProps = {
   adminSubmitting: boolean;
   adminActiveAction: AdminActiveAction;
   adminRuleDraft: ReportRules;
+  adminHeaderLinesDraft: string[];
+  setAdminHeaderLinesDraft: (lines: string[]) => void;
+  onHandleSaveHeaderLines: (lines: string[]) => Promise<void>;
   activeReportTemplateConfig: ReportTemplateConfig | null;
   notificationSettings: NotificationSettings;
   adminTemplateApproverDrafts: Record<
@@ -561,174 +572,1121 @@ function DeviceBackupSettingsCard(props: {
 function ReportRulesPanel(
   props: AdminDashboardViewProps & { onNavigateBulkUpload?: () => void },
 ) {
+  const [activeSubTab, setActiveSubTab] = useState<
+    "header" | "teams" | "officials" | "operational" | "backup"
+  >("header");
+
+  const [teamTypes, setTeamTypes] = useState<TeamType[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>("team-type-trc-default");
+  const [showAddTeamModal, setShowAddTeamModal] = useState(false);
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
+  const [savingTeamType, setSavingTeamType] = useState(false);
+
+  const [teamDraft, setTeamDraft] = useState<TeamTypeDraft>({
+    code: "",
+    name: "",
+    description: "",
+    coordinatorName: "",
+    coordinatorNip: "",
+    coordinatorLabel: "",
+    headerLines: [
+      "LAPORAN HARIAN KINERJA TIM BARU",
+      "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+      "TAHUN ANGGARAN 2026",
+    ],
+  });
+
+  const [perTeamHeaders, setPerTeamHeaders] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    let alive = true;
+    void fetchTeamTypes().then((types) => {
+      if (alive) {
+        setTeamTypes(types);
+        if (types.length > 0) {
+          const defaultTeam = types.find((t) => t.isDefault) || types[0];
+          setSelectedTeamId(defaultTeam.id);
+          const initialMap: Record<string, string[]> = {};
+          types.forEach((t) => {
+            initialMap[t.id] = t.headerLines && t.headerLines.length > 0 ? t.headerLines : DEFAULT_HEADER_LINES;
+          });
+          setPerTeamHeaders(initialMap);
+        }
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const openCreateTeamModal = () => {
+    setEditingTeamId(null);
+    setTeamDraft({
+      code: "",
+      name: "",
+      description: "",
+      coordinatorName: "",
+      coordinatorNip: "",
+      coordinatorLabel: "",
+      headerLines: [
+        "LAPORAN HARIAN KINERJA TIM BARU",
+        "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+        "TAHUN ANGGARAN 2026",
+      ],
+    });
+    setShowAddTeamModal(true);
+  };
+
+  const openEditTeamModal = (team: TeamType) => {
+    setEditingTeamId(team.id);
+    setTeamDraft({
+      id: team.id,
+      code: team.code,
+      name: team.name,
+      description: team.description || "",
+      coordinatorName: team.coordinatorName || "",
+      coordinatorNip: team.coordinatorNip || "",
+      coordinatorLabel: team.coordinatorLabel || "",
+      headerLines:
+        team.headerLines && team.headerLines.length > 0
+          ? [...team.headerLines]
+          : [
+              `LAPORAN HARIAN KINERJA ${team.name.toUpperCase()}`,
+              "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+              "TAHUN ANGGARAN 2026",
+            ],
+      isDefault: team.isDefault,
+    });
+    setShowAddTeamModal(true);
+  };
+
+  const selectedTeam = teamTypes.find((t) => t.id === selectedTeamId) || teamTypes[0];
+
+  const currentHeaderLines =
+    selectedTeam && perTeamHeaders[selectedTeam.id]
+      ? perTeamHeaders[selectedTeam.id]
+      : props.adminHeaderLinesDraft || DEFAULT_HEADER_LINES;
+
+  const handleHeaderLineChange = (index: number, value: string) => {
+    if (!selectedTeam) return;
+    const next = [...currentHeaderLines];
+    next[index] = value;
+    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: next }));
+    props.setAdminHeaderLinesDraft(next);
+  };
+
+  const handleAddHeaderLine = () => {
+    if (!selectedTeam) return;
+    const next = [...currentHeaderLines, ""];
+    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: next }));
+    props.setAdminHeaderLinesDraft(next);
+  };
+
+  const handleRemoveHeaderLine = (index: number) => {
+    if (!selectedTeam || currentHeaderLines.length <= 1) return;
+    const next = currentHeaderLines.filter((_, i) => i !== index);
+    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: next }));
+    props.setAdminHeaderLinesDraft(next);
+  };
+
+  const handleMoveHeaderLine = (index: number, direction: "up" | "down") => {
+    if (!selectedTeam) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= currentHeaderLines.length) return;
+    const next = [...currentHeaderLines];
+    const temp = next[index];
+    next[index] = next[targetIndex];
+    next[targetIndex] = temp;
+    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: next }));
+    props.setAdminHeaderLinesDraft(next);
+  };
+
+  const handleResetHeaderLines = () => {
+    if (!selectedTeam) return;
+    const defaultHeaders = [
+      `LAPORAN HARIAN KINERJA ${selectedTeam.name.toUpperCase()}`,
+      "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+      "TAHUN ANGGARAN 2026",
+    ];
+    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: defaultHeaders }));
+    props.setAdminHeaderLinesDraft(defaultHeaders);
+  };
+
+  const handleSaveCurrentTeamHeader = async () => {
+    if (!selectedTeam) return;
+    try {
+      setSavingTeamType(true);
+      const updatedTypes = await saveTeamTypeHeaderLines(selectedTeam.id, currentHeaderLines);
+      setTeamTypes(updatedTypes);
+      if (props.activeReportTemplateConfig) {
+        await props.onHandleSaveHeaderLines(currentHeaderLines);
+      } else {
+        await showSuccess("Kop Laporan Disimpan", `Kop Laporan untuk ${selectedTeam.name} berhasil diperbarui.`);
+      }
+    } catch (err: any) {
+      await showError("Simpan Gagal", err.message || "Gagal menyimpan Kop Laporan.");
+    } finally {
+      setSavingTeamType(false);
+    }
+  };
+
+  const handleSaveTeamType = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teamDraft.name.trim() || !teamDraft.code.trim()) {
+      await showError("Data Tidak Lengkap", "Nama dan Kode jenis tim wajib diisi.");
+      return;
+    }
+    const isEdit = Boolean(editingTeamId);
+    try {
+      setSavingTeamType(true);
+      const updatedTypes = await saveTeamType(teamDraft);
+      setTeamTypes(updatedTypes);
+
+      const nextHeadersMap: Record<string, string[]> = {};
+      updatedTypes.forEach((t) => {
+        nextHeadersMap[t.id] =
+          t.headerLines && t.headerLines.length > 0 ? t.headerLines : DEFAULT_HEADER_LINES;
+      });
+      setPerTeamHeaders(nextHeadersMap);
+
+      const target = updatedTypes.find(
+        (t) =>
+          t.id === (editingTeamId || "") ||
+          t.code === teamDraft.code.trim().toLowerCase(),
+      );
+      if (target) {
+        setSelectedTeamId(target.id);
+      }
+
+      setShowAddTeamModal(false);
+      setEditingTeamId(null);
+      await showSuccess(
+        isEdit ? "Jenis Tim Diperbarui" : "Jenis Tim Ditambah",
+        `Jenis tim '${teamDraft.name}' telah berhasil ${isEdit ? "diperbarui" : "didaftarkan"}.`,
+      );
+    } catch (err: any) {
+      await showError(
+        "Gagal Menyimpan Jenis Tim",
+        err.message || "Terjadi kesalahan saat menyimpan.",
+      );
+    } finally {
+      setSavingTeamType(false);
+    }
+  };
+
+  const handleTeamCoordinatorChange = (
+    teamId: string,
+    field: "coordinatorName" | "coordinatorNip" | "coordinatorLabel",
+    value: string,
+  ) => {
+    setTeamTypes((prev) =>
+      prev.map((t) => (t.id === teamId ? { ...t, [field]: value } : t)),
+    );
+    const targetTeam = teamTypes.find((t) => t.id === teamId);
+    if (targetTeam) {
+      const codeLower = targetTeam.code.toLowerCase();
+      if (codeLower === "trc" || codeLower === "pusdalops") {
+        const role = `coordinator_team_${codeLower}` as "coordinator_team_trc" | "coordinator_team_pusdalops";
+        if (field === "coordinatorName") {
+          props.onChangeAdminTemplateApproverDraft(role, "officialName", value);
+        } else if (field === "coordinatorNip") {
+          props.onChangeAdminTemplateApproverDraft(role, "officialNip", value);
+        } else if (field === "coordinatorLabel") {
+          props.onChangeAdminTemplateApproverDraft(role, "scopeLabel", value);
+        }
+      }
+    }
+  };
+
+  const handleSaveAllOfficials = async () => {
+    try {
+      setSavingTeamType(true);
+      for (const team of teamTypes) {
+        await saveTeamType({
+          id: team.id,
+          code: team.code,
+          name: team.name,
+          description: team.description,
+          headerLines: team.headerLines,
+          coordinatorName: team.coordinatorName,
+          coordinatorNip: team.coordinatorNip,
+          coordinatorLabel: team.coordinatorLabel,
+          isDefault: team.isDefault,
+        });
+      }
+      if (props.activeReportTemplateConfig) {
+        await props.onHandleSaveTemplateApproverDefaults();
+      } else {
+        await showSuccess(
+          "Default Pejabat Disimpan",
+          "Data pejabat terkait untuk semua jenis tim berhasil diperbarui.",
+        );
+      }
+    } catch (err: any) {
+      await showError(
+        "Gagal Menyimpan Pejabat",
+        err.message || "Terjadi kesalahan saat menyimpan data pejabat.",
+      );
+    } finally {
+      setSavingTeamType(false);
+    }
+  };
+
+  const handleDeleteSelectedTeam = async (team: TeamType) => {
+    if (team.isDefault) {
+      await showError("Batal Hapus", "Jenis tim utama (default) tidak dapat dihapus.");
+      return;
+    }
+    const confirmDelete = await askConfirmation(
+      "Hapus Jenis Tim?",
+      `Apakah Anda yakin ingin menghapus jenis tim "${team.name}"?`,
+      "Ya, Hapus",
+    );
+    if (!confirmDelete) return;
+
+    try {
+      setSavingTeamType(true);
+      const updatedTypes = await deleteTeamType(team.id);
+      setTeamTypes(updatedTypes);
+      if (updatedTypes.length > 0) {
+        setSelectedTeamId(updatedTypes[0].id);
+      }
+      await showSuccess("Berhasil Dihapus", `Jenis tim "${team.name}" telah dihapus.`);
+    } catch (err: any) {
+      await showError("Hapus Gagal", err.message || "Terjadi kesalahan.");
+    } finally {
+      setSavingTeamType(false);
+    }
+  };
+
   return (
-    <div className="grid gap-4">
-      {/* Cadangan Perangkat Lokal Excel & JSON */}
-      <DeviceBackupSettingsCard
-        reports={props.reports}
-        deviceBackupExporting={props.deviceBackupExporting}
-        onHandleDownloadDeviceBackupExcel={
-          props.onHandleDownloadDeviceBackupExcel
-        }
-        onHandleDownloadDeviceBackupJson={
-          props.onHandleDownloadDeviceBackupJson
-        }
-        onNavigateBulkUpload={props.onNavigateBulkUpload}
-      />
-
-      <div className="surface-card rounded-[24px] p-5">
-        <div className="space-y-4">
-          <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4">
-            <input
-              type="checkbox"
-              checked={props.adminRuleDraft.allowAnyReportDate}
-              onChange={(event) =>
-                props.onChangeAdminRule(
-                  "allowAnyReportDate",
-                  event.target.checked,
-                )
-              }
-              className="mt-1 h-5 w-5 accent-[var(--primary)]"
-            />
-            <div>
-              <p className="font-semibold text-[var(--text-primary)]">
-                Izinkan input laporan untuk tanggal mana pun
-              </p>
-              <p className="mt-1 text-sm text-[var(--text-muted)]">
-                Jika dimatikan, publik hanya bisa mengisi hari berjalan.
-              </p>
-            </div>
-          </label>
-
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              Maksimal foto per aktivitas
-            </span>
-            <input
-              type="number"
-              min="1"
-              value={props.adminRuleDraft.maxPhotosPerActivity}
-              onChange={(event) =>
-                props.onChangeAdminRule(
-                  "maxPhotosPerActivity",
-                  Number(event.target.value),
-                )
-              }
-              className={inputClassName}
-            />
-          </label>
-
-          <label className="block space-y-2">
-            <span className="text-sm font-medium">
-              Tanggal mulai operasional sistem
-            </span>
-            <p className="text-xs text-[var(--text-muted)]">
-              Laporan &amp; statistik hanya dihitung mulai dari tanggal ini.
-            </p>
-            <input
-              type="date"
-              value={props.adminRuleDraft.systemStartDate}
-              onChange={(event) =>
-                props.onChangeAdminRule(
-                  "systemStartDate",
-                  event.target.value,
-                )
-              }
-              className={inputClassName}
-            />
-          </label>
-
+    <div className="space-y-6 animate-fadeIn">
+      {/* Sub-Navigation Pills */}
+      <div className="panel-glass rounded-[24px] p-2 flex flex-wrap gap-2 border border-[var(--border-soft)]">
+        {[
+          { key: "header" as const, label: "✍️ Editor Kop Laporan", desc: "Kop spesifik per Jenis Tim" },
+          { key: "teams" as const, label: "👥 Pembagian Jenis Tim", desc: "Kelola TRC, PUSDALOPS & Tim Baru" },
+          { key: "officials" as const, label: "👔 Pejabat Terkait", desc: "Koordinator & Kepala Bidang" },
+          { key: "operational" as const, label: "📋 Parameter Operasional", desc: "Aturan tanggal & foto" },
+          { key: "backup" as const, label: "💾 Cadangan Perangkat", desc: "Backup Excel & JSON" },
+        ].map((tab) => (
           <button
+            key={tab.key}
             type="button"
-            onClick={() => void props.onHandleSaveAdminRules()}
-            disabled={props.adminSubmitting}
-            className="btn-primary w-full justify-center disabled:opacity-60"
+            onClick={() => setActiveSubTab(tab.key)}
+            className={`flex-1 min-w-[160px] text-left px-4 py-3 rounded-[18px] transition cursor-pointer ${
+              activeSubTab === tab.key
+                ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/20 font-bold"
+                : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+            }`}
           >
-            {props.adminActiveAction === "save-rules" ? (
-              <SpinnerIcon />
-            ) : (
-              "Simpan rules"
-            )}
+            <p className="text-sm">{tab.label}</p>
+            <p className={`text-[11px] mt-0.5 ${activeSubTab === tab.key ? "text-white/80" : "text-[var(--text-muted)]"}`}>
+              {tab.desc}
+            </p>
           </button>
-        </div>
+        ))}
       </div>
 
-      <div className="surface-card rounded-[24px] p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-              Default pejabat form
-            </h3>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">
-              Nilai ini akan dipakai sebagai default form laporan dan direkam
-              sebagai snapshot saat laporan dibuat.
-            </p>
+      {/* SUB-TAB 1: EDITOR KOP LAPORAN (HEADER DOKUMEN PER JENIS TIM) */}
+      {activeSubTab === "header" && (
+        <div className="space-y-6">
+          {/* Team Selector Bar */}
+          <div className="surface-card rounded-[24px] p-4 border border-[var(--border-soft)] flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] mr-2">
+                Pilih Jenis Tim:
+              </span>
+              {teamTypes.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedTeamId(t.id);
+                    props.setAdminHeaderLinesDraft(perTeamHeaders[t.id] || t.headerLines || DEFAULT_HEADER_LINES);
+                  }}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                    selectedTeamId === t.id
+                      ? "bg-[var(--primary)] text-white shadow-xs"
+                      : "bg-[var(--surface-panel-strong)] text-[var(--text-muted)] hover:text-[var(--text-primary)] border border-[var(--border-soft)]"
+                  }`}
+                >
+                  <span>{t.name}</span>
+                  {t.isDefault && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 uppercase">
+                      Default
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAddTeamModal(true)}
+              className="btn-secondary text-xs px-3.5 py-1.5 rounded-full border border-[var(--primary)]/30 text-[var(--primary)] font-bold cursor-pointer hover:bg-[var(--primary)]/10"
+            >
+              + Tambah Jenis Tim Baru
+            </button>
           </div>
-          {props.activeReportTemplateConfig ? (
-            <div className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-2 text-xs font-semibold text-[var(--text-muted)]">
-              Template aktif: {props.activeReportTemplateConfig.templateName}
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left Column: Line-by-Line Controls */}
+            <div className="lg:col-span-7 surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                      Editor Baris Kop Laporan
+                    </h3>
+                    {selectedTeam && (
+                      <span className="text-xs font-bold uppercase tracking-wider text-[var(--primary)] bg-[var(--primary)]/10 px-2.5 py-0.5 rounded-full border border-[var(--primary)]/20">
+                        {selectedTeam.name}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[var(--text-muted)] mt-1">
+                    Atur teks header/kop dokumen laporan PDF khusus untuk tim <span className="font-semibold text-[var(--text-primary)]">{selectedTeam?.name}</span>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetHeaderLines}
+                  className="text-xs text-[var(--primary)] hover:underline font-semibold cursor-pointer"
+                >
+                  Reset Default
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {currentHeaderLines.map((line, index) => (
+                  <div key={index} className="flex items-center gap-2 animate-fadeIn">
+                    <span className="h-8 w-8 rounded-full bg-[var(--surface-panel-strong)] text-[var(--text-muted)] text-xs font-bold flex items-center justify-center shrink-0 border border-[var(--border-soft)]">
+                      {index + 1}
+                    </span>
+                    <input
+                      type="text"
+                      value={line}
+                      onChange={(e) => handleHeaderLineChange(index, e.target.value)}
+                      placeholder={`Baris ke-${index + 1}`}
+                      className="field-input text-sm flex-1 font-semibold uppercase tracking-wide"
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={() => handleMoveHeaderLine(index, "up")}
+                        className="h-8 w-8 rounded-lg border border-[var(--border-soft)] hover:bg-[var(--surface-muted)] text-[var(--text-muted)] disabled:opacity-30 flex items-center justify-center transition cursor-pointer"
+                        title="Geser Ke Atas"
+                      >
+                        ▲
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === currentHeaderLines.length - 1}
+                        onClick={() => handleMoveHeaderLine(index, "down")}
+                        className="h-8 w-8 rounded-lg border border-[var(--border-soft)] hover:bg-[var(--surface-muted)] text-[var(--text-muted)] disabled:opacity-30 flex items-center justify-center transition cursor-pointer"
+                        title="Geser Ke Bawah"
+                      >
+                        ▼
+                      </button>
+                      <button
+                        type="button"
+                        disabled={currentHeaderLines.length <= 1}
+                        onClick={() => handleRemoveHeaderLine(index)}
+                        className="h-8 w-8 rounded-lg border border-red-500/20 text-red-500 hover:bg-red-500/10 disabled:opacity-30 flex items-center justify-center transition cursor-pointer"
+                        title="Hapus Baris"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={handleAddHeaderLine}
+                  className="btn-secondary text-xs px-4 py-2 cursor-pointer border border-[var(--border-soft)]"
+                >
+                  + Tambah Baris Kop
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSaveCurrentTeamHeader()}
+                  disabled={props.adminSubmitting || savingTeamType}
+                  className="btn-primary px-6 py-2 text-sm disabled:opacity-60 cursor-pointer shadow-md shadow-[var(--primary)]/20"
+                >
+                  {savingTeamType || props.adminActiveAction === ("save-header-lines" as any) ? (
+                    <SpinnerIcon />
+                  ) : (
+                    `Simpan Kop ${selectedTeam?.name || "Tim"}`
+                  )}
+                </button>
+              </div>
             </div>
-          ) : null}
-        </div>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <TemplateApproverCard
-            roleLabel="Koordinator Tim TRC"
-            accentClassName="bg-[var(--info-soft)] text-[var(--info)]"
-            draft={props.adminTemplateApproverDrafts.coordinator_team_trc}
-            hideOfficialTitle
-            onChange={(key, value) =>
-              props.onChangeAdminTemplateApproverDraft(
-                "coordinator_team_trc",
-                key,
-                value,
-              )
-            }
-          />
-          <TemplateApproverCard
-            roleLabel="Koordinator Tim PUSDALOPS"
-            accentClassName="bg-[var(--success-soft)] text-[var(--success)]"
-            draft={props.adminTemplateApproverDrafts.coordinator_team_pusdalops}
-            hideOfficialTitle
-            onChange={(key, value) =>
-              props.onChangeAdminTemplateApproverDraft(
-                "coordinator_team_pusdalops",
-                key,
-                value,
-              )
-            }
-          />
-          <TemplateApproverCard
-            roleLabel="Kepala Bidang"
-            accentClassName="bg-[var(--warning-soft)] text-[var(--warning)]"
-            draft={props.adminTemplateApproverDrafts.division_head}
-            onChange={(key, value) =>
-              props.onChangeAdminTemplateApproverDraft(
-                "division_head",
-                key,
-                value,
-              )
-            }
-          />
-        </div>
+            {/* Right Column: Real-time Live Preview Box */}
+            <div className="lg:col-span-5 surface-card rounded-[28px] p-6 space-y-4 border border-[var(--border-soft)] shadow-sm bg-gradient-to-b from-[var(--surface-panel-strong)] to-[var(--surface-app)]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  Live Preview Kop ({selectedTeam?.name})
+                </span>
+                <span className="text-[10px] bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 px-2 py-0.5 rounded-full font-bold">
+                  Tampilan Real-time
+                </span>
+              </div>
 
-        <div className="mt-4 flex justify-end">
-          <button
-            type="button"
-            onClick={() => void props.onHandleSaveTemplateApproverDefaults()}
-            disabled={
-              props.adminSubmitting || !props.activeReportTemplateConfig
-            }
-            className="btn-primary min-w-[176px] px-4 py-2 text-sm disabled:opacity-60"
+              <div className="p-6 rounded-[20px] bg-white text-gray-900 border border-gray-200 shadow-md text-center space-y-1.5 min-h-[160px] flex flex-col items-center justify-center">
+                {currentHeaderLines.filter((l) => l.trim()).map((line, i) => (
+                  <p
+                    key={i}
+                    className={`font-bold tracking-wide leading-tight ${
+                      i === 0 ? "text-base text-gray-900 font-extrabold" : i === 1 ? "text-xs text-gray-800" : "text-xs text-gray-700"
+                    }`}
+                  >
+                    {line}
+                  </p>
+                ))}
+                {currentHeaderLines.filter((l) => l.trim()).length === 0 && (
+                  <p className="text-xs text-gray-400 italic">Kop laporan kosong</p>
+                )}
+              </div>
+              <p className="text-xs text-[var(--text-muted)] text-center">
+                Teks di atas adalah pratinjau langsung bagaimana Kop Laporan tim <span className="font-semibold">{selectedTeam?.name}</span> akan tampil di dokumen PDF.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 2: PEMBAGIAN JENIS TIM */}
+      {activeSubTab === "teams" && (
+        <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                Pembagian Jenis Tim &amp; Dokumen
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] mt-1">
+                Kelola jenis tim operasional. Setiap jenis tim memiliki Kop Dokumen laporan yang disesuaikan secara terpisah.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openCreateTeamModal}
+              className="btn-primary text-xs px-4 py-2.5 cursor-pointer shadow-md shadow-[var(--primary)]/20 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Tambah Jenis Tim Baru</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {teamTypes.map((team) => (
+              <div
+                key={team.id}
+                className="surface-card rounded-[24px] p-5 space-y-4 border border-[var(--border-soft)] hover:border-[var(--primary)]/40 transition-all shadow-sm flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--primary)] bg-[var(--primary)]/10 px-3 py-1 rounded-full border border-[var(--primary)]/20 font-mono">
+                      KODE: {team.code.toUpperCase()}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {team.isDefault ? (
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                          Utama (Default)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full border border-blue-500/20">
+                          Tim Tambahan
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-base text-[var(--text-primary)]">{team.name}</h4>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5 line-clamp-2">
+                      {team.description || "Tidak ada deskripsi operasional."}
+                    </p>
+                  </div>
+
+                  <div className="pt-2 border-t border-[var(--border-soft)]/60 space-y-1">
+                    <p className="text-[10px] font-extrabold text-[var(--text-muted)] uppercase tracking-wider">
+                      Kop Laporan PDF Terkait:
+                    </p>
+                    {(team.headerLines || DEFAULT_HEADER_LINES).map((hl, idx) => (
+                      <p key={idx} className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                        {idx + 1}. {hl}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-[var(--border-soft)]/60 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => openEditTeamModal(team)}
+                      className="btn-secondary h-8 px-3 text-xs font-bold flex items-center gap-1.5 border-[var(--primary)]/30 text-[var(--primary)] hover:bg-[var(--primary)]/10 cursor-pointer"
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                      <span>Edit Tim</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTeamId(team.id);
+                        setActiveSubTab("header");
+                      }}
+                      className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] font-semibold underline px-2 cursor-pointer"
+                    >
+                      Edit Kop Baris
+                    </button>
+                  </div>
+
+                  {!team.isDefault && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteSelectedTeam(team)}
+                      className="text-xs text-red-500 hover:text-red-600 font-semibold hover:bg-red-500/10 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                      title="Hapus jenis tim ini"
+                    >
+                      Hapus
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL KELOLA / TAMBAH / EDIT JENIS TIM */}
+      {showAddTeamModal &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 backdrop-blur-md p-3 sm:p-4 animate-fadeIn"
+            onClick={() => {
+              setShowAddTeamModal(false);
+              setEditingTeamId(null);
+            }}
+            aria-modal="true"
+            role="dialog"
           >
-            {props.adminActiveAction === "save-template-approvers" ? (
-              <SpinnerIcon />
-            ) : (
-              "Simpan default pejabat"
-            )}
-          </button>
+            <div
+              className="surface-card rounded-[24px] border border-[var(--border-soft)] shadow-2xl max-w-xl w-full my-auto flex flex-col max-h-[85vh] overflow-hidden animate-scaleUp"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Compact Modal Header */}
+              <div className="px-5 py-3.5 border-b border-[var(--border-soft)] flex items-center justify-between gap-3 shrink-0 bg-[var(--surface-panel-strong)]/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-xl bg-[var(--primary)]/15 text-[var(--primary)] flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-[var(--text-primary)]">
+                        {editingTeamId ? "Edit Jenis Tim & Kop" : "Tambah Jenis Tim Baru"}
+                      </h3>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${
+                        editingTeamId
+                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                          : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                      }`}>
+                        {editingTeamId ? "Mode Edit" : "Tim Baru"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddTeamModal(false);
+                    setEditingTeamId(null);
+                  }}
+                  className="h-7 w-7 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Form wrapping body and fixed footer */}
+              <form onSubmit={handleSaveTeamType} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+                {/* Scrollable Form Body */}
+                <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Jenis Tim</span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Misal: Tim Logistik & Peralatan"
+                        value={teamDraft.name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const autoCode = val.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
+                          setTeamDraft((c) => ({
+                            ...c,
+                            name: val,
+                            code: editingTeamId || c.code ? c.code : autoCode,
+                          }));
+                        }}
+                        className="field-input text-xs py-2 px-3 w-full font-semibold"
+                      />
+                    </label>
+
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">
+                        Kode Singkatan Tim
+                      </span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Misal: logistik"
+                        value={teamDraft.code}
+                        onChange={(e) =>
+                          setTeamDraft((c) => ({
+                            ...c,
+                            code: e.target.value.toLowerCase().replace(/\s+/g, "-"),
+                          }))
+                        }
+                        className="field-input text-xs py-2 px-3 w-full font-mono uppercase"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-semibold text-[var(--text-primary)]">Deskripsi Operasional</span>
+                    <textarea
+                      rows={2}
+                      placeholder="Penjelasan singkat tugas tim ini..."
+                      value={teamDraft.description}
+                      onChange={(e) => setTeamDraft((c) => ({ ...c, description: e.target.value }))}
+                      className="field-input text-xs py-2 px-3 w-full"
+                    />
+                  </label>
+
+                  {/* DATA PEJABAT KOORDINATOR TIM */}
+                  <div className="space-y-3 pt-3 border-t border-[var(--border-soft)]">
+                    <span className="text-xs font-extrabold text-[var(--text-primary)] uppercase tracking-wider block">
+                      👔 Pejabat Koordinator Tim
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="block space-y-1">
+                        <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Koordinator</span>
+                        <input
+                          type="text"
+                          placeholder="Misal: Andi Susanto, S.STP"
+                          value={teamDraft.coordinatorName || ""}
+                          onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorName: e.target.value }))}
+                          className="field-input text-xs py-2 px-3 w-full font-semibold"
+                        />
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="text-xs font-semibold text-[var(--text-primary)]">NIP Koordinator</span>
+                        <input
+                          type="text"
+                          placeholder="Misal: 19850101 201001 1 001"
+                          value={teamDraft.coordinatorNip || ""}
+                          onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorNip: e.target.value }))}
+                          className="field-input text-xs py-2 px-3 w-full font-mono text-xs"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block space-y-1">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">Label / Jabatan Pada Dokumen</span>
+                      <input
+                        type="text"
+                        placeholder={`Misal: KOORDINATOR ${(teamDraft.code || "TIM").toUpperCase()}-PB`}
+                        value={teamDraft.coordinatorLabel || ""}
+                        onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorLabel: e.target.value }))}
+                        className="field-input text-xs py-2 px-3 w-full uppercase font-semibold"
+                      />
+                    </label>
+                  </div>
+
+                  {/* EDITOR KOP BARIS-PER-BARIS */}
+                  <div className="space-y-2.5 pt-3 border-t border-[var(--border-soft)]">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <span className="text-xs font-extrabold text-[var(--text-primary)] uppercase tracking-wider">
+                          Baris Kop Dokumen PDF ({teamDraft.name || "Tim Baru"})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTeamDraft((c) => ({
+                            ...c,
+                            headerLines: [...c.headerLines, ""],
+                          }))
+                        }
+                        className="btn-secondary h-7 px-2.5 text-[11px] font-bold text-[var(--primary)] border-[var(--primary)]/30 hover:bg-[var(--primary)]/10 cursor-pointer flex items-center gap-1"
+                      >
+                        + Tambah Baris Kop
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {teamDraft.headerLines.map((line, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="h-7 w-7 rounded-lg bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] flex items-center justify-center text-[11px] font-bold text-[var(--text-muted)] shrink-0">
+                            {idx + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={line}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTeamDraft((c) => {
+                                const next = [...c.headerLines];
+                                next[idx] = val;
+                                return { ...c, headerLines: next };
+                              });
+                            }}
+                            placeholder={`Baris ke-${idx + 1}...`}
+                            className="field-input text-xs py-1.5 px-3 w-full uppercase font-bold"
+                          />
+                          {teamDraft.headerLines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTeamDraft((c) => ({
+                                  ...c,
+                                  headerLines: c.headerLines.filter((_, i) => i !== idx),
+                                }))
+                              }
+                              className="h-7 w-7 rounded-lg hover:bg-red-500/15 text-red-500 flex items-center justify-center text-xs font-bold transition shrink-0 cursor-pointer"
+                              title="Hapus baris ini"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* MINI PRATINJAU KOP */}
+                    <div className="mt-2.5 rounded-xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-3 space-y-0.5 text-center">
+                      <p className="text-[10px] font-extrabold uppercase tracking-widest text-[var(--text-muted)] mb-1">
+                        — PRATINJAU KOP PDF —
+                      </p>
+                      {teamDraft.headerLines.map((hl, i) => (
+                        <p
+                          key={i}
+                          className={`text-xs uppercase font-extrabold tracking-wide ${
+                            i === 0
+                              ? "text-[var(--primary)]"
+                              : i === 1
+                              ? "text-[var(--text-primary)] text-[11px]"
+                              : "text-[var(--text-muted)] text-[10px] font-semibold"
+                          }`}
+                        >
+                          {hl || <span className="opacity-40 italic">[Baris kosong]</span>}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fixed Non-Scrolling Modal Footer */}
+                <div className="px-4 py-3 border-t border-[var(--border-soft)] flex items-center justify-end gap-2.5 shrink-0 bg-[var(--surface-panel-strong)]/60">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddTeamModal(false);
+                      setEditingTeamId(null);
+                    }}
+                    className="btn-secondary h-9 text-xs px-4 cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingTeamType}
+                    className="btn-primary h-9 text-xs px-5 cursor-pointer disabled:opacity-60 shadow-md shadow-[var(--primary)]/20 font-bold flex items-center gap-1.5"
+                  >
+                    {savingTeamType ? (
+                      <SpinnerIcon />
+                    ) : editingTeamId ? (
+                      "Perbarui Jenis Tim"
+                    ) : (
+                      "Simpan Jenis Tim Baru"
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* SUB-TAB 3: PEJABAT TERKAIT & PENANDATANGAN */}
+      {activeSubTab === "officials" && (
+        <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                Default Pejabat Form & Penandatangan
+              </h3>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Nilai pejabat ini akan otomatis dijadikan snapshot persetujuan pada dokumen laporan yang diterbitkan.
+              </p>
+            </div>
+            {props.activeReportTemplateConfig ? (
+              <div className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-1.5 text-xs font-semibold text-[var(--text-muted)]">
+                Template Aktif: {props.activeReportTemplateConfig.templateName}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            {teamTypes.map((team) => {
+              const codeLower = team.code.toLowerCase();
+              if (codeLower === "trc") {
+                return (
+                  <TemplateApproverCard
+                    key={team.id}
+                    roleLabel={`Koordinator Tim ${team.name}`}
+                    accentClassName="bg-[var(--info-soft)] text-[var(--info)]"
+                    draft={{
+                      ...props.adminTemplateApproverDrafts.coordinator_team_trc,
+                      officialName: team.coordinatorName || props.adminTemplateApproverDrafts.coordinator_team_trc.officialName,
+                      officialNip: team.coordinatorNip || props.adminTemplateApproverDrafts.coordinator_team_trc.officialNip,
+                      scopeLabel: team.coordinatorLabel || props.adminTemplateApproverDrafts.coordinator_team_trc.scopeLabel,
+                    }}
+                    hideOfficialTitle
+                    onChange={(key, value) => {
+                      props.onChangeAdminTemplateApproverDraft("coordinator_team_trc", key, value);
+                      if (key === "officialName") handleTeamCoordinatorChange(team.id, "coordinatorName", value);
+                      if (key === "officialNip") handleTeamCoordinatorChange(team.id, "coordinatorNip", value);
+                      if (key === "scopeLabel") handleTeamCoordinatorChange(team.id, "coordinatorLabel", value);
+                    }}
+                  />
+                );
+              }
+              if (codeLower === "pusdalops") {
+                return (
+                  <TemplateApproverCard
+                    key={team.id}
+                    roleLabel={`Koordinator Tim ${team.name}`}
+                    accentClassName="bg-[var(--success-soft)] text-[var(--success)]"
+                    draft={{
+                      ...props.adminTemplateApproverDrafts.coordinator_team_pusdalops,
+                      officialName: team.coordinatorName || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.officialName,
+                      officialNip: team.coordinatorNip || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.officialNip,
+                      scopeLabel: team.coordinatorLabel || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.scopeLabel,
+                    }}
+                    hideOfficialTitle
+                    onChange={(key, value) => {
+                      props.onChangeAdminTemplateApproverDraft("coordinator_team_pusdalops", key, value);
+                      if (key === "officialName") handleTeamCoordinatorChange(team.id, "coordinatorName", value);
+                      if (key === "officialNip") handleTeamCoordinatorChange(team.id, "coordinatorNip", value);
+                      if (key === "scopeLabel") handleTeamCoordinatorChange(team.id, "coordinatorLabel", value);
+                    }}
+                  />
+                );
+              }
+              return (
+                <div key={team.id} className="surface-muted rounded-[24px] p-4 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-sm font-bold text-[var(--primary)] uppercase">
+                      {team.code.slice(0, 2)}
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        Koordinator Tim ({team.code})
+                      </p>
+                      <h4 className="text-base font-semibold text-[var(--text-primary)]">
+                        {team.name}
+                      </h4>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <label className="space-y-1.5 block">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">Label Dokumen</span>
+                      <input
+                        value={team.coordinatorLabel || `KOORDINATOR ${team.code.toUpperCase()}`}
+                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorLabel", e.target.value)}
+                        placeholder="Label pejabat"
+                        className={inputClassName}
+                      />
+                    </label>
+                    <label className="space-y-1.5 block">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Pejabat</span>
+                      <input
+                        value={team.coordinatorName || ""}
+                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorName", e.target.value)}
+                        placeholder="Nama pejabat"
+                        className={inputClassName}
+                      />
+                    </label>
+                    <label className="space-y-1.5 block">
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">NIP Pejabat</span>
+                      <input
+                        value={team.coordinatorNip || ""}
+                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorNip", e.target.value)}
+                        placeholder="Nomor Induk Pegawai"
+                        className={inputClassName}
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+
+            <TemplateApproverCard
+              roleLabel="Kepala Bidang"
+              accentClassName="bg-[var(--warning-soft)] text-[var(--warning)]"
+              draft={props.adminTemplateApproverDrafts.division_head}
+              onChange={(key, value) =>
+                props.onChangeAdminTemplateApproverDraft(
+                  "division_head",
+                  key,
+                  value,
+                )
+              }
+            />
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => void handleSaveAllOfficials()}
+              disabled={
+                props.adminSubmitting || savingTeamType
+              }
+              className="btn-primary px-6 py-2.5 text-sm disabled:opacity-60 cursor-pointer shadow-md shadow-[var(--primary)]/20 font-bold flex items-center gap-2"
+            >
+              {props.adminActiveAction === "save-template-approvers" || savingTeamType ? (
+                <SpinnerIcon />
+              ) : (
+                "Simpan Default Pejabat"
+              )}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* SUB-TAB 4: PARAMETER OPERASIONAL */}
+      {activeSubTab === "operational" && (
+        <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
+          <h3 className="text-lg font-bold text-[var(--text-primary)]">
+            Parameter Operasional Laporan
+          </h3>
+
+          <div className="space-y-4">
+            <label className="flex items-start gap-3 rounded-[20px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] p-4 cursor-pointer hover:bg-[var(--surface-muted)] transition">
+              <input
+                type="checkbox"
+                checked={props.adminRuleDraft.allowAnyReportDate}
+                onChange={(event) =>
+                  props.onChangeAdminRule(
+                    "allowAnyReportDate",
+                    event.target.checked,
+                  )
+                }
+                className="mt-1 h-5 w-5 accent-[var(--primary)]"
+              />
+              <div>
+                <p className="font-semibold text-[var(--text-primary)]">
+                  Izinkan input laporan untuk tanggal mana pun
+                </p>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  Jika dimatikan, publik/petugas hanya dapat mengisi laporan pada hari berjalan.
+                </p>
+              </div>
+            </label>
+
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-[var(--text-primary)]">
+                Maksimal foto per aktivitas
+              </span>
+              <input
+                type="number"
+                min="1"
+                value={props.adminRuleDraft.maxPhotosPerActivity}
+                onChange={(event) =>
+                  props.onChangeAdminRule(
+                    "maxPhotosPerActivity",
+                    Number(event.target.value),
+                  )
+                }
+                className={inputClassName}
+              />
+            </label>
+
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-[var(--text-primary)]">
+                Tanggal mulai operasional sistem
+              </span>
+              <p className="text-xs text-[var(--text-muted)]">
+                Laporan &amp; statistik hanya dihitung mulai dari tanggal ini.
+              </p>
+              <input
+                type="date"
+                value={props.adminRuleDraft.systemStartDate}
+                onChange={(event) =>
+                  props.onChangeAdminRule(
+                    "systemStartDate",
+                    event.target.value,
+                  )
+                }
+                className={inputClassName}
+              />
+            </label>
+
+            <button
+              type="button"
+              onClick={() => void props.onHandleSaveAdminRules()}
+              disabled={props.adminSubmitting}
+              className="btn-primary w-full justify-center disabled:opacity-60 cursor-pointer py-2.5 shadow-md shadow-[var(--primary)]/20"
+            >
+              {props.adminActiveAction === "save-rules" ? (
+                <SpinnerIcon />
+              ) : (
+                "Simpan Rules Operasional"
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 5: CADANGAN PERANGKAT LOKAL */}
+      {activeSubTab === "backup" && (
+        <DeviceBackupSettingsCard
+          reports={props.reports}
+          deviceBackupExporting={props.deviceBackupExporting}
+          onHandleDownloadDeviceBackupExcel={
+            props.onHandleDownloadDeviceBackupExcel
+          }
+          onHandleDownloadDeviceBackupJson={
+            props.onHandleDownloadDeviceBackupJson
+          }
+          onNavigateBulkUpload={props.onNavigateBulkUpload}
+        />
+      )}
     </div>
   );
 }

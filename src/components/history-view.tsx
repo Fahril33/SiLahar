@@ -9,7 +9,7 @@ import type {
 } from "../types/report";
 import type { AdminSessionState } from "../types/admin";
 import type { LocalReportDraftSummary } from "../types/local-draft";
-import { isSameReporterName } from "../lib/reporter-name";
+import { isSameReporterName, includesReporterName } from "../lib/reporter-name";
 import { LocalDraftsModal } from "./local-drafts-modal";
 import {
   getHolidayInfo,
@@ -365,6 +365,7 @@ export function HistoryView(props: {
 
   const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [statusSearchQuery, setStatusSearchQuery] = useState("");
+  const [adminViewMode, setAdminViewMode] = useState<"daily" | "chrono">("daily");
   const [expandedCardNames, setExpandedCardNames] = useState<
     Record<string, boolean>
   >({});
@@ -399,9 +400,11 @@ export function HistoryView(props: {
     "Desember",
   ];
 
+  const isSearching = statusSearchQuery.trim() !== "";
+
   const showChronologicalView =
     Boolean(props.userSession) ||
-    (Boolean(props.adminSession) && statusSearchQuery.trim() !== "");
+    (Boolean(props.adminSession) && isSearching && adminViewMode === "chrono");
 
   // All reports list passed from props
   const allReports = props.reports || [];
@@ -427,8 +430,19 @@ export function HistoryView(props: {
     // Filter reports belonging to targetName in the selected month & year
     return allReports
       .filter((r: Report) => {
-        const matchName = isSameReporterName(r.nama, targetName);
-        if (!matchName) return false;
+        if (props.userSession) {
+          const matchName = isSameReporterName(r.nama, targetName);
+          if (!matchName) return false;
+        } else if (targetName) {
+          const matchName =
+            isSameReporterName(r.nama, targetName) ||
+            includesReporterName(r.nama, targetName) ||
+            (r.nama || "").toLowerCase().includes(targetName.toLowerCase()) ||
+            (r.activities || []).some((a) =>
+              (a?.description || "").toLowerCase().includes(targetName.toLowerCase()),
+            );
+          if (!matchName) return false;
+        }
 
         if (effectiveStartDate && r.reportDate < effectiveStartDate) return false;
 
@@ -711,9 +725,28 @@ export function HistoryView(props: {
   }, [statusRows]);
 
   const filteredStatusRows = useMemo(() => {
-    const filtered = statusRows.filter((row) =>
-      row.name.toLowerCase().includes(statusSearchQuery.toLowerCase()),
-    );
+    const query = statusSearchQuery.trim();
+    if (!query) return statusRows;
+
+    const queryLower = query.toLowerCase();
+    const filtered = statusRows.filter((row) => {
+      const matchOfficerName =
+        row.name.toLowerCase().includes(queryLower) ||
+        includesReporterName(row.name, query) ||
+        isSameReporterName(row.name, query);
+
+      const matchReportName =
+        row.report?.nama &&
+        (row.report.nama.toLowerCase().includes(queryLower) ||
+          includesReporterName(row.report.nama, query));
+
+      const matchActivity = row.report?.activities?.some((a) =>
+        (a?.description || "").toLowerCase().includes(queryLower),
+      );
+
+      return matchOfficerName || matchReportName || matchActivity;
+    });
+
     return [...filtered].sort((a, b) => {
       if (a.done !== b.done) {
         return a.done ? -1 : 1;
@@ -761,6 +794,34 @@ export function HistoryView(props: {
           {/* Top Row: Mode Switcher, Stats Capsule & Search/Date Pill */}
           <div className="flex md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center gap-3">
+              {/* Mode Switcher for Admin (Hanya muncul jika searchbar sedang aktif mencari) */}
+              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
+                <div className="flex items-center gap-1 p-1 bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full shrink-0 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("daily")}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "daily"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                    }`}
+                  >
+                    Status Harian
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("chrono")}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "chrono"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                    }`}
+                  >
+                    Riwayat Kronologis
+                  </button>
+                </div>
+              )}
+
               {/* Stats Capsule / Month-Year Selector */}
               {showChronologicalView ? (
                 <div className="flex flex-wrap items-center gap-4 pl-2">
@@ -895,16 +956,44 @@ export function HistoryView(props: {
 
           {/* Tablet Collapsible Search Capsule (Admin/Unauthenticated only) */}
           {!props.userSession && showSearchCapsule && (
-            <div className="lg:hidden flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={statusSearchQuery}
-                onChange={(e) => setStatusSearchQuery(e.target.value)}
-                placeholder="Cari petugas..."
-                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-              />
+            <div className="lg:hidden flex flex-wrap items-center h-auto min-h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-[24px] p-2 px-4 shadow-sm gap-2 w-full animate-fadeIn">
+              <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={statusSearchQuery}
+                  onChange={(e) => setStatusSearchQuery(e.target.value)}
+                  placeholder="Cari petugas..."
+                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+                />
+              </div>
+              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
+                <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("daily")}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "daily"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Status Harian
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("chrono")}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "chrono"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Riwayat Kronologis
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -987,16 +1076,44 @@ export function HistoryView(props: {
 
           {/* Mobile Search Capsule */}
           {showSearchCapsule && (
-            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-4 shadow-sm gap-2 w-full animate-fadeIn">
-              <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={statusSearchQuery}
-                onChange={(e) => setStatusSearchQuery(e.target.value)}
-                placeholder="Cari petugas..."
-                className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
-              />
+            <div className="flex flex-wrap items-center h-auto min-h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-[24px] p-2 px-4 shadow-sm gap-2 w-full animate-fadeIn">
+              <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={statusSearchQuery}
+                  onChange={(e) => setStatusSearchQuery(e.target.value)}
+                  placeholder="Cari petugas..."
+                  className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
+                />
+              </div>
+              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
+                <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("daily")}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "daily"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Status Harian
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminViewMode("chrono")}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                      adminViewMode === "chrono"
+                        ? "bg-[var(--primary)] text-white shadow-xs"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                    }`}
+                  >
+                    Riwayat Kronologis
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

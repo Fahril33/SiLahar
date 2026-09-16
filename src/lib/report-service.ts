@@ -13,6 +13,7 @@ import { logSafeError, logSafeWarn } from "./logger";
 import { mapReportRow } from "./report-mappers";
 import {
   formatReporterNameForDatabase,
+  isAdminName,
   normalizeReporterName,
 } from "./reporter-name";
 import type {
@@ -201,7 +202,7 @@ export async function fetchReporterDirectoryNames() {
 
   const { data, error } = await supabase
     .from("reporter_directory")
-    .select("full_name, total_reports, last_reported_at")
+    .select("full_name")
     .eq("is_active", true)
     .order("full_name", { ascending: true });
 
@@ -209,7 +210,9 @@ export async function fetchReporterDirectoryNames() {
     throw error;
   }
 
-  return (data ?? []).map((row) => row.full_name);
+  return (data ?? [])
+    .map((row) => row.full_name)
+    .filter((name) => !isAdminName(name));
 }
 
 export async function fetchReporterDirectoryProfiles() {
@@ -228,9 +231,9 @@ export async function fetchReporterDirectoryProfiles() {
     throw error;
   }
 
-  return (data ?? []).map((row) =>
-    mapReporterDirectoryRow(row as ReporterDirectoryRow),
-  );
+  return (data ?? [])
+    .map((row) => mapReporterDirectoryRow(row as ReporterDirectoryRow))
+    .filter((profile) => !isAdminName(profile.fullName));
 }
 
 export async function fetchReportRules(): Promise<ReportRules> {
@@ -681,6 +684,9 @@ export async function deleteReporterDirectoryTrace(reporterId: string) {
 }
 
 export async function authenticateReporter(name: string, pass: string): Promise<ReporterDirectoryProfile | null> {
+  if (isAdminName(name)) {
+    return null;
+  }
   if (!supabase) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
@@ -707,6 +713,9 @@ export async function authenticateReporter(name: string, pass: string): Promise<
 }
 
 export async function registerReporter(name: string, pass: string): Promise<ReporterDirectoryProfile> {
+  if (isAdminName(name)) {
+    throw new Error("Akun administrator tidak dapat didaftarkan sebagai petugas.");
+  }
   if (!supabase) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }

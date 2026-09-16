@@ -4,6 +4,7 @@ import pdfStyles from "../styles/report-pdf.css?inline";
 import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
 import type { PendingPhotoMap } from "./report-draft";
+import { fetchTeamTypes, getHeaderLinesForTeam } from "./report-template-service";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
 const PDF_IMAGE_MAX_EDGE_PX = 1080;
@@ -247,8 +248,19 @@ async function materializeReportImages(
     }),
   );
 
+  let headerLines = report.headerLines;
+  if (!headerLines || headerLines.length === 0) {
+    try {
+      const teamTypes = await fetchTeamTypes();
+      headerLines = getHeaderLinesForTeam(report.tim, teamTypes);
+    } catch {
+      headerLines = getHeaderLinesForTeam(report.tim, []);
+    }
+  }
+
   return {
     ...report,
+    headerLines,
     activities,
   };
 }

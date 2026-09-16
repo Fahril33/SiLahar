@@ -1,15 +1,25 @@
 import type { Report } from "../types/report";
 import { supabase } from "../lib/supabase";
 
-export function ReportPdfDocument(props: { report: Report }) {
+export function ReportPdfDocument(props: { report: Report; headerLines?: string[] }) {
   const { report } = props;
+  const activeHeaders =
+    props.headerLines && props.headerLines.length > 0
+      ? props.headerLines
+      : report.headerLines && report.headerLines.length > 0
+      ? report.headerLines
+      : [
+          "LAPORAN HARIAN KINERJA TIM REAKSI CEPAT",
+          "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
+          "TAHUN ANGGARAN 2026",
+        ];
 
   return (
     <article className="pdf-report-page">
       <header className="pdf-report-header">
-        <p>LAPORAN HARIAN KINERJA TIM REAKSI CEPAT</p>
-        <p>BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH</p>
-        <p>TAHUN ANGGARAN 2026</p>
+        {activeHeaders.map((line, idx) => (
+          <p key={idx}>{line}</p>
+        ))}
       </header>
 
       <section className="pdf-report-identity">

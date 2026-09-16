@@ -37,6 +37,7 @@ export type Report = {
   approverDivisionHeadTitle: string;
   approverDivisionHeadNip: string;
   notes: string[];
+  headerLines?: string[];
   createdAt: string;
   updatedAt: string;
   createdByRole: ActorRole;

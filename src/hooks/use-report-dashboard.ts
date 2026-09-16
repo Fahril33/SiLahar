@@ -40,6 +40,7 @@ import {
   deduplicateReporterNames,
   formatReporterNameForDatabase,
   includesReporterName,
+  isAdminName,
   isSameReporterName,
   resolveCanonicalName,
 } from "../lib/reporter-name";
@@ -55,8 +56,10 @@ import {
 import {
   createApproverDraftFromTemplate,
   fetchActiveReportTemplateConfig,
+  saveCustomHeaderLines,
   saveTemplateApproverDefaults,
 } from "../lib/report-template-service";
+import { DEFAULT_HEADER_LINES } from "../types/team-type";
 import { getTemplateApproverByRole } from "../lib/report-template-defaults";
 import {
   applyTemplateDefaultsToDraft,
@@ -404,6 +407,11 @@ export function useReportDashboard() {
   const [adminSubmitting, setAdminSubmitting] = useState(false);
   const [adminActiveAction, setAdminActiveAction] = useState<AdminActiveAction>(null);
   const [adminRuleDraft, setAdminRuleDraft] = useState<ReportRules>(initialReportRules);
+  const [adminHeaderLinesDraft, setAdminHeaderLinesDraft] = useState<string[]>(() =>
+    activeReportTemplateConfig?.headerLines && activeReportTemplateConfig.headerLines.length > 0
+      ? activeReportTemplateConfig.headerLines
+      : DEFAULT_HEADER_LINES,
+  );
   const [adminTemplateApproverDrafts, setAdminTemplateApproverDrafts] =
     useState<Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>>(
       () => createDefaultApproverDraftMap(null),
@@ -518,8 +526,13 @@ export function useReportDashboard() {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          setUserSession(parsed);
-          setDraft((current) => normalizeDraft({ ...current, nama: parsed.fullName }));
+          if (parsed && parsed.fullName && !isAdminName(parsed.fullName)) {
+            setUserSession(parsed);
+            setDraft((current) => normalizeDraft({ ...current, nama: parsed.fullName }));
+          } else {
+            setUserSession(null);
+            window.localStorage.removeItem("silahar:user-session");
+          }
         } catch (e) {
           logSafeError(e, "Dashboard/UserSessionLoad");
         }
@@ -640,7 +653,8 @@ export function useReportDashboard() {
         fetchReports(), fetchReporterDirectoryProfiles(), fetchReportRules(),
         fetchExcelReportTemplates(), fetchActiveReportTemplateConfig(), fetchNotificationSettings()
       ]);
-      const dbRN = dbRP.filter(r => r.isActive).map(r => r.fullName);
+      const dbRPFiltered = dbRP.filter(r => r.isActive && !isAdminName(r.fullName));
+      const dbRN = dbRPFiltered.map(r => r.fullName);
       
       const dbReportsWithSource: Report[] = dbR.map(r => ({ ...r, source: "db" as const }));
       const dbReportIds = new Set(dbReportsWithSource.map(r => r.id));
@@ -653,18 +667,31 @@ export function useReportDashboard() {
       const mergedReports = [...dbReportsWithSource, ...localOnlyReports];
 
       let currentUserSession = userSession;
+      if (currentUserSession && isAdminName(currentUserSession.fullName)) {
+        currentUserSession = null;
+        setUserSession(null);
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem("silahar:user-session");
+        }
+      }
+
       if (!currentUserSession && typeof window !== "undefined") {
         const stored = window.localStorage.getItem("silahar:user-session");
         if (stored) {
           try {
-            currentUserSession = JSON.parse(stored);
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.fullName && !isAdminName(parsed.fullName)) {
+              currentUserSession = parsed;
+            } else {
+              window.localStorage.removeItem("silahar:user-session");
+            }
           } catch {}
         }
       }
 
-      const mergedProfiles = [...dbRP];
-      if (currentUserSession) {
-        const matchingDbProfile = dbRP.find(p => isSameReporterName(p.fullName, currentUserSession!.fullName));
+      const mergedProfiles = dbRPFiltered.filter(p => !isAdminName(p.fullName));
+      if (currentUserSession && !isAdminName(currentUserSession.fullName)) {
+        const matchingDbProfile = mergedProfiles.find(p => isSameReporterName(p.fullName, currentUserSession!.fullName));
         if (matchingDbProfile) {
           // If profile exists in new DB, seamlessly sync profile details while preserving session without requiring re-login
           const syncedSession: ReporterDirectoryProfile = {
@@ -687,9 +714,11 @@ export function useReportDashboard() {
       }
 
       const cachedNames = loadCachedReporterNames();
-      const reportNames = mergedReports.map(r => r.nama).filter(Boolean);
+      const reportNames = mergedReports.map(r => r.nama).filter(n => n && !isAdminName(n));
       const deviceNames = loadDeviceSubmittedNames();
-      const activeUserNames = currentUserSession?.fullName ? [currentUserSession.fullName] : [];
+      const activeUserNames = (currentUserSession?.fullName && !isAdminName(currentUserSession.fullName))
+        ? [currentUserSession.fullName]
+        : [];
 
       const allReporterNames = deduplicateReporterNames([
         ...dbRN,
@@ -702,6 +731,9 @@ export function useReportDashboard() {
       setReports(mergedReports);
       setReporterProfiles(mergedProfiles);
       setActiveReportTemplateConfig(dbATC);
+      if (dbATC.headerLines && dbATC.headerLines.length > 0) {
+        setAdminHeaderLinesDraft(dbATC.headerLines);
+      }
       setNotificationSettings(dbNS);
       setRuntimeNotificationSettings(dbNS);
       persistNotificationSettings(dbNS);
@@ -2223,6 +2255,36 @@ export function useReportDashboard() {
     finally { setAdminSubmitting(false); setAdminActiveAction(null); }
   }
 
+  async function handleSaveHeaderLines(headerLines: string[]) {
+    if (!adminSession || !activeReportTemplateConfig) {
+      await showError("Akses Admin", "Sesi admin atau template aktif tidak ditemukan.");
+      return;
+    }
+    setAdminSubmitting(true);
+    setAdminActiveAction("save-header-lines" as any);
+    try {
+      const next = await saveCustomHeaderLines(
+        activeReportTemplateConfig.id,
+        headerLines,
+      );
+      setActiveReportTemplateConfig(next);
+      if (next.headerLines && next.headerLines.length > 0) {
+        setAdminHeaderLinesDraft(next.headerLines);
+      }
+      await loadDashboardData();
+      await showSuccess(
+        "Kop Laporan Diperbarui",
+        "Header/Kop dokumen laporan berhasil disimpan ke database.",
+      );
+    } catch (err: any) {
+      logSafeError(err, "Dashboard/SaveHeaderLines");
+      await showError("Simpan Gagal", err.message || "Gagal menyimpan Kop laporan.");
+    } finally {
+      setAdminSubmitting(false);
+      setAdminActiveAction(null);
+    }
+  }
+
   function changeNotificationSettings<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
     setNotificationSettings(c => ({ ...c, [key]: value }));
   }
@@ -2253,6 +2315,7 @@ export function useReportDashboard() {
     loading, submitting, pendingPreviews, similarName, nameCheckLoading, nameExistsInDirectory,
     reportRules, userSession, userAuthLoading, userSubmitting, adminSession, adminEmail, setAdminEmail, adminPassword, setAdminPassword,
     adminAuthLoading, adminSubmitting, adminActiveAction, adminActiveItemId, adminRuleDraft,
+    adminHeaderLinesDraft, setAdminHeaderLinesDraft, handleSaveHeaderLines,
     adminTemplateApproverDrafts, adminReporterDraftNames,
     canUseAnyReportDate:
       OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate ||

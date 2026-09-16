@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { AutocompleteInput } from "./autocomplete-input";
-import { isSameReporterName, resolveCanonicalName } from "../lib/reporter-name";
+import { isSameReporterName, resolveCanonicalName, isAdminName } from "../lib/reporter-name";
 import bpbdIcon from "../assets/image/icon-bpbd.png";
 
 type LoginViewProps = {
@@ -23,7 +23,8 @@ export function LoginView(props: LoginViewProps) {
   const [activeTab, setActiveTab] = useState<AuthTab>("user-login");
   const [userName, setUserName] = useState(() => {
     if (typeof window !== "undefined") {
-      return window.localStorage.getItem("silahar:last-login-username") || "";
+      const stored = window.localStorage.getItem("silahar:last-login-username") || "";
+      return isAdminName(stored) ? "" : stored;
     }
     return "";
   });
@@ -45,6 +46,10 @@ export function LoginView(props: LoginViewProps) {
         setLoginError("Nama petugas wajib diisi.");
         return;
       }
+      if (isAdminName(trimmedName)) {
+        setLoginError("Email/nama admin tidak dapat digunakan pada login petugas. Silakan gunakan tab 'Masuk Admin'.");
+        return;
+      }
       // Validate: name must exist in reporterNames (case-insensitive)
       const existsInDirectory = props.reporterNames.some(n => isSameReporterName(n, trimmedName));
       if (!existsInDirectory) {
@@ -58,6 +63,10 @@ export function LoginView(props: LoginViewProps) {
       const trimmedName = registerName.trim();
       if (!trimmedName) {
         setLoginError("Nama petugas baru wajib diisi.");
+        return;
+      }
+      if (isAdminName(trimmedName)) {
+        setLoginError("Email/nama admin tidak dapat didaftarkan sebagai petugas. Silakan gunakan tab 'Masuk Admin'.");
         return;
       }
       // Validate: name must NOT exist in reporterNames (case-insensitive)
