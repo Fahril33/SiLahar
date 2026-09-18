@@ -1300,15 +1300,14 @@ export function EntryView(props: EntryViewProps) {
                           </div>
                         ) : null}
                         {props.activityTimeIssues[index]?.endBeforeStart ? (
-                          <div className="inline-note inline-note-danger">
-                            Jam selesai tidak boleh lebih awal dari jam mulai.
+                          <div className="inline-note inline-note-warning">
+                            Info: Jam selesai tercatat lebih awal dari jam mulai.
                           </div>
                         ) : null}
                         {props.activityTimeIssues[index]
                           ?.startsBeforePreviousEnd ? (
-                          <div className="inline-note inline-note-danger">
-                            Jam mulai aktivitas ini bertabrakan dengan jam
-                            selesai aktivitas sebelumnya.
+                          <div className="inline-note inline-note-warning">
+                            Info: Jam mulai aktivitas ini mendahului jam selesai aktivitas sebelumnya.
                           </div>
                         ) : null}
 

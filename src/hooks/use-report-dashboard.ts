@@ -252,10 +252,6 @@ function createDraftSnapshot(draft: DraftReport, pendingPhotos: PendingPhotoMap)
 function isActivityComplete(
   activity: DraftReport["activities"][number],
   pendingPhotos: PendingPhotoMap,
-  issue: {
-    endBeforeStart: boolean;
-    startsBeforePreviousEnd: boolean;
-  },
 ) {
   const hasPhoto =
     activity.photos.length > 0 || (pendingPhotos[activity.no]?.length ?? 0) > 0;
@@ -264,9 +260,7 @@ function isActivityComplete(
     activity.description.trim() &&
       activity.startTime &&
       activity.endTime &&
-      hasPhoto &&
-      !issue.endBeforeStart &&
-      !issue.startsBeforePreviousEnd,
+      hasPhoto,
   );
 }
 
@@ -296,20 +290,8 @@ function validateDraftBeforeDatabaseSave(
     return "Hanya laporan hari berjalan yang diizinkan.";
   }
 
-  const issues = getActivityTimeIssuesForDraft(draft);
-  if (issues.some((item) => item.endBeforeStart || item.startsBeforePreviousEnd)) {
-    return "Periksa kembali urutan jam aktivitas.";
-  }
-
-  const completionStates = draft.activities.map((activity, index) =>
-    isActivityComplete(
-      activity,
-      pendingPhotos,
-      issues[index] ?? {
-        endBeforeStart: false,
-        startsBeforePreviousEnd: false,
-      },
-    ),
+  const completionStates = draft.activities.map((activity) =>
+    isActivityComplete(activity, pendingPhotos),
   );
   const fatalIndex = completionStates.findIndex((done) => !done);
   if (fatalIndex !== -1) {
@@ -809,7 +791,7 @@ export function useReportDashboard() {
 
   const activityTimeIssues = useMemo(() => getActivityTimeIssuesForDraft(draft), [draft]);
 
-  const activityCompletionStates = useMemo(() => draft.activities.map((act, i) => isActivityComplete(act, pendingPhotos, activityTimeIssues[i] ?? { endBeforeStart: false, startsBeforePreviousEnd: false })), [activityTimeIssues, draft.activities, pendingPhotos]);
+  const activityCompletionStates = useMemo(() => draft.activities.map((act) => isActivityComplete(act, pendingPhotos)), [draft.activities, pendingPhotos]);
   const activeExcelTemplate = useMemo(() => excelTemplates.find(t => t.isActive) ?? DEFAULT_LOCAL_EXCEL_TEMPLATE, [excelTemplates]);
   const localDraftCount = savedLocalDrafts.length;
   const queuedLocalDraftCount = savedLocalDrafts.filter(item => item.uploadStatus === "queued" || item.uploadStatus === "uploading").length;
