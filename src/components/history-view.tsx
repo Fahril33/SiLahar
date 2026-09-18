@@ -754,7 +754,7 @@ export function HistoryView(props: {
       if (a.done && a.report && b.report) {
         const timeA = new Date(a.report.updatedAt).getTime();
         const timeB = new Date(b.report.updatedAt).getTime();
-        return timeB - timeA;
+        if (timeA !== timeB) return timeB - timeA;
       }
       return a.name.localeCompare(b.name);
     });

@@ -783,11 +783,32 @@ export function useReportDashboard() {
   const searchResultLoaded = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot === currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
   const searchResultCanReload = useMemo(() => Boolean(searchResult && (loadedSearchReportId !== searchResult.id || loadedSearchSnapshot !== currentDraftSnapshot)), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
   const searchResultNeedsReload = useMemo(() => Boolean(searchResult && loadedSearchReportId === searchResult.id && loadedSearchSnapshot !== currentDraftSnapshot), [currentDraftSnapshot, loadedSearchReportId, loadedSearchSnapshot, searchResult]);
-  const statusRows = useMemo(() => reporterNames.map(name => ({
-    name,
-    done: reports.some(r => r.reportDate === historyDate && isSameReporterName(r.nama, name)),
-    report: reports.find(r => r.reportDate === historyDate && isSameReporterName(r.nama, name)) ?? null,
-  })).sort((a, b) => a.name.localeCompare(b.name)), [historyDate, reporterNames, reports]);
+  const statusRows = useMemo(
+    () =>
+      reporterNames
+        .map((name) => ({
+          name,
+          done: reports.some(
+            (r) => r.reportDate === historyDate && isSameReporterName(r.nama, name),
+          ),
+          report:
+            reports.find(
+              (r) => r.reportDate === historyDate && isSameReporterName(r.nama, name),
+            ) ?? null,
+        }))
+        .sort((a, b) => {
+          if (a.done !== b.done) {
+            return a.done ? -1 : 1;
+          }
+          if (a.done && a.report && b.report) {
+            const timeA = new Date(a.report.updatedAt).getTime();
+            const timeB = new Date(b.report.updatedAt).getTime();
+            if (timeA !== timeB) return timeB - timeA;
+          }
+          return a.name.localeCompare(b.name);
+        }),
+    [historyDate, reporterNames, reports],
+  );
 
   const activityTimeIssues = useMemo(() => getActivityTimeIssuesForDraft(draft), [draft]);
 
