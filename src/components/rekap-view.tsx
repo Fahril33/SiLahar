@@ -1,6 +1,8 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 import type { Report } from "../types/report";
+import { fetchTeamTypes } from "../lib/report-template-service";
+import type { TeamType } from "../types/team-type";
 import { getWitaToday, formatWitaDate } from "../lib/time";
 import { isSameReporterName, includesReporterName } from "../lib/reporter-name";
 import {
@@ -22,6 +24,64 @@ type RekapViewProps = {
 };
 
 type FilterMode = "harian" | "bulanan" | "tahunan";
+
+type TeamColorInfo = {
+  varColor: string;
+  bgClass: string;
+  badgeClass: string;
+};
+
+const PRESET_TEAM_COLORS: Record<string, TeamColorInfo> = {
+  TRC: {
+    varColor: "#3b82f6",
+    bgClass: "bg-blue-500",
+    badgeClass: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  },
+  PUSDALOPS: {
+    varColor: "#10b981",
+    bgClass: "bg-emerald-500",
+    badgeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  },
+  "PUSDALOPS PB": {
+    varColor: "#10b981",
+    bgClass: "bg-emerald-500",
+    badgeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  },
+  LOGISTIK: {
+    varColor: "#f59e0b",
+    bgClass: "bg-amber-500",
+    badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
+  PREVENSI: {
+    varColor: "#8b5cf6",
+    bgClass: "bg-purple-500",
+    badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  },
+  REHABILITASI: {
+    varColor: "#ec4899",
+    bgClass: "bg-pink-500",
+    badgeClass: "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20",
+  },
+};
+
+const DYNAMIC_PALETTE: TeamColorInfo[] = [
+  { varColor: "#f59e0b", bgClass: "bg-amber-500", badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  { varColor: "#8b5cf6", bgClass: "bg-purple-500", badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" },
+  { varColor: "#ec4899", bgClass: "bg-pink-500", badgeClass: "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20" },
+  { varColor: "#14b8a6", bgClass: "bg-teal-500", badgeClass: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20" },
+  { varColor: "#f97316", bgClass: "bg-orange-500", badgeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" },
+  { varColor: "#6366f1", bgClass: "bg-indigo-500", badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" },
+  { varColor: "#06b6d4", bgClass: "bg-cyan-500", badgeClass: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20" },
+];
+
+function getTeamColorInfo(teamName: string, index = 0): TeamColorInfo {
+  const norm = (teamName || "").trim().toUpperCase();
+  if (PRESET_TEAM_COLORS[norm]) {
+    return PRESET_TEAM_COLORS[norm];
+  }
+  const paletteIdx = Math.abs(index) % DYNAMIC_PALETTE.length;
+  return DYNAMIC_PALETTE[paletteIdx];
+}
 
 /* ── SVG Icon Helpers ── */
 
@@ -202,6 +262,19 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
   const [monthlyYear, setMonthlyYear] = useState(currentYear);
   const [monthlyWeek, setMonthlyWeek] = useState<number>(-1); // -1 = all weeks
   const [yearlyYear, setYearlyYear] = useState(currentYear);
+  const [teamTypes, setTeamTypes] = useState<TeamType[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchTeamTypes().then((types) => {
+      if (isMounted && types) {
+        setTeamTypes(types);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleAdjustDay = useCallback((amount: number) => {
     const parts = dailyDate.split("-");
@@ -348,8 +421,48 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
       (acc, curr) => acc + (curr.activities?.length || 0),
       0,
     );
-    const trcCount = filteredReports.filter((r) => r.tim === "TRC").length;
-    const pusdalopsCount = filteredReports.filter((r) => r.tim === "PUSDALOPS").length;
+
+    // ── Dynamic Team Statistics ──
+    const teamCountMap: Record<string, number> = {};
+    filteredReports.forEach((r) => {
+      const t = (r.tim || "LAINNYA").trim().toUpperCase();
+      teamCountMap[t] = (teamCountMap[t] || 0) + 1;
+    });
+
+    const knownTeamSet = new Set<string>();
+    teamTypes.forEach((t) => {
+      if (t.name) knownTeamSet.add(t.name.trim().toUpperCase());
+      if (t.code) knownTeamSet.add(t.code.trim().toUpperCase());
+    });
+    filteredReports.forEach((r) => {
+      if (r.tim) knownTeamSet.add(r.tim.trim().toUpperCase());
+    });
+
+    if (knownTeamSet.size === 0) {
+      knownTeamSet.add("TRC");
+      knownTeamSet.add("PUSDALOPS");
+    }
+
+    const totalFilteredReportsCount = filteredReports.length;
+
+    let teamIdx = 0;
+    const teamStatsList = Array.from(knownTeamSet)
+      .map((teamName) => {
+        const count = teamCountMap[teamName] || 0;
+        const pct =
+          totalFilteredReportsCount > 0
+            ? Math.round((count / totalFilteredReportsCount) * 100)
+            : 0;
+        const color = getTeamColorInfo(teamName, teamIdx++);
+        return {
+          key: teamName,
+          name: teamName,
+          count,
+          pct,
+          color,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
 
     const sortedReports = [...reports].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -375,6 +488,17 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
         const memberReports = filteredReports.filter((r) =>
           isSameReporterName(r.nama, name),
         );
+
+        // Find member's team from filteredReports first, then all reports
+        const memberReportWithTeam =
+          filteredReports.find(
+            (r) => isSameReporterName(r.nama, name) && Boolean(r.tim?.trim()),
+          ) ||
+          reports.find(
+            (r) => isSameReporterName(r.nama, name) && Boolean(r.tim?.trim()),
+          );
+        const memberTeam = memberReportWithTeam?.tim?.trim().toUpperCase() || "-";
+
         // Only count unique working days submitted starting from effective operational start date
         const uniqueWorkingDays = new Set(
           memberReports
@@ -398,6 +522,7 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
 
         return {
           name,
+          tim: memberTeam,
           totalReports: memberReports.length,
           percentage: pct,
           totalActivities: memberActivities,
@@ -417,19 +542,16 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
       notSubmittedCount,
       complianceRate,
       totalActivities,
-      trcCount,
-      pusdalopsCount,
+      teamStatsList,
       latestActivities,
       memberStats,
       targetDateStr,
       isTargetToday,
     };
-  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate, todayWita, effectiveStartDate]);
+  }, [reports, reporterNames, dateRange, searchTerm, filterMode, dailyDate, todayWita, effectiveStartDate, teamTypes]);
 
-  const totalCount = stats.trcCount + stats.pusdalopsCount;
+  const totalCount = stats.totalReports;
   const hasData = totalCount > 0;
-  const trcPercent = hasData ? Math.round((stats.trcCount / totalCount) * 100) : 0;
-  const pusdalopsPercent = hasData ? 100 - trcPercent : 0;
 
   const complianceData = [
     { name: "Sudah Mengisi", value: stats.submittedTodayCount, color: "var(--success)" },
@@ -437,10 +559,13 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
   ];
 
   const distributionData = hasData
-    ? [
-        { name: "TRC", value: stats.trcCount, color: "var(--info)" },
-        { name: "PUSDALOPS", value: stats.pusdalopsCount, color: "var(--success)" }
-      ]
+    ? stats.teamStatsList
+        .filter((t) => t.count > 0)
+        .map((t) => ({
+          name: t.name,
+          value: t.count,
+          color: t.color.varColor,
+        }))
     : [
         { name: "Belum Ada", value: 1, color: "var(--border-soft)" }
       ];
@@ -605,13 +730,10 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
             {/* Distribusi legends (selalu tampil) */}
             <div className="space-y-1">
               <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Distribusi Tim</span>
-              {[
-                { label: "TRC", count: stats.trcCount, pct: trcPercent, color: "bg-[var(--info)]" },
-                { label: "PUSDALOPS", count: stats.pusdalopsCount, pct: pusdalopsPercent, color: "bg-[var(--success)]" },
-              ].map(leg => (
-                <div key={leg.label} className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${leg.color} shrink-0`} />
-                  <span className="text-[10px] font-semibold text-[var(--text-primary)] flex-1 truncate">{leg.label}</span>
+              {stats.teamStatsList.map(leg => (
+                <div key={leg.key} className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${leg.color.bgClass} shrink-0`} />
+                  <span className="text-[10px] font-semibold text-[var(--text-primary)] flex-1 truncate">{leg.name}</span>
                   <span className="text-[10px] tabular-nums font-bold text-[var(--text-muted)] shrink-0">{leg.count}</span>
                   <span className="text-[9px] tabular-nums font-semibold text-[var(--text-muted)] bg-[var(--surface-muted)] rounded-md px-1 py-0.5 min-w-[32px] text-center shrink-0">{leg.pct}%</span>
                 </div>
@@ -793,6 +915,7 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[var(--surface-panel-strong)]">
                   <th className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2 px-3 rounded-l-lg">Nama</th>
+                  <th className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2 px-2 text-center">Tim</th>
                   {filterMode === "harian" ? (
                     <th className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] py-2 px-2 text-center rounded-r-lg">Status</th>
                   ) : (
@@ -822,6 +945,15 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
                           </div>
                           <span className="text-xs font-semibold text-[var(--text-primary)] truncate">{member.name}</span>
                         </div>
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        {member.tim !== "-" ? (
+                          <span className={`inline-flex items-center text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${getTeamColorInfo(member.tim).badgeClass}`}>
+                            {member.tim}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-[var(--text-muted)]">-</span>
+                        )}
                       </td>
                       {filterMode === "harian" ? (
                         <td className="py-2.5 px-2 text-center">
@@ -861,7 +993,7 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={filterMode === "harian" ? 2 : 4} className="py-10 text-center text-xs text-[var(--text-muted)]">
+                    <td colSpan={filterMode === "harian" ? 3 : 5} className="py-10 text-center text-xs text-[var(--text-muted)]">
                       Tidak ada data untuk periode ini.
                     </td>
                   </tr>
@@ -893,12 +1025,8 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
                 className="rounded-xl border border-[var(--border-soft)] bg-[var(--surface-panel-strong)]/40 p-3 hover:bg-[var(--surface-muted)]/50 transition-colors duration-200"
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <div className={`h-6 w-6 rounded-lg flex items-center justify-center shrink-0 text-[8px] font-extrabold uppercase border ${
-                    act.tim === "TRC"
-                      ? "bg-[var(--info-soft)] text-[var(--info)] border-[var(--info-soft)]"
-                      : "bg-[var(--success-soft)] text-[var(--success)] border-[var(--success-soft)]"
-                  }`}>
-                    {act.tim === "TRC" ? "TRC" : "PD"}
+                  <div className={`h-6 w-6 rounded-lg flex items-center justify-center shrink-0 text-[8px] font-extrabold uppercase border px-1 truncate ${getTeamColorInfo(act.tim).badgeClass}`}>
+                    {act.tim || "TIM"}
                   </div>
                   <span className="text-[10px] font-bold text-[var(--text-primary)] truncate">{act.reporterName}</span>
                 </div>

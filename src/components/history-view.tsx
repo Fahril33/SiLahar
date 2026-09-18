@@ -482,27 +482,57 @@ export function HistoryView(props: {
     const lastDay = new Date(chronoYear, chronoMonth + 1, 0).getDate();
     const endOfMonth = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
 
-    // Clamp the end date to today if the selected period is the current month and year
+    // Total effective working days for the ENTIRE month
+    const totalMonthWorkingDaysStats = getEffectiveWorkingDaysInRange(
+      effectiveStart,
+      endOfMonth,
+      { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
+    );
+    const totalMonthTarget = totalMonthWorkingDaysStats.totalWorkingDays;
+
+    // Clamp effectiveEnd to today if viewing current month or future
     const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
 
-    if (effectiveStart > effectiveEnd) {
+    if (effectiveStart > endOfMonth || totalMonthTarget === 0) {
       return {
         percentage: 0,
         submitted: 0,
+        missed: 0,
+        upcoming: 0,
+        totalMonthTarget: 0,
         target: 0,
+        pctSubmitted: 0,
+        pctMissed: 0,
+        pctUpcoming: 0,
       };
     }
 
-    // Get expected working days in this range (hari wajib)
-    const expectedStats = getEffectiveWorkingDaysInRange(
-      effectiveStart,
-      effectiveEnd,
-      { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
-    );
-    const targetDays = expectedStats.totalWorkingDays;
+    // Days elapsed up to effectiveEnd (today or end of month)
+    const elapsedStats = effectiveStart <= effectiveEnd
+      ? getEffectiveWorkingDaysInRange(
+          effectiveStart,
+          effectiveEnd,
+          { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
+        )
+      : { totalWorkingDays: 0 };
 
-    // Filter unique working days submitted by this user in this range
-    const uniqueWorkingDaysSubmitted = new Set(
+    const elapsedTargetDays = elapsedStats.totalWorkingDays;
+
+    // Submitted working days in the whole month
+    const submittedDaysSet = new Set(
+      chronoReports
+        .map((r) => r.reportDate)
+        .filter(
+          (d) =>
+            d >= effectiveStart &&
+            d <= endOfMonth &&
+            isWorkDay(d),
+        ),
+    );
+    const submittedCount = submittedDaysSet.size;
+
+    // Submitted days up to today
+    const submittedSoFarCount = new Set(
       chronoReports
         .map((r) => r.reportDate)
         .filter(
@@ -513,18 +543,36 @@ export function HistoryView(props: {
         ),
     ).size;
 
+    // Missed days (working days up to today that were NOT submitted)
+    const missedCount = Math.max(0, elapsedTargetDays - submittedSoFarCount);
+
+    // Upcoming days (working days in the month after today)
+    const upcomingCount = Math.max(0, totalMonthTarget - (submittedCount + missedCount));
+
+    // Percentages relative to total month target for the 3 progress bar sections
+    const pctSubmitted = totalMonthTarget > 0 ? (submittedCount / totalMonthTarget) * 100 : 0;
+    const pctMissed = totalMonthTarget > 0 ? (missedCount / totalMonthTarget) * 100 : 0;
+    const pctUpcoming = totalMonthTarget > 0 ? Math.max(0, 100 - pctSubmitted - pctMissed) : 0;
+
+    // Consistency compliance percentage so far (based on elapsed working days up to today)
     const pct =
-      targetDays > 0
+      elapsedTargetDays > 0
         ? Math.min(
             100,
-            Math.round((uniqueWorkingDaysSubmitted / targetDays) * 100),
+            Math.round((submittedSoFarCount / elapsedTargetDays) * 100),
           )
-        : 0;
+        : 100;
 
     return {
       percentage: pct,
-      submitted: uniqueWorkingDaysSubmitted,
-      target: targetDays,
+      submitted: submittedCount,
+      missed: missedCount,
+      upcoming: upcomingCount,
+      totalMonthTarget,
+      target: totalMonthTarget,
+      pctSubmitted,
+      pctMissed,
+      pctUpcoming,
     };
   }, [
     chronoReports,
@@ -1199,7 +1247,7 @@ export function HistoryView(props: {
                       <span className="text-sm font-extrabold text-[var(--text-primary)] tabular-nums">{consistencyStats.percentage}%</span>
                     </div>
 
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       <div className="w-full h-2 rounded-full bg-[var(--surface-muted)] overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ease-out ${
@@ -1212,14 +1260,23 @@ export function HistoryView(props: {
                           style={{ width: `${consistencyStats.percentage}%` }}
                         />
                       </div>
-                      <div className="flex flex-col gap-0.5 text-[10px] text-[var(--text-muted)] font-semibold">
-                        <div className="flex justify-between">
-                          <span>Sudah mengisi:</span>
-                          <span className="text-[var(--text-primary)] font-bold">{consistencyStats.submitted} hari</span>
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[10px] text-[var(--text-muted)] font-semibold pt-0.5">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 inline-block" />
+                            <span>Sudah isi: <strong className="text-[var(--text-primary)]">{consistencyStats.submitted} hari</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 inline-block" />
+                            <span>Belum isi: <strong className="text-[var(--text-primary)]">{consistencyStats.missed} hari</strong></span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0 inline-block" />
+                            <span>Akan datang: <strong className="text-[var(--text-primary)]">{consistencyStats.upcoming} hari</strong></span>
+                          </div>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Target hari efektif:</span>
-                          <span className="text-[var(--text-primary)] font-bold">{consistencyStats.target} hari</span>
+                        <div className="ml-auto">
+                          Target: <strong className="text-[var(--text-primary)]">{consistencyStats.totalMonthTarget} hari kerja efektif</strong>
                         </div>
                       </div>
                     </div>
@@ -1273,7 +1330,7 @@ export function HistoryView(props: {
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="w-full h-2 rounded-full bg-[var(--surface-muted)] overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ease-out ${
@@ -1286,19 +1343,24 @@ export function HistoryView(props: {
                       style={{ width: `${consistencyStats.percentage}%` }}
                     />
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold">
-                    <span>
-                      Sudah mengisi:{" "}
-                      <strong className="text-[var(--text-primary)]">
-                        {consistencyStats.submitted} hari
-                      </strong>
-                    </span>
-                    <span>
-                      Target:{" "}
-                      <strong className="text-[var(--text-primary)]">
-                        {consistencyStats.target} hari kerja efektif
-                      </strong>
-                    </span>
+                  <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] font-semibold pt-0.5">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 inline-block" />
+                        <span>Sudah isi: <strong className="text-[var(--text-primary)]">{consistencyStats.submitted} hari</strong></span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 inline-block" />
+                        <span>Belum isi: <strong className="text-[var(--text-primary)]">{consistencyStats.missed} hari</strong></span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0 inline-block" />
+                        <span>Akan datang: <strong className="text-[var(--text-primary)]">{consistencyStats.upcoming} hari</strong></span>
+                      </div>
+                    </div>
+                    <div>
+                      Target: <strong className="text-[var(--text-primary)]">{consistencyStats.totalMonthTarget} hari kerja efektif</strong>
+                    </div>
                   </div>
                 </div>
               </div>

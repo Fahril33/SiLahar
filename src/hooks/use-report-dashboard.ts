@@ -564,7 +564,47 @@ export function useReportDashboard() {
     setDraft(c => applyTemplateDefaultsToDraft(c, previous, activeReportTemplateConfig));
   }, [activeReportTemplateConfig, view]);
 
-  useEffect(() => () => revokePreviews(pendingPreviews), [pendingPreviews]);
+  const pendingPreviewsRef = useRef(pendingPreviews);
+  useEffect(() => {
+    pendingPreviewsRef.current = pendingPreviews;
+  }, [pendingPreviews]);
+
+  // Keep pendingPreviews in sync with pendingPhotos and prevent lost previews when switching tabs/views
+  useEffect(() => {
+    setPendingPreviews((currentPreviews) => {
+      let needsUpdate = false;
+      const nextPreviews: PendingPreviewMap = { ...currentPreviews };
+
+      for (const [activityNoStr, files] of Object.entries(pendingPhotos)) {
+        const activityNo = Number(activityNoStr);
+        const existingList = currentPreviews[activityNo] ?? [];
+
+        const isInvalid =
+          existingList.length !== files.length ||
+          existingList.some((p) => !p.url);
+
+        if (isInvalid) {
+          needsUpdate = true;
+          existingList.forEach((p) => {
+            if (p.url) URL.revokeObjectURL(p.url);
+          });
+          nextPreviews[activityNo] = files.map((file) => ({
+            name: file.name,
+            url: URL.createObjectURL(file),
+          }));
+        }
+      }
+
+      return needsUpdate ? nextPreviews : currentPreviews;
+    });
+  }, [pendingPhotos]);
+
+  // Revoke object URLs only when the dashboard component unmounts on application teardown
+  useEffect(() => {
+    return () => {
+      revokePreviews(pendingPreviewsRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!draft.nama.trim()) {
