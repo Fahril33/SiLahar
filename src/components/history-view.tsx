@@ -20,6 +20,7 @@ import {
   resolveEffectiveSystemStartDate,
   getSystemStartDateLabel,
 } from "../lib/system-date";
+import { printMultipleReportsDocument } from "../lib/exporters";
 
 function FileTextIcon(props: { className?: string }) {
   return (
@@ -305,6 +306,11 @@ export function HistoryView(props: {
     report: Report,
     format?: "a4" | "f4" | "legal" | "letter",
   ) => Promise<void>;
+  onHandlePrintAll?: (
+    reports: Report[],
+    format?: "a4" | "f4" | "legal" | "letter",
+  ) => Promise<void>;
+  paperFormat?: "a4" | "f4" | "legal" | "letter";
   onHandleSaveAsPdf: (report: Report) => Promise<void>;
   onHandleUnsupportedMobilePrint: () => Promise<void>;
   onHandleDeleteReport?: (report: Report) => Promise<void>;
@@ -465,6 +471,30 @@ export function HistoryView(props: {
     chronoYear,
     effectiveStartDate,
   ]);
+
+  const [isPrintingAll, setIsPrintingAll] = useState(false);
+
+  // Active reports for logged-in user in chronological view (sorted by date ascending)
+  const activeReportsToPrint = useMemo(() => {
+    if (!props.userSession) return [];
+    return [...chronoReports]
+      .filter((r) => Boolean(r && r.reportDate))
+      .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
+  }, [props.userSession, chronoReports]);
+
+  const handlePrintAllReports = async () => {
+    if (activeReportsToPrint.length === 0 || isPrintingAll) return;
+    setIsPrintingAll(true);
+    try {
+      if (props.onHandlePrintAll) {
+        await props.onHandlePrintAll(activeReportsToPrint, props.paperFormat ?? "a4");
+      } else {
+        await printMultipleReportsDocument(activeReportsToPrint, props.paperFormat ?? "a4");
+      }
+    } finally {
+      setIsPrintingAll(false);
+    }
+  };
 
   const consistencyStats = useMemo(() => {
     if (!showChronologicalView || !props.userSession) return null;
@@ -916,89 +946,115 @@ export function HistoryView(props: {
               )}
             </div>
 
-            {/* Unified Search / Date Pill */}
-            <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
-              {/* Only show staff search for Admin / Unauthenticated */}
-              {!props.userSession && (
-                <>
-                  {/* Desktop Inline Search */}
-                  <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
-                    <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+            {/* Right-aligned Actions & Unified Search / Date Pill */}
+            <div className="flex items-center gap-2.5 flex-wrap justify-end">
+              {/* Desktop-only Print All Active Reports for Logged-In User */}
+              {Boolean(props.userSession) && (
+                <button
+                  type="button"
+                  onClick={() => void handlePrintAllReports()}
+                  disabled={isPrintingAll || activeReportsToPrint.length === 0}
+                  className="hidden md:inline-flex items-center gap-2 h-[46px] px-4 rounded-full bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] hover:border-[var(--primary)] text-xs font-bold text-[var(--text-primary)] hover:text-[var(--primary)] shadow-sm hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  title={`Cetak semua laporan aktif (${activeReportsToPrint.length} laporan) - Terpisah per halaman per tanggal`}
+                >
+                  {isPrintingAll ? (
+                    <>
+                      <SpinnerIcon />
+                      <span>Menyiapkan Cetak...</span>
+                    </>
+                  ) : (
+                    <>
+                      <PrintIcon className="h-4 w-4 text-[var(--primary)]" />
+                      <span>Cetak Semua ({activeReportsToPrint.length})</span>
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Unified Search / Date Pill */}
+              <div className="flex items-center h-[46px] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full px-3.5 shadow-sm gap-2.5 max-w-md w-full md:w-auto">
+                {/* Only show staff search for Admin / Unauthenticated */}
+                {!props.userSession && (
+                  <>
+                    {/* Desktop Inline Search */}
+                    <div className="hidden lg:flex items-center gap-2 flex-1 min-w-0">
+                      <SearchIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
+                      <input
+                        type="text"
+                        value={statusSearchQuery}
+                        onChange={(e) => setStatusSearchQuery(e.target.value)}
+                        placeholder="Cari petugas..."
+                        className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-[120px] focus:ring-0 p-0"
+                      />
+                    </div>
+
+                    {/* Desktop-only Divider */}
+                    <span className="hidden lg:block h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+                    {/* Tablet-only Search Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowSearchCapsule((prev) => !prev)}
+                      className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
+                        showSearchCapsule
+                          ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10"
+                          : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                      title="Cari Petugas"
+                    >
+                      <SearchIcon className="h-4 w-4" />
+                    </button>
+
+                    {/* Tablet-only Divider */}
+                    <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+                  </>
+                )}
+
+                {/* Date Picker with Prev/Next Day buttons */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustDay(-1)}
+                    className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                    title="Hari Sebelumnya"
+                  >
+                    <ChevronLeftIcon className="h-3.5 w-3.5" />
+                  </button>
+
+                  <div className="flex items-center gap-1.5 px-0.5">
+                    <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
                     <input
-                      type="text"
-                      value={statusSearchQuery}
-                      onChange={(e) => setStatusSearchQuery(e.target.value)}
-                      placeholder="Cari petugas..."
-                      className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-[120px] focus:ring-0 p-0"
+                      type="date"
+                      value={historyDate}
+                      onChange={(e) => setHistoryDate(e.target.value)}
+                      className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
                     />
                   </div>
 
-                  {/* Desktop-only Divider */}
-                  <span className="hidden lg:block h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-                  {/* Tablet-only Search Toggle Button */}
                   <button
                     type="button"
-                    onClick={() => setShowSearchCapsule((prev) => !prev)}
-                    className={`lg:hidden h-8 w-8 rounded-full flex items-center justify-center shrink-0 transition ${
-                      showSearchCapsule
-                        ? "bg-[var(--primary)] text-white shadow-md shadow-[var(--primary)]/10"
-                        : "hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    }`}
-                    title="Cari Petugas"
+                    onClick={() => handleAdjustDay(1)}
+                    className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
+                    title="Hari Berikutnya"
                   >
-                    <SearchIcon className="h-4 w-4" />
+                    <ChevronRightIcon className="h-3.5 w-3.5" />
                   </button>
-
-                  {/* Tablet-only Divider */}
-                  <span className="lg:hidden h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-                </>
-              )}
-
-              {/* Date Picker with Prev/Next Day buttons */}
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleAdjustDay(-1)}
-                  className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-                  title="Hari Sebelumnya"
-                >
-                  <ChevronLeftIcon className="h-3.5 w-3.5" />
-                </button>
-
-                <div className="flex items-center gap-1.5 px-0.5">
-                  <CalendarIcon className="h-4 w-4 text-[var(--text-muted)] shrink-0" />
-                  <input
-                    type="date"
-                    value={historyDate}
-                    onChange={(e) => setHistoryDate(e.target.value)}
-                    className="bg-transparent border-0 outline-none text-xs text-[var(--text-primary)] cursor-pointer focus:ring-0 p-0 w-[115px]"
-                  />
                 </div>
 
+                {/* Vertical Divider */}
+                <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
+
+                {/* Reload Button */}
                 <button
                   type="button"
-                  onClick={() => handleAdjustDay(1)}
-                  className="h-6 w-6 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center transition shrink-0"
-                  title="Hari Berikutnya"
+                  onClick={() => void onReload()}
+                  disabled={loading}
+                  className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
+                  title="Muat ulang data"
                 >
-                  <ChevronRightIcon className="h-3.5 w-3.5" />
+                  {loading ? <SpinnerIcon /> : <ReloadIcon />}
                 </button>
               </div>
-
-              {/* Vertical Divider */}
-              <span className="h-4 w-[1px] bg-[var(--border-soft)] shrink-0" />
-
-              {/* Reload Button */}
-              <button
-                type="button"
-                onClick={() => void onReload()}
-                disabled={loading}
-                className="h-8 w-8 rounded-full hover:bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center justify-center shrink-0 disabled:opacity-50 transition"
-                title="Muat ulang data"
-              >
-                {loading ? <SpinnerIcon /> : <ReloadIcon />}
-              </button>
             </div>
           </div>
 

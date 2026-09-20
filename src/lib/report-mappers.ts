@@ -30,10 +30,12 @@ type ReportRow = {
   template_approver_coordinator_id: string | null;
   approver_coordinator_name: string | null;
   approver_coordinator_nip: string | null;
+  approver_coordinator_signature_url?: string | null;
   template_approver_division_head_id: string | null;
   approver_division_head_name: string | null;
   approver_division_head_title: string | null;
   approver_division_head_nip: string | null;
+  approver_division_head_signature_url?: string | null;
   created_at: string;
   updated_at: string;
   created_by_role: "admin" | "anonymous";
@@ -43,6 +45,7 @@ type ReportRow = {
   daily_report_activities?: ActivityRow[];
   report_template_notes?: { note_order: number; note_text: string }[];
   approver_coordinator_role?: any;
+  approver_division_head_role?: any;
 };
 
 function mapPhoto(row: PhotoRow): ReportActivityPhoto {
@@ -88,10 +91,16 @@ export function mapReportRow(row: ReportRow): Report {
     approverCoordinatorLabel: (Array.isArray(row.approver_coordinator_role)
       ? row.approver_coordinator_role[0]?.scope_label
       : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"),
+    approverCoordinatorSignatureUrl: (Array.isArray(row.approver_coordinator_role)
+      ? row.approver_coordinator_role[0]?.signature_url
+      : row.approver_coordinator_role?.signature_url) ?? row.approver_coordinator_signature_url ?? "",
     approverDivisionHeadTemplateId: row.template_approver_division_head_id,
     approverDivisionHead: row.approver_division_head_name ?? "",
     approverDivisionHeadTitle: row.approver_division_head_title ?? "",
     approverDivisionHeadNip: row.approver_division_head_nip ?? "",
+    approverDivisionHeadSignatureUrl: (Array.isArray(row.approver_division_head_role)
+      ? row.approver_division_head_role[0]?.signature_url
+      : row.approver_division_head_role?.signature_url) ?? row.approver_division_head_signature_url ?? "",
     notes: (row.report_template_notes ?? []).sort((a, b) => a.note_order - b.note_order).map((note) => note.note_text),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

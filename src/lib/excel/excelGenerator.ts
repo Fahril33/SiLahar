@@ -3,6 +3,7 @@ import type { ExcelReportTemplate } from "../../types/excel-template";
 import type { Report, ReportActivityPhoto } from "../../types/report";
 import { supabase } from "../supabase";
 import { getExcelTemplateBuffer } from "./cacheManager";
+import { getCachedSignatureDataUrl } from "../storage";
 import {
   EXCEL_TEMPLATE_LAYOUT,
   type ExcelImagePatch,
@@ -414,6 +415,20 @@ async function fetchExcelImage(
   }
 }
 
+async function fetchSignatureImageForExcel(url: string) {
+  try {
+    if (!url) return null;
+    const effectiveUrl = getCachedSignatureDataUrl(url) || url;
+    const response = await fetch(effectiveUrl);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await compressImageBlobForExcel(blob);
+  } catch (error) {
+    console.warn("Gagal mengambil TTD untuk Excel:", error);
+    return null;
+  }
+}
+
 export async function generateDailyReportExcel({
   report,
   template,
@@ -491,6 +506,45 @@ export async function generateDailyReportExcel({
       },
       editAs: "oneCell",
     });
+  }
+
+  // Embed official signatures if available
+  if (mappedReport.signatureCells) {
+    const {
+      coordinatorSignatureUrl,
+      divisionHeadSignatureUrl,
+      coordinatorSignatureRow,
+      coordinatorSignatureCol,
+      divisionHeadSignatureRow,
+      divisionHeadSignatureCol,
+    } = mappedReport.signatureCells;
+
+    const actualCoordRow = coordinatorSignatureRow + dynamicRowOffset;
+    const actualDivRow = divisionHeadSignatureRow + dynamicRowOffset;
+
+    if (coordinatorSignatureUrl) {
+      const coordSig = await fetchSignatureImageForExcel(coordinatorSignatureUrl);
+      if (coordSig) {
+        const sigId = workbook.addImage(coordSig);
+        worksheet.addImage(sigId, {
+          tl: { col: coordinatorSignatureCol - 1, row: actualCoordRow - 1 },
+          ext: { width: 130, height: 48 },
+          editAs: "oneCell",
+        });
+      }
+    }
+
+    if (divisionHeadSignatureUrl) {
+      const divSig = await fetchSignatureImageForExcel(divisionHeadSignatureUrl);
+      if (divSig) {
+        const sigId = workbook.addImage(divSig);
+        worksheet.addImage(sigId, {
+          tl: { col: divisionHeadSignatureCol - 1, row: actualDivRow - 1 },
+          ext: { width: 130, height: 48 },
+          editAs: "oneCell",
+        });
+      }
+    }
   }
 
   onStage?.("build", "Menyelesaikan workbook dan menyiapkan unduhan.");

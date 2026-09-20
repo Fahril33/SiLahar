@@ -144,11 +144,13 @@ async function waitForImages(container: HTMLElement) {
 
 async function preloadReportImages(report: Report) {
   const sources = Array.from(
-    new Set(
-      report.activities.flatMap((activity) =>
+    new Set([
+      ...report.activities.flatMap((activity) =>
         activity.photos.map((photo) => photo.publicUrl).filter(Boolean),
       ),
-    ),
+      report.approverCoordinatorSignatureUrl,
+      report.approverDivisionHeadSignatureUrl,
+    ].filter(Boolean) as string[]),
   );
 
   await Promise.all(
@@ -470,6 +472,105 @@ export async function printReportDocument(
     });
   } finally {
     document.title = originalTitle;
-/*  */    document.body.removeChild(iframe);
+    document.body.removeChild(iframe);
+  }
+}
+
+export async function printMultipleReportsDocument(
+  reports: Report[],
+  paperFormat: "a4" | "f4" | "legal" | "letter",
+) {
+  if (!reports || reports.length === 0) return;
+
+  const originalTitle = document.title;
+  const printReadyReports = await Promise.all(
+    reports.map((report) => materializeReportImages(report)),
+  );
+
+  await Promise.all(
+    printReadyReports.map((report) => preloadReportImages(report)),
+  );
+
+  const combinedMarkup = printReadyReports
+    .map(
+      (report) => `
+      <div class="print-report-page-block" style="page-break-after: always; break-after: page;">
+        ${renderReportMarkup(report)}
+      </div>
+    `,
+    )
+    .join("\n");
+
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "794px";
+  iframe.style.height = "1123px";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  iframe.style.border = "0";
+  iframe.setAttribute("aria-hidden", "true");
+  document.body.appendChild(iframe);
+
+  const frameWindow = iframe.contentWindow;
+  const frameDoc = frameWindow?.document;
+
+  if (!frameWindow || !frameDoc) {
+    document.body.removeChild(iframe);
+    return;
+  }
+
+  const firstReport = reports[0];
+  const userSegment = firstReport?.nama ? sanitizeFileSegment(firstReport.nama) : "LAPORAN";
+  const docTitle = `SEMUA_LAPORAN_${userSegment}_${reports.length}_DOKUMEN`;
+
+  frameDoc.open();
+  frameDoc.write(`<!DOCTYPE html><html><head><title>${docTitle}</title>
+  <style>
+    ${pdfStyles}
+    @page {
+      size: ${paperFormat === "f4" ? "210mm 330mm" : paperFormat} portrait !important;
+      margin: 20mm 18mm 20mm 20mm !important;
+    }
+    body {
+      margin: 0 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .print-report-page-block {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+    .print-report-page-block:last-child {
+      page-break-after: auto !important;
+      break-after: auto !important;
+    }
+    .pdf-report-shell, .pdf-report-page {
+      width: 100% !important;
+      min-height: auto !important;
+      padding: 0 !important;
+    }
+  </style>
+  </head><body>`);
+  frameDoc.write(combinedMarkup);
+  frameDoc.write("</body></html>");
+  frameDoc.close();
+
+  try {
+    await waitForImages(frameDoc.body);
+    await waitForPaint();
+    await new Promise<void>((resolve) => {
+      document.title = docTitle;
+      const cleanupAndResolve = () => resolve();
+
+      frameWindow.onafterprint = cleanupAndResolve;
+      window.setTimeout(cleanupAndResolve, 20000);
+      frameWindow.focus();
+      frameWindow.print();
+    });
+  } finally {
+    document.title = originalTitle;
+    document.body.removeChild(iframe);
   }
 }

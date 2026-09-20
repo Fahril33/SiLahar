@@ -22,6 +22,7 @@ import {
   saveTeamType,
   deleteTeamType,
   saveTeamTypeHeaderLines,
+  uploadOfficialSignature,
 } from "../lib/report-template-service";
 import { adminGetReporterPasswords } from "../lib/report-service";
 import { AdminEditableListCard } from "./admin-editable-list-card";
@@ -38,7 +39,10 @@ import {
   isUserSoundEnabled,
   setUserSoundEnabled,
 } from "../lib/sound-utils";
-import { isSameReporterName, deduplicateReporterNames } from "../lib/reporter-name";
+import {
+  isSameReporterName,
+  deduplicateReporterNames,
+} from "../lib/reporter-name";
 import {
   getAllDeviceBackupReports,
   getAllCombinedReports,
@@ -52,7 +56,12 @@ import {
   type BulkUploadResult,
   type BulkPdfProgressState,
 } from "../lib/browser-cache-recovery";
-import { askConfirmation, showSuccess, showInfo, showError } from "../lib/alerts";
+import {
+  askConfirmation,
+  showSuccess,
+  showInfo,
+  showError,
+} from "../lib/alerts";
 import { saveAs } from "file-saver";
 
 const inputClassName = "field-input";
@@ -135,7 +144,12 @@ type AdminDashboardViewProps = {
     key: K,
     value: ReportTemplateApproverDraft[K],
   ) => void;
-  onHandleSaveTemplateApproverDefaults: () => Promise<void>;
+  onHandleSaveTemplateApproverDefaults: (
+    overrideDrafts?: Record<
+      ReportTemplateApproverRole,
+      ReportTemplateApproverDraft
+    >,
+  ) => Promise<void>;
   onChangeExcelTemplateDraft: <K extends keyof ExcelTemplateUploadDraft>(
     key: K,
     value: ExcelTemplateUploadDraft[K],
@@ -189,7 +203,7 @@ function AdminSectionTabs({
       {[
         { key: "rules" as const, label: "Aturan laporan" },
         { key: "reporters" as const, label: "Kelola pengguna" },
-        { key: "templates" as const, label: "Template Excel" },
+        { key: "templates" as const, label: "Template" },
         { key: "bulk-export" as const, label: "Bulk Export" },
         { key: "bulk-upload" as const, label: "Kelola Cadangan" },
         { key: "sounds" as const, label: "Suara Alert" },
@@ -321,90 +335,6 @@ function AdminLoginCard(props: AdminDashboardViewProps) {
   );
 }
 
-function TemplateApproverCard(props: {
-  roleLabel: string;
-  accentClassName: string;
-  draft: ReportTemplateApproverDraft;
-  hideOfficialTitle?: boolean;
-  onChange: <K extends keyof ReportTemplateApproverDraft>(
-    key: K,
-    value: ReportTemplateApproverDraft[K],
-  ) => void;
-}) {
-  return (
-    <div className="surface-muted rounded-[24px] p-4">
-      <div className="mb-4 flex items-center gap-3">
-        <div
-          className={`flex h-11 w-11 items-center justify-center rounded-2xl text-sm font-bold ${props.accentClassName}`}
-        >
-          {props.roleLabel
-            .split(" ")
-            .map((part) => part[0] ?? "")
-            .join("")
-            .slice(0, 2)}
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-            Default form
-          </p>
-          <h4 className="text-base font-semibold text-[var(--text-primary)]">
-            {props.roleLabel}
-          </h4>
-        </div>
-      </div>
-
-      <div className="grid gap-3">
-        <label className="space-y-2">
-          <span className="text-sm font-medium">Label dokumen</span>
-          <input
-            value={props.draft.scopeLabel}
-            onChange={(event) =>
-              props.onChange("scopeLabel", event.target.value)
-            }
-            placeholder="Label pejabat"
-            className={inputClassName}
-          />
-        </label>
-        <label className="space-y-2">
-          <span className="text-sm font-medium">Nama pejabat</span>
-          <input
-            value={props.draft.officialName}
-            onChange={(event) =>
-              props.onChange("officialName", event.target.value)
-            }
-            placeholder="Nama pejabat"
-            className={inputClassName}
-          />
-        </label>
-        {!props.hideOfficialTitle ? (
-          <label className="space-y-2">
-            <span className="text-sm font-medium">Jabatan / Pangkat</span>
-            <input
-              value={props.draft.officialTitle}
-              onChange={(event) =>
-                props.onChange("officialTitle", event.target.value)
-              }
-              placeholder="Opsional"
-              className={inputClassName}
-            />
-          </label>
-        ) : null}
-        <label className="space-y-2">
-          <span className="text-sm font-medium">NIP</span>
-          <input
-            value={props.draft.officialNip}
-            onChange={(event) =>
-              props.onChange("officialNip", event.target.value)
-            }
-            placeholder="Nomor induk pegawai"
-            className={inputClassName}
-          />
-        </label>
-      </div>
-    </div>
-  );
-}
-
 function DeviceBackupSettingsCard(props: {
   reports: Report[];
   deviceBackupExporting?: boolean;
@@ -461,8 +391,11 @@ function DeviceBackupSettingsCard(props: {
               )}
             </div>
             <p className="mt-1.5 text-xs text-[var(--text-muted)] max-w-2xl leading-relaxed">
-              Unduh seluruh data cadangan laporan yang tersimpan di perangkat/browser ini dalam format file Excel (.xlsx) atau JSON (.json).
-              Anda juga dapat mengunggah (bulk upload) seluruh data tersimpan langsung ke database Supabase tanpa batasan kelengkapan data.
+              Unduh seluruh data cadangan laporan yang tersimpan di
+              perangkat/browser ini dalam format file Excel (.xlsx) atau JSON
+              (.json). Anda juga dapat mengunggah (bulk upload) seluruh data
+              tersimpan langsung ke database Supabase tanpa batasan kelengkapan
+              data.
             </p>
           </div>
         </div>
@@ -562,8 +495,13 @@ function DeviceBackupSettingsCard(props: {
         </div>
       </div>
       <div className="mt-3 pt-3 border-t border-[var(--border-soft)]/50 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[var(--text-muted)]">
-        <span>💡 Termasuk data cache browser lokal, draft tersimpan offline, dan snapshot perangkat.</span>
-        <span className="font-semibold text-emerald-600 dark:text-emerald-400">✓ Aman tanpa menghapus data</span>
+        <span>
+          💡 Termasuk data cache browser lokal, draft tersimpan offline, dan
+          snapshot perangkat.
+        </span>
+        <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+          ✓ Aman tanpa menghapus data
+        </span>
       </div>
     </div>
   );
@@ -573,11 +511,13 @@ function ReportRulesPanel(
   props: AdminDashboardViewProps & { onNavigateBulkUpload?: () => void },
 ) {
   const [activeSubTab, setActiveSubTab] = useState<
-    "header" | "teams" | "officials" | "operational" | "backup"
+    "header" | "teams" | "operational" | "backup"
   >("header");
 
   const [teamTypes, setTeamTypes] = useState<TeamType[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string>("team-type-trc-default");
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(
+    "team-type-trc-default",
+  );
   const [showAddTeamModal, setShowAddTeamModal] = useState(false);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [savingTeamType, setSavingTeamType] = useState(false);
@@ -596,7 +536,9 @@ function ReportRulesPanel(
     ],
   });
 
-  const [perTeamHeaders, setPerTeamHeaders] = useState<Record<string, string[]>>({});
+  const [perTeamHeaders, setPerTeamHeaders] = useState<
+    Record<string, string[]>
+  >({});
 
   useEffect(() => {
     let alive = true;
@@ -608,7 +550,10 @@ function ReportRulesPanel(
           setSelectedTeamId(defaultTeam.id);
           const initialMap: Record<string, string[]> = {};
           types.forEach((t) => {
-            initialMap[t.id] = t.headerLines && t.headerLines.length > 0 ? t.headerLines : DEFAULT_HEADER_LINES;
+            initialMap[t.id] =
+              t.headerLines && t.headerLines.length > 0
+                ? t.headerLines
+                : DEFAULT_HEADER_LINES;
           });
           setPerTeamHeaders(initialMap);
         }
@@ -649,23 +594,20 @@ function ReportRulesPanel(
       coordinatorLabel: team.coordinatorLabel || "",
       headerLines:
         team.headerLines && team.headerLines.length > 0
-          ? [...team.headerLines]
-          : [
-              `LAPORAN HARIAN KINERJA ${team.name.toUpperCase()}`,
-              "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
-              "TAHUN ANGGARAN 2026",
-            ],
+          ? team.headerLines
+          : DEFAULT_HEADER_LINES,
       isDefault: team.isDefault,
     });
     setShowAddTeamModal(true);
   };
 
-  const selectedTeam = teamTypes.find((t) => t.id === selectedTeamId) || teamTypes[0];
+  const selectedTeam =
+    teamTypes.find((t) => t.id === selectedTeamId) || teamTypes[0];
 
   const currentHeaderLines =
-    selectedTeam && perTeamHeaders[selectedTeam.id]
-      ? perTeamHeaders[selectedTeam.id]
-      : props.adminHeaderLinesDraft || DEFAULT_HEADER_LINES;
+    (selectedTeam && perTeamHeaders[selectedTeam.id]) ||
+    props.adminHeaderLinesDraft ||
+    DEFAULT_HEADER_LINES;
 
   const handleHeaderLineChange = (index: number, value: string) => {
     if (!selectedTeam) return;
@@ -708,7 +650,10 @@ function ReportRulesPanel(
       "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
       "TAHUN ANGGARAN 2026",
     ];
-    setPerTeamHeaders((prev) => ({ ...prev, [selectedTeam.id]: defaultHeaders }));
+    setPerTeamHeaders((prev) => ({
+      ...prev,
+      [selectedTeam.id]: defaultHeaders,
+    }));
     props.setAdminHeaderLinesDraft(defaultHeaders);
   };
 
@@ -716,15 +661,24 @@ function ReportRulesPanel(
     if (!selectedTeam) return;
     try {
       setSavingTeamType(true);
-      const updatedTypes = await saveTeamTypeHeaderLines(selectedTeam.id, currentHeaderLines);
+      const updatedTypes = await saveTeamTypeHeaderLines(
+        selectedTeam.id,
+        currentHeaderLines,
+      );
       setTeamTypes(updatedTypes);
       if (props.activeReportTemplateConfig) {
         await props.onHandleSaveHeaderLines(currentHeaderLines);
       } else {
-        await showSuccess("Kop Laporan Disimpan", `Kop Laporan untuk ${selectedTeam.name} berhasil diperbarui.`);
+        await showSuccess(
+          "Kop Laporan Disimpan",
+          `Kop Laporan untuk ${selectedTeam.name} berhasil diperbarui.`,
+        );
       }
     } catch (err: any) {
-      await showError("Simpan Gagal", err.message || "Gagal menyimpan Kop Laporan.");
+      await showError(
+        "Simpan Gagal",
+        err.message || "Gagal menyimpan Kop Laporan.",
+      );
     } finally {
       setSavingTeamType(false);
     }
@@ -733,7 +687,10 @@ function ReportRulesPanel(
   const handleSaveTeamType = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teamDraft.name.trim() || !teamDraft.code.trim()) {
-      await showError("Data Tidak Lengkap", "Nama dan Kode jenis tim wajib diisi.");
+      await showError(
+        "Data Tidak Lengkap",
+        "Nama dan Kode jenis tim wajib diisi.",
+      );
       return;
     }
     const isEdit = Boolean(editingTeamId);
@@ -745,9 +702,19 @@ function ReportRulesPanel(
       const nextHeadersMap: Record<string, string[]> = {};
       updatedTypes.forEach((t) => {
         nextHeadersMap[t.id] =
-          t.headerLines && t.headerLines.length > 0 ? t.headerLines : DEFAULT_HEADER_LINES;
+          t.headerLines && t.headerLines.length > 0
+            ? t.headerLines
+            : DEFAULT_HEADER_LINES;
       });
       setPerTeamHeaders(nextHeadersMap);
+
+      if (isEdit && editingTeamId === selectedTeamId) {
+        props.setAdminHeaderLinesDraft(
+          teamDraft.headerLines && teamDraft.headerLines.length > 0
+            ? teamDraft.headerLines
+            : DEFAULT_HEADER_LINES,
+        );
+      }
 
       const target = updatedTypes.find(
         (t) =>
@@ -761,71 +728,13 @@ function ReportRulesPanel(
       setShowAddTeamModal(false);
       setEditingTeamId(null);
       await showSuccess(
-        isEdit ? "Jenis Tim Diperbarui" : "Jenis Tim Ditambah",
-        `Jenis tim '${teamDraft.name}' telah berhasil ${isEdit ? "diperbarui" : "didaftarkan"}.`,
+        isEdit ? "Jenis Tim Diperbarui" : "Jenis Tim Ditambahkan",
+        `Jenis tim "${teamDraft.name}" berhasil disimpan ke sistem.`,
       );
     } catch (err: any) {
       await showError(
-        "Gagal Menyimpan Jenis Tim",
-        err.message || "Terjadi kesalahan saat menyimpan.",
-      );
-    } finally {
-      setSavingTeamType(false);
-    }
-  };
-
-  const handleTeamCoordinatorChange = (
-    teamId: string,
-    field: "coordinatorName" | "coordinatorNip" | "coordinatorLabel",
-    value: string,
-  ) => {
-    setTeamTypes((prev) =>
-      prev.map((t) => (t.id === teamId ? { ...t, [field]: value } : t)),
-    );
-    const targetTeam = teamTypes.find((t) => t.id === teamId);
-    if (targetTeam) {
-      const codeLower = targetTeam.code.toLowerCase();
-      if (codeLower === "trc" || codeLower === "pusdalops") {
-        const role = `coordinator_team_${codeLower}` as "coordinator_team_trc" | "coordinator_team_pusdalops";
-        if (field === "coordinatorName") {
-          props.onChangeAdminTemplateApproverDraft(role, "officialName", value);
-        } else if (field === "coordinatorNip") {
-          props.onChangeAdminTemplateApproverDraft(role, "officialNip", value);
-        } else if (field === "coordinatorLabel") {
-          props.onChangeAdminTemplateApproverDraft(role, "scopeLabel", value);
-        }
-      }
-    }
-  };
-
-  const handleSaveAllOfficials = async () => {
-    try {
-      setSavingTeamType(true);
-      for (const team of teamTypes) {
-        await saveTeamType({
-          id: team.id,
-          code: team.code,
-          name: team.name,
-          description: team.description,
-          headerLines: team.headerLines,
-          coordinatorName: team.coordinatorName,
-          coordinatorNip: team.coordinatorNip,
-          coordinatorLabel: team.coordinatorLabel,
-          isDefault: team.isDefault,
-        });
-      }
-      if (props.activeReportTemplateConfig) {
-        await props.onHandleSaveTemplateApproverDefaults();
-      } else {
-        await showSuccess(
-          "Default Pejabat Disimpan",
-          "Data pejabat terkait untuk semua jenis tim berhasil diperbarui.",
-        );
-      }
-    } catch (err: any) {
-      await showError(
-        "Gagal Menyimpan Pejabat",
-        err.message || "Terjadi kesalahan saat menyimpan data pejabat.",
+        "Simpan Gagal",
+        err.message || "Terjadi kesalahan saat menyimpan jenis tim.",
       );
     } finally {
       setSavingTeamType(false);
@@ -834,7 +743,10 @@ function ReportRulesPanel(
 
   const handleDeleteSelectedTeam = async (team: TeamType) => {
     if (team.isDefault) {
-      await showError("Batal Hapus", "Jenis tim utama (default) tidak dapat dihapus.");
+      await showError(
+        "Batal Hapus",
+        "Jenis tim utama (default) tidak dapat dihapus.",
+      );
       return;
     }
     const confirmDelete = await askConfirmation(
@@ -851,7 +763,10 @@ function ReportRulesPanel(
       if (updatedTypes.length > 0) {
         setSelectedTeamId(updatedTypes[0].id);
       }
-      await showSuccess("Berhasil Dihapus", `Jenis tim "${team.name}" telah dihapus.`);
+      await showSuccess(
+        "Berhasil Dihapus",
+        `Jenis tim "${team.name}" telah dihapus.`,
+      );
     } catch (err: any) {
       await showError("Hapus Gagal", err.message || "Terjadi kesalahan.");
     } finally {
@@ -864,11 +779,26 @@ function ReportRulesPanel(
       {/* Sub-Navigation Pills */}
       <div className="panel-glass rounded-[24px] p-2 flex flex-wrap gap-2 border border-[var(--border-soft)]">
         {[
-          { key: "header" as const, label: "✍️ Editor Kop Laporan", desc: "Kop spesifik per Jenis Tim" },
-          { key: "teams" as const, label: "👥 Pembagian Jenis Tim", desc: "Kelola TRC, PUSDALOPS & Tim Baru" },
-          { key: "officials" as const, label: "👔 Pejabat Terkait", desc: "Koordinator & Kepala Bidang" },
-          { key: "operational" as const, label: "📋 Parameter Operasional", desc: "Aturan tanggal & foto" },
-          { key: "backup" as const, label: "💾 Cadangan Perangkat", desc: "Backup Excel & JSON" },
+          {
+            key: "header" as const,
+            label: "✍️ Editor Kop Laporan",
+            desc: "Kop spesifik per Jenis Tim",
+          },
+          {
+            key: "teams" as const,
+            label: "👥 Jenis Tim & Pejabat",
+            desc: "Kelola Tim, Koordinator & Kabid",
+          },
+          {
+            key: "operational" as const,
+            label: "📋 Parameter Operasional",
+            desc: "Aturan tanggal & foto",
+          },
+          {
+            key: "backup" as const,
+            label: "💾 Cadangan Perangkat",
+            desc: "Backup Excel & JSON",
+          },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -881,7 +811,9 @@ function ReportRulesPanel(
             }`}
           >
             <p className="text-sm">{tab.label}</p>
-            <p className={`text-[11px] mt-0.5 ${activeSubTab === tab.key ? "text-white/80" : "text-[var(--text-muted)]"}`}>
+            <p
+              className={`text-[11px] mt-0.5 ${activeSubTab === tab.key ? "text-white/80" : "text-[var(--text-muted)]"}`}
+            >
               {tab.desc}
             </p>
           </button>
@@ -903,7 +835,11 @@ function ReportRulesPanel(
                   type="button"
                   onClick={() => {
                     setSelectedTeamId(t.id);
-                    props.setAdminHeaderLinesDraft(perTeamHeaders[t.id] || t.headerLines || DEFAULT_HEADER_LINES);
+                    props.setAdminHeaderLinesDraft(
+                      perTeamHeaders[t.id] ||
+                        t.headerLines ||
+                        DEFAULT_HEADER_LINES,
+                    );
                   }}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
                     selectedTeamId === t.id
@@ -946,7 +882,11 @@ function ReportRulesPanel(
                     )}
                   </div>
                   <p className="text-xs text-[var(--text-muted)] mt-1">
-                    Atur teks header/kop dokumen laporan PDF khusus untuk tim <span className="font-semibold text-[var(--text-primary)]">{selectedTeam?.name}</span>.
+                    Atur teks header/kop dokumen laporan PDF khusus untuk tim{" "}
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {selectedTeam?.name}
+                    </span>
+                    .
                   </p>
                 </div>
                 <button
@@ -960,14 +900,19 @@ function ReportRulesPanel(
 
               <div className="space-y-3">
                 {currentHeaderLines.map((line, index) => (
-                  <div key={index} className="flex items-center gap-2 animate-fadeIn">
+                  <div
+                    key={index}
+                    className="flex items-center gap-2 animate-fadeIn"
+                  >
                     <span className="h-8 w-8 rounded-full bg-[var(--surface-panel-strong)] text-[var(--text-muted)] text-xs font-bold flex items-center justify-center shrink-0 border border-[var(--border-soft)]">
                       {index + 1}
                     </span>
                     <input
                       type="text"
                       value={line}
-                      onChange={(e) => handleHeaderLineChange(index, e.target.value)}
+                      onChange={(e) =>
+                        handleHeaderLineChange(index, e.target.value)
+                      }
                       placeholder={`Baris ke-${index + 1}`}
                       className="field-input text-sm flex-1 font-semibold uppercase tracking-wide"
                     />
@@ -1018,7 +963,8 @@ function ReportRulesPanel(
                   disabled={props.adminSubmitting || savingTeamType}
                   className="btn-primary px-6 py-2 text-sm disabled:opacity-60 cursor-pointer shadow-md shadow-[var(--primary)]/20"
                 >
-                  {savingTeamType || props.adminActiveAction === ("save-header-lines" as any) ? (
+                  {savingTeamType ||
+                  props.adminActiveAction === ("save-header-lines" as any) ? (
                     <SpinnerIcon />
                   ) : (
                     `Simpan Kop ${selectedTeam?.name || "Tim"}`
@@ -1039,135 +985,348 @@ function ReportRulesPanel(
               </div>
 
               <div className="p-6 rounded-[20px] bg-white text-gray-900 border border-gray-200 shadow-md text-center space-y-1.5 min-h-[160px] flex flex-col items-center justify-center">
-                {currentHeaderLines.filter((l) => l.trim()).map((line, i) => (
-                  <p
-                    key={i}
-                    className={`font-bold tracking-wide leading-tight ${
-                      i === 0 ? "text-base text-gray-900 font-extrabold" : i === 1 ? "text-xs text-gray-800" : "text-xs text-gray-700"
-                    }`}
-                  >
-                    {line}
-                  </p>
-                ))}
+                {currentHeaderLines
+                  .filter((l) => l.trim())
+                  .map((line, i) => (
+                    <p
+                      key={i}
+                      className={`font-bold tracking-wide leading-tight ${
+                        i === 0
+                          ? "text-base text-gray-900 font-extrabold"
+                          : i === 1
+                            ? "text-xs text-gray-800"
+                            : "text-xs text-gray-700"
+                      }`}
+                    >
+                      {line}
+                    </p>
+                  ))}
                 {currentHeaderLines.filter((l) => l.trim()).length === 0 && (
-                  <p className="text-xs text-gray-400 italic">Kop laporan kosong</p>
+                  <p className="text-xs text-gray-400 italic">
+                    Kop laporan kosong
+                  </p>
                 )}
               </div>
               <p className="text-xs text-[var(--text-muted)] text-center">
-                Teks di atas adalah pratinjau langsung bagaimana Kop Laporan tim <span className="font-semibold">{selectedTeam?.name}</span> akan tampil di dokumen PDF.
+                Teks di atas adalah pratinjau langsung bagaimana Kop Laporan tim{" "}
+                <span className="font-semibold">{selectedTeam?.name}</span> akan
+                tampil di dokumen PDF.
               </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* SUB-TAB 2: PEMBAGIAN JENIS TIM */}
+      {/* SUB-TAB 2: PEMBAGIAN JENIS TIM & PEJABAT TERKAIT */}
       {activeSubTab === "teams" && (
-        <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-bold text-[var(--text-primary)]">
-                Pembagian Jenis Tim &amp; Dokumen
-              </h3>
-              <p className="text-xs text-[var(--text-muted)] mt-1">
-                Kelola jenis tim operasional. Setiap jenis tim memiliki Kop Dokumen laporan yang disesuaikan secara terpisah.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={openCreateTeamModal}
-              className="btn-primary text-xs px-4 py-2.5 cursor-pointer shadow-md shadow-[var(--primary)]/20 flex items-center gap-2"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              <span>Tambah Jenis Tim Baru</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {teamTypes.map((team) => (
-              <div
-                key={team.id}
-                className="surface-card rounded-[24px] p-5 space-y-4 border border-[var(--border-soft)] hover:border-[var(--primary)]/40 transition-all shadow-sm flex flex-col justify-between"
+        <div className="space-y-8">
+          {/* BAGIAN 1: PEMBAGIAN JENIS TIM & KOORDINATOR */}
+          <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  Pembagian Jenis Tim &amp; Koordinator Penandatangan
+                </h3>
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  Kelola identitas jenis tim, pejabat koordinator penandatangan,
+                  tanda tangan digital, serta susunan Kop Dokumen laporan.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={openCreateTeamModal}
+                className="btn-primary text-xs px-4 py-2.5 cursor-pointer shadow-md shadow-[var(--primary)]/20 flex items-center gap-2"
               >
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--primary)] bg-[var(--primary)]/10 px-3 py-1 rounded-full border border-[var(--primary)]/20 font-mono">
-                      KODE: {team.code.toUpperCase()}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {team.isDefault ? (
-                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
-                          Utama (Default)
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                <span>Tambah Jenis Tim Baru</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {teamTypes.map((team) => (
+                <div
+                  key={team.id}
+                  className="surface-card rounded-[24px] p-5 space-y-4 border border-[var(--border-soft)] hover:border-[var(--primary)]/40 transition-all shadow-sm flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-[var(--primary)] bg-[var(--primary)]/10 px-3 py-1 rounded-full border border-[var(--primary)]/20 font-mono">
+                        KODE: {team.code.toUpperCase()}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {team.isDefault ? (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                            Utama (Default)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full border border-blue-500/20">
+                            Tim Tambahan
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="font-bold text-base text-[var(--text-primary)]">
+                        {team.name}
+                      </h4>
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5 line-clamp-2">
+                        {team.description || "Tidak ada deskripsi operasional."}
+                      </p>
+                    </div>
+
+                    {/* Data Pejabat Koordinator Tim */}
+                    <div className="p-3 rounded-2xl bg-[var(--surface-muted)]/60 border border-[var(--border-soft)] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-extrabold text-[var(--text-muted)] uppercase tracking-wider">
+                          👔 Koordinator / Penandatangan:
                         </span>
-                      ) : (
-                        <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-0.5 rounded-full border border-blue-500/20">
-                          Tim Tambahan
-                        </span>
+                        {team.signatureUrl ? (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            TTD Terpasang
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                            Belum Ada TTD
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs space-y-0.5">
+                        <p className="font-semibold text-[var(--text-primary)]">
+                          {team.coordinatorName || (
+                            <span className="text-[var(--text-muted)] italic font-normal">
+                              Nama belum diisi
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          NIP:{" "}
+                          <span className="font-medium text-[var(--text-primary)]">
+                            {team.coordinatorNip || "-"}
+                          </span>
+                          {team.coordinatorLabel
+                            ? ` • (${team.coordinatorLabel})`
+                            : ""}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Kop Laporan Terkait */}
+                    <div className="pt-2 border-t border-[var(--border-soft)]/60 space-y-1">
+                      <p className="text-[10px] font-extrabold text-[var(--text-muted)] uppercase tracking-wider">
+                        Kop Laporan PDF Terkait:
+                      </p>
+                      {(team.headerLines || DEFAULT_HEADER_LINES).map(
+                        (hl, idx) => (
+                          <p
+                            key={idx}
+                            className="text-xs font-semibold text-[var(--text-primary)] truncate"
+                          >
+                            {idx + 1}. {hl}
+                          </p>
+                        ),
                       )}
                     </div>
                   </div>
 
-                  <div>
-                    <h4 className="font-bold text-base text-[var(--text-primary)]">{team.name}</h4>
-                    <p className="text-xs text-[var(--text-muted)] mt-0.5 line-clamp-2">
-                      {team.description || "Tidak ada deskripsi operasional."}
-                    </p>
-                  </div>
+                  <div className="pt-3 border-t border-[var(--border-soft)]/60 flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => openEditTeamModal(team)}
+                        className="btn-secondary h-8 px-3 text-xs font-bold flex items-center gap-1.5 border-[var(--primary)]/30 text-[var(--primary)] hover:bg-[var(--primary)]/10 cursor-pointer"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                        >
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                        <span>Edit Tim &amp; Pejabat</span>
+                      </button>
 
-                  <div className="pt-2 border-t border-[var(--border-soft)]/60 space-y-1">
-                    <p className="text-[10px] font-extrabold text-[var(--text-muted)] uppercase tracking-wider">
-                      Kop Laporan PDF Terkait:
-                    </p>
-                    {(team.headerLines || DEFAULT_HEADER_LINES).map((hl, idx) => (
-                      <p key={idx} className="text-xs font-semibold text-[var(--text-primary)] truncate">
-                        {idx + 1}. {hl}
-                      </p>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTeamId(team.id);
+                          setActiveSubTab("header");
+                        }}
+                        className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] font-semibold underline px-2 cursor-pointer"
+                      >
+                        Edit Kop Baris
+                      </button>
+                    </div>
+
+                    {!team.isDefault && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteSelectedTeam(team)}
+                        className="text-xs text-red-500 hover:text-red-600 font-semibold hover:bg-red-500/10 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                        title="Hapus jenis tim ini"
+                      >
+                        Hapus
+                      </button>
+                    )}
                   </div>
                 </div>
+              ))}
+            </div>
+          </div>
 
-                <div className="pt-3 border-t border-[var(--border-soft)]/60 flex items-center justify-between gap-2 flex-wrap">
+          {/* BAGIAN 2: PEJABAT PENANDATANGAN UTAMA (KEPALA BIDANG) */}
+          <div className="surface-card rounded-[24px] p-5 sm:p-6 space-y-4 border border-[var(--border-soft)] shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--border-soft)]/60">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 shadow-2xs font-bold text-xs uppercase">
+                  KB
+                </div>
+                <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => openEditTeamModal(team)}
-                      className="btn-secondary h-8 px-3 text-xs font-bold flex items-center gap-1.5 border-[var(--primary)]/30 text-[var(--primary)] hover:bg-[var(--primary)]/10 cursor-pointer"
-                    >
-                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                      <span>Edit Tim</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedTeamId(team.id);
-                        setActiveSubTab("header");
-                      }}
-                      className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] font-semibold underline px-2 cursor-pointer"
-                    >
-                      Edit Kop Baris
-                    </button>
+                    <h3 className="text-sm sm:text-base font-bold text-[var(--text-primary)]">
+                      Penandatangan Utama (Kepala Bidang)
+                    </h3>
+                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                      Pengesah Dokumen
+                    </span>
                   </div>
-
-                  {!team.isDefault && (
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteSelectedTeam(team)}
-                      className="text-xs text-red-500 hover:text-red-600 font-semibold hover:bg-red-500/10 px-2.5 py-1 rounded-lg transition cursor-pointer"
-                      title="Hapus jenis tim ini"
-                    >
-                      Hapus
-                    </button>
-                  )}
+                  <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                    Pejabat yang mengesahkan seluruh laporan kejadian bencana
+                    (Mengetahui / Menyetujui).
+                  </p>
                 </div>
               </div>
-            ))}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void props.onHandleSaveTemplateApproverDefaults()
+                }
+                disabled={props.adminSubmitting}
+                className="btn-primary text-xs px-4 py-2 cursor-pointer shadow-md shadow-[var(--primary)]/20 font-bold flex items-center gap-1.5 disabled:opacity-60 shrink-0 ml-auto"
+              >
+                {props.adminActiveAction === "save-template-approvers" ? (
+                  <>
+                    <SpinnerIcon />
+                    <span>Menyimpan...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      className="w-3.5 h-3.5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                    >
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    <span>Simpan Pejabat Kabid</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              <label className="space-y-1 block">
+                <span className="text-xs font-semibold text-[var(--text-primary)]">
+                  Label Dokumen
+                </span>
+                <input
+                  type="text"
+                  value={
+                    props.adminTemplateApproverDrafts.division_head.scopeLabel
+                  }
+                  onChange={(e) =>
+                    props.onChangeAdminTemplateApproverDraft(
+                      "division_head",
+                      "scopeLabel",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Contoh: KEPALA BIDANG KEDARURATAN DAN LOGISTIK"
+                  className={inputClassName}
+                />
+              </label>
+
+              <label className="space-y-1 block">
+                <span className="text-xs font-semibold text-[var(--text-primary)]">
+                  Nama Pejabat &amp; Gelar
+                </span>
+                <input
+                  type="text"
+                  value={
+                    props.adminTemplateApproverDrafts.division_head.officialName
+                  }
+                  onChange={(e) =>
+                    props.onChangeAdminTemplateApproverDraft(
+                      "division_head",
+                      "officialName",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Nama lengkap pejabat"
+                  className={inputClassName}
+                />
+              </label>
+
+              <label className="space-y-1 block">
+                <span className="text-xs font-semibold text-[var(--text-primary)]">
+                  Jabatan / Pangkat
+                </span>
+                <input
+                  type="text"
+                  value={
+                    props.adminTemplateApproverDrafts.division_head
+                      .officialTitle || ""
+                  }
+                  onChange={(e) =>
+                    props.onChangeAdminTemplateApproverDraft(
+                      "division_head",
+                      "officialTitle",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Contoh: Penata Tk. I / III d"
+                  className={inputClassName}
+                />
+              </label>
+
+              <label className="space-y-1 block">
+                <span className="text-xs font-semibold text-[var(--text-primary)]">
+                  NIP Pejabat
+                </span>
+                <input
+                  type="text"
+                  value={
+                    props.adminTemplateApproverDrafts.division_head.officialNip
+                  }
+                  onChange={(e) =>
+                    props.onChangeAdminTemplateApproverDraft(
+                      "division_head",
+                      "officialNip",
+                      e.target.value,
+                    )
+                  }
+                  placeholder="Nomor Induk Pegawai"
+                  className={inputClassName}
+                />
+              </label>
+            </div>
           </div>
         </div>
       )}
@@ -1193,7 +1352,13 @@ function ReportRulesPanel(
               <div className="px-5 py-3.5 border-b border-[var(--border-soft)] flex items-center justify-between gap-3 shrink-0 bg-[var(--surface-panel-strong)]/50">
                 <div className="flex items-center gap-2.5">
                   <div className="h-8 w-8 rounded-xl bg-[var(--primary)]/15 text-[var(--primary)] flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <svg
+                      className="w-4 h-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                    >
                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                       <circle cx="9" cy="7" r="4" />
                       <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
@@ -1203,13 +1368,17 @@ function ReportRulesPanel(
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-bold text-[var(--text-primary)]">
-                        {editingTeamId ? "Edit Jenis Tim & Kop" : "Tambah Jenis Tim Baru"}
+                        {editingTeamId
+                          ? "Edit Jenis Tim & Kop"
+                          : "Tambah Jenis Tim Baru"}
                       </h3>
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${
-                        editingTeamId
-                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
-                          : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
-                      }`}>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold border uppercase tracking-wider ${
+                          editingTeamId
+                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                            : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                        }`}
+                      >
                         {editingTeamId ? "Mode Edit" : "Tim Baru"}
                       </span>
                     </div>
@@ -1229,12 +1398,17 @@ function ReportRulesPanel(
               </div>
 
               {/* Form wrapping body and fixed footer */}
-              <form onSubmit={handleSaveTeamType} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <form
+                onSubmit={handleSaveTeamType}
+                className="flex flex-col flex-1 min-h-0 overflow-hidden"
+              >
                 {/* Scrollable Form Body */}
                 <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="block space-y-1">
-                      <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Jenis Tim</span>
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">
+                        Nama Jenis Tim
+                      </span>
                       <input
                         type="text"
                         required
@@ -1242,7 +1416,11 @@ function ReportRulesPanel(
                         value={teamDraft.name}
                         onChange={(e) => {
                           const val = e.target.value;
-                          const autoCode = val.trim().toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
+                          const autoCode = val
+                            .trim()
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]/g, "-")
+                            .replace(/-+/g, "-");
                           setTeamDraft((c) => ({
                             ...c,
                             name: val,
@@ -1265,7 +1443,9 @@ function ReportRulesPanel(
                         onChange={(e) =>
                           setTeamDraft((c) => ({
                             ...c,
-                            code: e.target.value.toLowerCase().replace(/\s+/g, "-"),
+                            code: e.target.value
+                              .toLowerCase()
+                              .replace(/\s+/g, "-"),
                           }))
                         }
                         className="field-input text-xs py-2 px-3 w-full font-mono uppercase"
@@ -1274,12 +1454,19 @@ function ReportRulesPanel(
                   </div>
 
                   <label className="block space-y-1">
-                    <span className="text-xs font-semibold text-[var(--text-primary)]">Deskripsi Operasional</span>
+                    <span className="text-xs font-semibold text-[var(--text-primary)]">
+                      Deskripsi Operasional
+                    </span>
                     <textarea
                       rows={2}
                       placeholder="Penjelasan singkat tugas tim ini..."
                       value={teamDraft.description}
-                      onChange={(e) => setTeamDraft((c) => ({ ...c, description: e.target.value }))}
+                      onChange={(e) =>
+                        setTeamDraft((c) => ({
+                          ...c,
+                          description: e.target.value,
+                        }))
+                      }
                       className="field-input text-xs py-2 px-3 w-full"
                     />
                   </label>
@@ -1291,35 +1478,56 @@ function ReportRulesPanel(
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <label className="block space-y-1">
-                        <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Koordinator</span>
+                        <span className="text-xs font-semibold text-[var(--text-primary)]">
+                          Nama Koordinator
+                        </span>
                         <input
                           type="text"
                           placeholder="Misal: Andi Susanto, S.STP"
                           value={teamDraft.coordinatorName || ""}
-                          onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorName: e.target.value }))}
+                          onChange={(e) =>
+                            setTeamDraft((c) => ({
+                              ...c,
+                              coordinatorName: e.target.value,
+                            }))
+                          }
                           className="field-input text-xs py-2 px-3 w-full font-semibold"
                         />
                       </label>
 
                       <label className="block space-y-1">
-                        <span className="text-xs font-semibold text-[var(--text-primary)]">NIP Koordinator</span>
+                        <span className="text-xs font-semibold text-[var(--text-primary)]">
+                          NIP Koordinator
+                        </span>
                         <input
                           type="text"
                           placeholder="Misal: 19850101 201001 1 001"
                           value={teamDraft.coordinatorNip || ""}
-                          onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorNip: e.target.value }))}
+                          onChange={(e) =>
+                            setTeamDraft((c) => ({
+                              ...c,
+                              coordinatorNip: e.target.value,
+                            }))
+                          }
                           className="field-input text-xs py-2 px-3 w-full font-mono text-xs"
                         />
                       </label>
                     </div>
 
                     <label className="block space-y-1">
-                      <span className="text-xs font-semibold text-[var(--text-primary)]">Label / Jabatan Pada Dokumen</span>
+                      <span className="text-xs font-semibold text-[var(--text-primary)]">
+                        Label / Jabatan Pada Dokumen
+                      </span>
                       <input
                         type="text"
                         placeholder={`Misal: KOORDINATOR ${(teamDraft.code || "TIM").toUpperCase()}-PB`}
                         value={teamDraft.coordinatorLabel || ""}
-                        onChange={(e) => setTeamDraft((c) => ({ ...c, coordinatorLabel: e.target.value }))}
+                        onChange={(e) =>
+                          setTeamDraft((c) => ({
+                            ...c,
+                            coordinatorLabel: e.target.value,
+                          }))
+                        }
                         className="field-input text-xs py-2 px-3 w-full uppercase font-semibold"
                       />
                     </label>
@@ -1373,7 +1581,9 @@ function ReportRulesPanel(
                               onClick={() =>
                                 setTeamDraft((c) => ({
                                   ...c,
-                                  headerLines: c.headerLines.filter((_, i) => i !== idx),
+                                  headerLines: c.headerLines.filter(
+                                    (_, i) => i !== idx,
+                                  ),
                                 }))
                               }
                               className="h-7 w-7 rounded-lg hover:bg-red-500/15 text-red-500 flex items-center justify-center text-xs font-bold transition shrink-0 cursor-pointer"
@@ -1398,11 +1608,15 @@ function ReportRulesPanel(
                             i === 0
                               ? "text-[var(--primary)]"
                               : i === 1
-                              ? "text-[var(--text-primary)] text-[11px]"
-                              : "text-[var(--text-muted)] text-[10px] font-semibold"
+                                ? "text-[var(--text-primary)] text-[11px]"
+                                : "text-[var(--text-muted)] text-[10px] font-semibold"
                           }`}
                         >
-                          {hl || <span className="opacity-40 italic">[Baris kosong]</span>}
+                          {hl || (
+                            <span className="opacity-40 italic">
+                              [Baris kosong]
+                            </span>
+                          )}
                         </p>
                       ))}
                     </div>
@@ -1441,154 +1655,6 @@ function ReportRulesPanel(
           document.body,
         )}
 
-      {/* SUB-TAB 3: PEJABAT TERKAIT & PENANDATANGAN */}
-      {activeSubTab === "officials" && (
-        <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-bold text-[var(--text-primary)]">
-                Default Pejabat Form & Penandatangan
-              </h3>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
-                Nilai pejabat ini akan otomatis dijadikan snapshot persetujuan pada dokumen laporan yang diterbitkan.
-              </p>
-            </div>
-            {props.activeReportTemplateConfig ? (
-              <div className="rounded-full border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-3 py-1.5 text-xs font-semibold text-[var(--text-muted)]">
-                Template Aktif: {props.activeReportTemplateConfig.templateName}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            {teamTypes.map((team) => {
-              const codeLower = team.code.toLowerCase();
-              if (codeLower === "trc") {
-                return (
-                  <TemplateApproverCard
-                    key={team.id}
-                    roleLabel={`Koordinator Tim ${team.name}`}
-                    accentClassName="bg-[var(--info-soft)] text-[var(--info)]"
-                    draft={{
-                      ...props.adminTemplateApproverDrafts.coordinator_team_trc,
-                      officialName: team.coordinatorName || props.adminTemplateApproverDrafts.coordinator_team_trc.officialName,
-                      officialNip: team.coordinatorNip || props.adminTemplateApproverDrafts.coordinator_team_trc.officialNip,
-                      scopeLabel: team.coordinatorLabel || props.adminTemplateApproverDrafts.coordinator_team_trc.scopeLabel,
-                    }}
-                    hideOfficialTitle
-                    onChange={(key, value) => {
-                      props.onChangeAdminTemplateApproverDraft("coordinator_team_trc", key, value);
-                      if (key === "officialName") handleTeamCoordinatorChange(team.id, "coordinatorName", value);
-                      if (key === "officialNip") handleTeamCoordinatorChange(team.id, "coordinatorNip", value);
-                      if (key === "scopeLabel") handleTeamCoordinatorChange(team.id, "coordinatorLabel", value);
-                    }}
-                  />
-                );
-              }
-              if (codeLower === "pusdalops") {
-                return (
-                  <TemplateApproverCard
-                    key={team.id}
-                    roleLabel={`Koordinator Tim ${team.name}`}
-                    accentClassName="bg-[var(--success-soft)] text-[var(--success)]"
-                    draft={{
-                      ...props.adminTemplateApproverDrafts.coordinator_team_pusdalops,
-                      officialName: team.coordinatorName || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.officialName,
-                      officialNip: team.coordinatorNip || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.officialNip,
-                      scopeLabel: team.coordinatorLabel || props.adminTemplateApproverDrafts.coordinator_team_pusdalops.scopeLabel,
-                    }}
-                    hideOfficialTitle
-                    onChange={(key, value) => {
-                      props.onChangeAdminTemplateApproverDraft("coordinator_team_pusdalops", key, value);
-                      if (key === "officialName") handleTeamCoordinatorChange(team.id, "coordinatorName", value);
-                      if (key === "officialNip") handleTeamCoordinatorChange(team.id, "coordinatorNip", value);
-                      if (key === "scopeLabel") handleTeamCoordinatorChange(team.id, "coordinatorLabel", value);
-                    }}
-                  />
-                );
-              }
-              return (
-                <div key={team.id} className="surface-muted rounded-[24px] p-4 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-sm font-bold text-[var(--primary)] uppercase">
-                      {team.code.slice(0, 2)}
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                        Koordinator Tim ({team.code})
-                      </p>
-                      <h4 className="text-base font-semibold text-[var(--text-primary)]">
-                        {team.name}
-                      </h4>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3">
-                    <label className="space-y-1.5 block">
-                      <span className="text-xs font-semibold text-[var(--text-primary)]">Label Dokumen</span>
-                      <input
-                        value={team.coordinatorLabel || `KOORDINATOR ${team.code.toUpperCase()}`}
-                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorLabel", e.target.value)}
-                        placeholder="Label pejabat"
-                        className={inputClassName}
-                      />
-                    </label>
-                    <label className="space-y-1.5 block">
-                      <span className="text-xs font-semibold text-[var(--text-primary)]">Nama Pejabat</span>
-                      <input
-                        value={team.coordinatorName || ""}
-                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorName", e.target.value)}
-                        placeholder="Nama pejabat"
-                        className={inputClassName}
-                      />
-                    </label>
-                    <label className="space-y-1.5 block">
-                      <span className="text-xs font-semibold text-[var(--text-primary)]">NIP Pejabat</span>
-                      <input
-                        value={team.coordinatorNip || ""}
-                        onChange={(e) => handleTeamCoordinatorChange(team.id, "coordinatorNip", e.target.value)}
-                        placeholder="Nomor Induk Pegawai"
-                        className={inputClassName}
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
-
-            <TemplateApproverCard
-              roleLabel="Kepala Bidang"
-              accentClassName="bg-[var(--warning-soft)] text-[var(--warning)]"
-              draft={props.adminTemplateApproverDrafts.division_head}
-              onChange={(key, value) =>
-                props.onChangeAdminTemplateApproverDraft(
-                  "division_head",
-                  key,
-                  value,
-                )
-              }
-            />
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="button"
-              onClick={() => void handleSaveAllOfficials()}
-              disabled={
-                props.adminSubmitting || savingTeamType
-              }
-              className="btn-primary px-6 py-2.5 text-sm disabled:opacity-60 cursor-pointer shadow-md shadow-[var(--primary)]/20 font-bold flex items-center gap-2"
-            >
-              {props.adminActiveAction === "save-template-approvers" || savingTeamType ? (
-                <SpinnerIcon />
-              ) : (
-                "Simpan Default Pejabat"
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* SUB-TAB 4: PARAMETER OPERASIONAL */}
       {activeSubTab === "operational" && (
         <div className="surface-card rounded-[28px] p-6 space-y-6 border border-[var(--border-soft)] shadow-sm">
@@ -1614,7 +1680,8 @@ function ReportRulesPanel(
                   Izinkan input laporan untuk tanggal mana pun
                 </p>
                 <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  Jika dimatikan, publik/petugas hanya dapat mengisi laporan pada hari berjalan.
+                  Jika dimatikan, publik/petugas hanya dapat mengisi laporan
+                  pada hari berjalan.
                 </p>
               </div>
             </label>
@@ -1648,10 +1715,7 @@ function ReportRulesPanel(
                 type="date"
                 value={props.adminRuleDraft.systemStartDate}
                 onChange={(event) =>
-                  props.onChangeAdminRule(
-                    "systemStartDate",
-                    event.target.value,
-                  )
+                  props.onChangeAdminRule("systemStartDate", event.target.value)
                 }
                 className={inputClassName}
               />
@@ -1826,7 +1890,7 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
                   label="Password Pengguna"
                   value={passwords[reporter.id] ?? "123123123"}
                   onChange={(value) => {
-                    setPasswords(prev => ({ ...prev, [reporter.id]: value }));
+                    setPasswords((prev) => ({ ...prev, [reporter.id]: value }));
                   }}
                 />
                 <div className="rounded-[18px] border border-[var(--border-soft)] bg-[var(--surface-panel-strong)] px-4 py-3 text-xs text-[var(--text-muted)] md:col-span-2">
@@ -1870,241 +1934,656 @@ function ReporterManagementPanel(props: ReporterManagementPanelProps) {
   );
 }
 
+function OfficialSignatureCard(props: {
+  title: string;
+  subtitle?: string;
+  officialName: string;
+  officialNip?: string;
+  signatureUrl?: string;
+  uploading: boolean;
+  onUploadSignature: (file: File) => Promise<void>;
+  onRemoveSignature: () => Promise<void>;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await props.onUploadSignature(file);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  return (
+    <div className="surface-card rounded-[24px] p-5 space-y-4 flex flex-col justify-between border border-[var(--border-soft)] shadow-sm hover:shadow-md transition">
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="rounded-full bg-[var(--primary-soft)] px-3 py-1 text-[11px] font-semibold tracking-wide text-[var(--primary)] uppercase">
+            {props.title}
+          </span>
+          {props.signatureUrl ? (
+            <span className="rounded-full bg-[var(--success-soft)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--success)]">
+              TTD Terpasang
+            </span>
+          ) : (
+            <span className="rounded-full bg-[var(--warning-soft)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--warning)]">
+              Belum Ada TTD
+            </span>
+          )}
+        </div>
+
+        {props.subtitle && (
+          <p className="text-xs text-[var(--text-muted)] font-medium mb-1.5">
+            {props.subtitle}
+          </p>
+        )}
+
+        <div className="space-y-1 mb-4 bg-[var(--surface-panel-strong)] p-3 rounded-xl border border-[var(--border-soft)]">
+          <p className="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">
+            Pejabat
+          </p>
+          <p className="text-sm font-bold text-[var(--text-primary)] leading-tight">
+            {props.officialName || "Belum diatur"}
+          </p>
+          {props.officialNip && (
+            <p className="text-xs text-[var(--text-muted)] font-mono">
+              NIP. {props.officialNip}
+            </p>
+          )}
+        </div>
+
+        <div className="relative flex min-h-[120px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[var(--border-soft)] bg-[var(--surface-muted)] p-3 transition hover:border-[var(--primary)]">
+          {props.signatureUrl ? (
+            <div className="flex flex-col items-center gap-2 w-full">
+              <img
+                src={props.signatureUrl}
+                alt={`Tanda tangan ${props.officialName}`}
+                className="max-h-24 max-w-full object-contain filter drop-shadow-sm"
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1.5 text-center text-[var(--text-muted)] p-2">
+              <svg
+                className="w-8 h-8 opacity-40"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.5"
+                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                />
+              </svg>
+              <span className="text-xs font-medium">
+                Unggah berkas tanda tangan (.png, .jpg, .webp)
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 pt-3 border-t border-[var(--border-soft)]">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => void handleFileChange(e)}
+        />
+        <button
+          type="button"
+          disabled={props.uploading}
+          onClick={() => fileInputRef.current?.click()}
+          className="btn-primary text-xs py-2.5 px-3 flex-1 justify-center disabled:opacity-60"
+        >
+          {props.uploading ? (
+            <SpinnerIcon />
+          ) : props.signatureUrl ? (
+            "Ganti TTD"
+          ) : (
+            "Upload TTD"
+          )}
+        </button>
+
+        {props.signatureUrl && (
+          <button
+            type="button"
+            disabled={props.uploading}
+            onClick={() => void props.onRemoveSignature()}
+            className="btn-secondary text-xs py-2.5 px-3 text-red-500 hover:text-red-600 disabled:opacity-60"
+            title="Hapus gambar TTD"
+          >
+            Hapus
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ExcelTemplatePanel(props: AdminDashboardViewProps) {
+  const [activeSubTab, setActiveSubTab] = useState<"signatures" | "excel">(
+    "signatures",
+  );
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
     null,
   );
+  const [teamTypes, setTeamTypes] = useState<TeamType[]>([]);
+  const [uploadingSignatureId, setUploadingSignatureId] = useState<
+    string | null
+  >(null);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchTeamTypes().then((types) => {
+      if (alive) {
+        setTeamTypes(types);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleUploadTeamSignature = async (team: TeamType, file: File) => {
+    setUploadingSignatureId(team.id);
+    try {
+      const url = await uploadOfficialSignature(file);
+      const updatedTypes = await saveTeamType({
+        id: team.id,
+        code: team.code,
+        name: team.name,
+        description: team.description,
+        headerLines: team.headerLines,
+        coordinatorName: team.coordinatorName,
+        coordinatorNip: team.coordinatorNip,
+        coordinatorLabel: team.coordinatorLabel,
+        signatureUrl: url,
+        isDefault: team.isDefault,
+      });
+      setTeamTypes(updatedTypes);
+
+      const codeLower = team.code.toLowerCase();
+      if (codeLower === "trc" || codeLower === "pusdalops") {
+        const role = `coordinator_team_${codeLower}` as const;
+        props.onChangeAdminTemplateApproverDraft(role, "signatureUrl", url);
+        const updatedDrafts = {
+          ...props.adminTemplateApproverDrafts,
+          [role]: {
+            ...props.adminTemplateApproverDrafts[role],
+            signatureUrl: url,
+          },
+        };
+        if (props.activeReportTemplateConfig) {
+          await props.onHandleSaveTemplateApproverDefaults(updatedDrafts);
+        }
+      }
+      await showSuccess(
+        "TTD Diperbarui",
+        `Tanda tangan untuk ${team.name} berhasil diunggah.`,
+      );
+    } catch (err: any) {
+      await showError(
+        "Gagal Unggah TTD",
+        err.message || "Terjadi kesalahan saat unggah TTD.",
+      );
+    } finally {
+      setUploadingSignatureId(null);
+    }
+  };
+
+  const handleRemoveTeamSignature = async (team: TeamType) => {
+    setUploadingSignatureId(team.id);
+    try {
+      const updatedTypes = await saveTeamType({
+        id: team.id,
+        code: team.code,
+        name: team.name,
+        description: team.description,
+        headerLines: team.headerLines,
+        coordinatorName: team.coordinatorName,
+        coordinatorNip: team.coordinatorNip,
+        coordinatorLabel: team.coordinatorLabel,
+        signatureUrl: "",
+        isDefault: team.isDefault,
+      });
+      setTeamTypes(updatedTypes);
+
+      const codeLower = team.code.toLowerCase();
+      if (codeLower === "trc" || codeLower === "pusdalops") {
+        const role = `coordinator_team_${codeLower}` as const;
+        props.onChangeAdminTemplateApproverDraft(role, "signatureUrl", "");
+        const updatedDrafts = {
+          ...props.adminTemplateApproverDrafts,
+          [role]: {
+            ...props.adminTemplateApproverDrafts[role],
+            signatureUrl: "",
+          },
+        };
+        if (props.activeReportTemplateConfig) {
+          await props.onHandleSaveTemplateApproverDefaults(updatedDrafts);
+        }
+      }
+      await showSuccess(
+        "TTD Dihapus",
+        `Tanda tangan untuk ${team.name} berhasil dihapus.`,
+      );
+    } catch (err: any) {
+      await showError(
+        "Gagal Hapus TTD",
+        err.message || "Terjadi kesalahan saat menghapus TTD.",
+      );
+    } finally {
+      setUploadingSignatureId(null);
+    }
+  };
+
+  const handleUploadDivisionHeadSignature = async (file: File) => {
+    setUploadingSignatureId("division_head");
+    try {
+      const url = await uploadOfficialSignature(file);
+      props.onChangeAdminTemplateApproverDraft(
+        "division_head",
+        "signatureUrl",
+        url,
+      );
+      const updatedDrafts = {
+        ...props.adminTemplateApproverDrafts,
+        division_head: {
+          ...props.adminTemplateApproverDrafts.division_head,
+          signatureUrl: url,
+        },
+      };
+      if (props.activeReportTemplateConfig) {
+        await props.onHandleSaveTemplateApproverDefaults(updatedDrafts);
+      }
+      await showSuccess(
+        "TTD Diperbarui",
+        "Tanda tangan Kepala Bidang berhasil diunggah.",
+      );
+    } catch (err: any) {
+      await showError(
+        "Gagal Unggah TTD",
+        err.message || "Terjadi kesalahan saat unggah TTD.",
+      );
+    } finally {
+      setUploadingSignatureId(null);
+    }
+  };
+
+  const handleRemoveDivisionHeadSignature = async () => {
+    setUploadingSignatureId("division_head");
+    try {
+      props.onChangeAdminTemplateApproverDraft(
+        "division_head",
+        "signatureUrl",
+        "",
+      );
+      const updatedDrafts = {
+        ...props.adminTemplateApproverDrafts,
+        division_head: {
+          ...props.adminTemplateApproverDrafts.division_head,
+          signatureUrl: "",
+        },
+      };
+      if (props.activeReportTemplateConfig) {
+        await props.onHandleSaveTemplateApproverDefaults(updatedDrafts);
+      }
+      await showSuccess(
+        "TTD Dihapus",
+        "Tanda tangan Kepala Bidang berhasil dihapus.",
+      );
+    } catch (err: any) {
+      await showError(
+        "Gagal Hapus TTD",
+        err.message || "Terjadi kesalahan saat menghapus TTD.",
+      );
+    } finally {
+      setUploadingSignatureId(null);
+    }
+  };
+
+  const divisionHeadDraft = props.adminTemplateApproverDrafts.division_head;
 
   return (
-    <div className="space-y-4">
-      <div className="surface-card rounded-[24px] p-4 sm:p-5">
-        <div className="grid items-end gap-3 lg:grid-cols-[minmax(220px,1.4fr)_150px_110px_minmax(180px,220px)_auto]">
-          <ClearableTextInput
-            label="Nama template"
-            value={props.excelTemplateDraft.templateName}
-            placeholder="Template-format-excel_YYYY-MM-DD_v1"
-            onChange={(value) =>
-              props.onChangeExcelTemplateDraft("templateName", value)
-            }
-            onClear={props.onClearExcelTemplateDraftName}
-          />
-
-          <ClearableTextInput
-            label="Tanggal dokumen"
-            value={props.excelTemplateDraft.templateDate}
-            readOnly
-          />
-
-          <ClearableTextInput
-            label="Versi cache"
-            value={props.excelTemplateDraft.cacheVersion}
-            placeholder="v1"
-            onChange={(value) =>
-              props.onChangeExcelTemplateDraft("cacheVersion", value)
-            }
-          />
-
-          <div className="lg:-mt-1">
-            <FileUploadInput
-              label="Pilih file .xlsx"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              selectedFileName={props.selectedExcelTemplateFileName}
-              disabled={props.excelTemplateUploading}
-              inputKey={
-                props.selectedExcelTemplateFileName || "empty-template-file"
-              }
-              onChange={(files) =>
-                props.onSelectExcelTemplateFile(files?.[0] ?? null)
-              }
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void props.onHandleUploadExcelTemplate()}
-            disabled={
-              props.excelTemplateUploading ||
-              !props.selectedExcelTemplateFileName
-            }
-            className="btn-primary h-[52px] min-w-[144px] justify-center px-5 py-2 text-sm disabled:opacity-60"
-          >
-            {props.excelTemplateUploading ? <SpinnerIcon /> : "Upload template"}
-          </button>
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-muted)]">
-          <span>
-            File:{" "}
-            <span className="font-semibold text-[var(--text-primary)]">
-              {props.selectedExcelTemplateFileName || "Belum ada"}
-            </span>
-          </span>
-          <span>
-            Aktif:{" "}
-            <span className="font-semibold text-[var(--text-primary)]">
-              {props.activeExcelTemplate?.templateName ?? "Belum ada"}
-            </span>
-          </span>
-        </div>
+    <div className="space-y-5">
+      <div className="flex items-center gap-2 border-b border-[var(--border-soft)] pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("signatures")}
+          className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+            activeSubTab === "signatures"
+              ? "bg-[var(--primary)] text-[var(--primary-contrast)]"
+              : "text-[var(--text-muted)] hover:bg-[var(--surface-elevated)]"
+          }`}
+        >
+          Template TTD Pejabat
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("excel")}
+          className={`px-4 py-2 text-sm font-semibold rounded-full transition ${
+            activeSubTab === "excel"
+              ? "bg-[var(--primary)] text-[var(--primary-contrast)]"
+              : "text-[var(--text-muted)] hover:bg-[var(--surface-elevated)]"
+          }`}
+        >
+          Template File Excel (.xlsx)
+        </button>
       </div>
 
-      <div className="grid gap-3">
-        {props.excelTemplates.length === 0 ? (
-          <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)] flex flex-col gap-1">
-            <span className="font-medium text-[var(--text-primary)]">
-              Belum ada template kustom yang diunggah
-            </span>
-            <span>
-              Sistem saat ini otomatis menggunakan{" "}
-              <strong className="text-[var(--text-primary)]">Template Bawaan Sistem (Lokal)</strong>{" "}
-              untuk seluruh kebutuhan ekspor Excel. Anda dapat mengunggah file template <code className="text-xs bg-[var(--surface-muted)] px-1.5 py-0.5 rounded">.xlsx</code> baru di atas kapan saja untuk menggantikannya secara dinamis.
-            </span>
+      {activeSubTab === "signatures" ? (
+        <div className="space-y-4">
+          <div className="surface-card rounded-[24px] p-5">
+            <h3 className="text-base font-semibold text-[var(--text-primary)]">
+              Template Tanda Tangan (TTD) Pejabat Penanggung Jawab
+            </h3>
+            <p className="text-sm text-[var(--text-muted)] mt-1">
+              Upload gambar TTD transparan (.png/.jpg) untuk masing-masing
+              pejabat. TTD ini akan otomatis ditempelkan di posisi semestinya
+              pada dokumen cetak PDF dan ekspor Excel.
+            </p>
           </div>
-        ) : null}
 
-        {props.excelTemplates.map((template) => {
-          const isEditing = editingTemplateId === template.id;
-          const draft = props.adminExcelTemplateDrafts[template.id] ?? {
-            templateName: template.templateName,
-            templateDate: template.createdAt.slice(0, 10),
-            cacheVersion: template.cacheVersion,
-          };
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {teamTypes.map((team) => {
+              const codeLower = team.code.toLowerCase();
+              const approverDraft =
+                codeLower === "trc"
+                  ? props.adminTemplateApproverDrafts.coordinator_team_trc
+                  : codeLower === "pusdalops"
+                    ? props.adminTemplateApproverDrafts
+                        .coordinator_team_pusdalops
+                    : null;
 
-          return (
-            <AdminEditableListCard
-              key={template.id}
-              title={
-                isEditing ? (
-                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                    Edit template Excel
-                  </span>
+              const effectiveName =
+                team.coordinatorName || approverDraft?.officialName || "";
+              const effectiveNip =
+                team.coordinatorNip || approverDraft?.officialNip || "";
+              const effectiveSignatureUrl =
+                team.signatureUrl || approverDraft?.signatureUrl || "";
+
+              return (
+                <OfficialSignatureCard
+                  key={team.id}
+                  title={
+                    team.coordinatorLabel || `Koordinator Tim ${team.name}`
+                  }
+                  subtitle={`Tim: ${team.name} (${team.code.toUpperCase()})`}
+                  officialName={effectiveName}
+                  officialNip={effectiveNip}
+                  signatureUrl={effectiveSignatureUrl}
+                  uploading={uploadingSignatureId === team.id}
+                  onUploadSignature={(file) =>
+                    handleUploadTeamSignature(team, file)
+                  }
+                  onRemoveSignature={() => handleRemoveTeamSignature(team)}
+                />
+              );
+            })}
+
+            <OfficialSignatureCard
+              title={divisionHeadDraft.scopeLabel || "Kepala Bidang (Kabid)"}
+              subtitle="Pejabat Mengetahui / Menyetujui"
+              officialName={divisionHeadDraft.officialName}
+              officialNip={divisionHeadDraft.officialNip}
+              signatureUrl={divisionHeadDraft.signatureUrl}
+              uploading={uploadingSignatureId === "division_head"}
+              onUploadSignature={handleUploadDivisionHeadSignature}
+              onRemoveSignature={handleRemoveDivisionHeadSignature}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {activeSubTab === "excel" ? (
+        <div className="space-y-4">
+          <div className="surface-card rounded-[24px] p-4 sm:p-5">
+            <div className="grid items-end gap-3 lg:grid-cols-[minmax(220px,1.4fr)_150px_110px_minmax(180px,220px)_auto]">
+              <ClearableTextInput
+                label="Nama template"
+                value={props.excelTemplateDraft.templateName}
+                placeholder="Template-format-excel_YYYY-MM-DD_v1"
+                onChange={(value) =>
+                  props.onChangeExcelTemplateDraft("templateName", value)
+                }
+                onClear={props.onClearExcelTemplateDraftName}
+              />
+
+              <ClearableTextInput
+                label="Tanggal dokumen"
+                value={props.excelTemplateDraft.templateDate}
+                readOnly
+              />
+
+              <ClearableTextInput
+                label="Versi cache"
+                value={props.excelTemplateDraft.cacheVersion}
+                placeholder="v1"
+                onChange={(value) =>
+                  props.onChangeExcelTemplateDraft("cacheVersion", value)
+                }
+              />
+
+              <div className="lg:-mt-1">
+                <FileUploadInput
+                  label="Pilih file .xlsx"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  selectedFileName={props.selectedExcelTemplateFileName}
+                  disabled={props.excelTemplateUploading}
+                  inputKey={
+                    props.selectedExcelTemplateFileName || "empty-template-file"
+                  }
+                  onChange={(files) =>
+                    props.onSelectExcelTemplateFile(files?.[0] ?? null)
+                  }
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void props.onHandleUploadExcelTemplate()}
+                disabled={
+                  props.excelTemplateUploading ||
+                  !props.selectedExcelTemplateFileName
+                }
+                className="btn-primary h-[52px] min-w-[144px] justify-center px-5 py-2 text-sm disabled:opacity-60"
+              >
+                {props.excelTemplateUploading ? (
+                  <SpinnerIcon />
                 ) : (
-                  <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
-                    {template.templateName}
-                  </h3>
-                )
-              }
-              badges={
-                <>
-                  <span className="rounded-full bg-[var(--surface-panel-strong)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                    {template.cacheVersion}
-                  </span>
-                  {template.isActive ? (
-                    <span className="rounded-full bg-[var(--success-soft)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--success)]">
-                      Aktif
-                    </span>
-                  ) : null}
-                </>
-              }
-              meta={
-                <>
-                  <p className="break-all">{template.storagePath}</p>
-                  <p className="mt-1">
-                    Update: {formatWitaDateTime(template.updatedAt)}
-                  </p>
-                </>
-              }
-              isEditing={isEditing}
-              editContent={
-                <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_140px]">
-                  <ClearableTextInput
-                    label="Nama template"
-                    value={draft.templateName}
-                    onChange={(value) =>
-                      props.onChangeAdminExcelTemplateDraft(
-                        template.id,
-                        "templateName",
-                        value,
-                      )
-                    }
-                    onClear={() =>
-                      props.onChangeAdminExcelTemplateDraft(
-                        template.id,
-                        "templateName",
-                        "",
-                      )
-                    }
-                  />
-                  <ClearableTextInput
-                    label="Versi cache"
-                    value={draft.cacheVersion}
-                    onChange={(value) =>
-                      props.onChangeAdminExcelTemplateDraft(
-                        template.id,
-                        "cacheVersion",
-                        value,
-                      )
-                    }
-                  />
-                </div>
-              }
-              disableActions={props.adminSubmitting}
-              saveLoading={
-                props.adminActiveAction === "rename-excel-template" &&
-                props.adminActiveItemId === template.id
-              }
-              primaryActionLoading={
-                props.adminActiveAction === "activate-excel-template" &&
-                props.adminActiveItemId === template.id
-              }
-              deleteLoading={
-                props.adminActiveAction === "delete-excel-template" &&
-                props.adminActiveItemId === template.id
-              }
-              saveLoadingLabel="menyimpan metadata"
-              primaryActionLoadingLabel="pindah template aktif"
-              deleteLoadingLabel="menghapus berkas excel"
-              onStartEdit={() => setEditingTemplateId(template.id)}
-              onCancelEdit={() => {
-                props.onChangeAdminExcelTemplateDraft(
-                  template.id,
-                  "templateName",
-                  template.templateName,
-                );
-                props.onChangeAdminExcelTemplateDraft(
-                  template.id,
-                  "cacheVersion",
-                  template.cacheVersion,
-                );
-                setEditingTemplateId(null);
-              }}
-              onSaveEdit={() => {
-                void props
-                  .onHandleRenameExcelTemplate(template)
-                  .then(() => setEditingTemplateId(null));
-              }}
-              onPrimaryAction={
-                template.isActive
-                  ? undefined
-                  : () => void props.onHandleActivateExcelTemplate(template.id)
-              }
-              primaryActionLabel={
-                template.isActive ? "Sedang aktif" : "Jadikan utama"
-              }
-              onDelete={
-                template.isActive
-                  ? undefined
-                  : () => void props.onHandleDeleteExcelTemplate(template)
-              }
-              deleteLabel="Delete"
-              extraActions={
-                template.publicUrl ? (
-                  <a
-                    href={template.publicUrl}
-                    download
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-secondary px-4 py-2 text-sm disabled:opacity-60 items-center flex"
-                    title="Download format Excel"
-                  >
-                    Download
-                  </a>
-                ) : null
-              }
-            />
-          );
-        })}
-      </div>
+                  "Upload template"
+                )}
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--text-muted)]">
+              <span>
+                File:{" "}
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {props.selectedExcelTemplateFileName || "Belum ada"}
+                </span>
+              </span>
+              <span>
+                Aktif:{" "}
+                <span className="font-semibold text-[var(--text-primary)]">
+                  {props.activeExcelTemplate?.templateName ?? "Belum ada"}
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            {props.excelTemplates.length === 0 ? (
+              <div className="surface-card rounded-[24px] p-5 text-sm text-[var(--text-muted)] flex flex-col gap-1">
+                <span className="font-medium text-[var(--text-primary)]">
+                  Belum ada template kustom yang diunggah
+                </span>
+                <span>
+                  Sistem saat ini otomatis menggunakan{" "}
+                  <strong className="text-[var(--text-primary)]">
+                    Template Bawaan Sistem (Lokal)
+                  </strong>{" "}
+                  untuk seluruh kebutuhan ekspor Excel. Anda dapat mengunggah
+                  file template{" "}
+                  <code className="text-xs bg-[var(--surface-muted)] px-1.5 py-0.5 rounded">
+                    .xlsx
+                  </code>{" "}
+                  baru di atas kapan saja untuk menggantikannya secara dinamis.
+                </span>
+              </div>
+            ) : null}
+
+            {props.excelTemplates.map((template) => {
+              const isEditing = editingTemplateId === template.id;
+              const draft = props.adminExcelTemplateDrafts[template.id] ?? {
+                templateName: template.templateName,
+                templateDate: template.createdAt.slice(0, 10),
+                cacheVersion: template.cacheVersion,
+              };
+
+              return (
+                <AdminEditableListCard
+                  key={template.id}
+                  title={
+                    isEditing ? (
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        Edit template Excel
+                      </span>
+                    ) : (
+                      <h3 className="truncate text-base font-semibold text-[var(--text-primary)]">
+                        {template.templateName}
+                      </h3>
+                    )
+                  }
+                  badges={
+                    <>
+                      <span className="rounded-full bg-[var(--surface-panel-strong)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                        {template.cacheVersion}
+                      </span>
+                      {template.isActive ? (
+                        <span className="rounded-full bg-[var(--success-soft)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--success)]">
+                          Aktif
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                  meta={
+                    <>
+                      <p className="break-all">{template.storagePath}</p>
+                      <p className="mt-1">
+                        Update: {formatWitaDateTime(template.updatedAt)}
+                      </p>
+                    </>
+                  }
+                  isEditing={isEditing}
+                  editContent={
+                    <div className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_140px]">
+                      <ClearableTextInput
+                        label="Nama template"
+                        value={draft.templateName}
+                        onChange={(value) =>
+                          props.onChangeAdminExcelTemplateDraft(
+                            template.id,
+                            "templateName",
+                            value,
+                          )
+                        }
+                        onClear={() =>
+                          props.onChangeAdminExcelTemplateDraft(
+                            template.id,
+                            "templateName",
+                            "",
+                          )
+                        }
+                      />
+                      <ClearableTextInput
+                        label="Versi cache"
+                        value={draft.cacheVersion}
+                        onChange={(value) =>
+                          props.onChangeAdminExcelTemplateDraft(
+                            template.id,
+                            "cacheVersion",
+                            value,
+                          )
+                        }
+                      />
+                    </div>
+                  }
+                  disableActions={props.adminSubmitting}
+                  saveLoading={
+                    props.adminActiveAction === "rename-excel-template" &&
+                    props.adminActiveItemId === template.id
+                  }
+                  primaryActionLoading={
+                    props.adminActiveAction === "activate-excel-template" &&
+                    props.adminActiveItemId === template.id
+                  }
+                  deleteLoading={
+                    props.adminActiveAction === "delete-excel-template" &&
+                    props.adminActiveItemId === template.id
+                  }
+                  saveLoadingLabel="menyimpan metadata"
+                  primaryActionLoadingLabel="pindah template aktif"
+                  deleteLoadingLabel="menghapus berkas excel"
+                  onStartEdit={() => setEditingTemplateId(template.id)}
+                  onCancelEdit={() => {
+                    props.onChangeAdminExcelTemplateDraft(
+                      template.id,
+                      "templateName",
+                      template.templateName,
+                    );
+                    props.onChangeAdminExcelTemplateDraft(
+                      template.id,
+                      "cacheVersion",
+                      template.cacheVersion,
+                    );
+                    setEditingTemplateId(null);
+                  }}
+                  onSaveEdit={() => {
+                    void props
+                      .onHandleRenameExcelTemplate(template)
+                      .then(() => setEditingTemplateId(null));
+                  }}
+                  onPrimaryAction={
+                    template.isActive
+                      ? undefined
+                      : () =>
+                          void props.onHandleActivateExcelTemplate(template.id)
+                  }
+                  primaryActionLabel={
+                    template.isActive ? "Sedang aktif" : "Jadikan utama"
+                  }
+                  onDelete={
+                    template.isActive
+                      ? undefined
+                      : () => void props.onHandleDeleteExcelTemplate(template)
+                  }
+                  deleteLabel="Delete"
+                  extraActions={
+                    template.publicUrl ? (
+                      <a
+                        href={template.publicUrl}
+                        download
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-secondary px-4 py-2 text-sm disabled:opacity-60 items-center flex"
+                        title="Download format Excel"
+                      >
+                        Download
+                      </a>
+                    ) : null
+                  }
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2259,19 +2738,36 @@ function BulkExportPanel(props: {
   ) => Promise<void>;
   deviceBackupExporting?: boolean;
 }) {
-  const [viewMode, setViewMode] = useState<"selection" | "pdf-progress">("selection");
-  const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
-  const [sourceFilter, setSourceFilter] = useState<"all" | "db" | "local">("all");
-  const [combinedReports, setCombinedReports] = useState<Report[]>(props.reports);
+  const [viewMode, setViewMode] = useState<"selection" | "pdf-progress">(
+    "selection",
+  );
+  const [paperFormat, setPaperFormat] = useState<
+    "a4" | "f4" | "legal" | "letter"
+  >("a4");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "db" | "local">(
+    "all",
+  );
+  const [combinedReports, setCombinedReports] = useState<Report[]>(
+    props.reports,
+  );
   const [keyword, setKeyword] = useState("");
   const [selectedUserFilter, setSelectedUserFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "user_asc">("newest");
-  const [selectedActivities, setSelectedActivities] = useState<Record<string, number[]>>({});
-  const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>({});
-  const [expandedReports, setExpandedReports] = useState<Record<string, boolean>>({});
-  const [livePdfProgressState, setLivePdfProgressState] = useState<BulkPdfProgressState | null>(null);
+  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "user_asc">(
+    "newest",
+  );
+  const [selectedActivities, setSelectedActivities] = useState<
+    Record<string, number[]>
+  >({});
+  const [expandedUsers, setExpandedUsers] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [expandedReports, setExpandedReports] = useState<
+    Record<string, boolean>
+  >({});
+  const [livePdfProgressState, setLivePdfProgressState] =
+    useState<BulkPdfProgressState | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfResult, setPdfResult] = useState<{
     success: boolean;
@@ -2341,7 +2837,10 @@ function BulkExportPanel(props: {
     const search = keyword.trim().toLowerCase();
     return baseDataset
       .filter((report) => {
-        if (selectedUserFilter !== "all" && report.nama !== selectedUserFilter) {
+        if (
+          selectedUserFilter !== "all" &&
+          report.nama !== selectedUserFilter
+        ) {
           return false;
         }
         if (
@@ -2392,9 +2891,7 @@ function BulkExportPanel(props: {
   // Selection metrics
   const selectedReports = useMemo(
     () =>
-      visibleReports.filter(
-        (r) => (selectedActivities[r.id] || []).length > 0,
-      ),
+      visibleReports.filter((r) => (selectedActivities[r.id] || []).length > 0),
     [visibleReports, selectedActivities],
   );
   const selectedReportsCount = selectedReports.length;
@@ -2432,8 +2929,7 @@ function BulkExportPanel(props: {
   const toggleReport = (report: Report) => {
     const allNos = (report.activities || []).map((a) => a.no);
     const current = selectedActivities[report.id] || [];
-    const isAllSelected =
-      allNos.length > 0 && current.length === allNos.length;
+    const isAllSelected = allNos.length > 0 && current.length === allNos.length;
     setSelectedActivities((prev) => ({
       ...prev,
       [report.id]: isAllSelected ? [] : allNos,
@@ -2444,7 +2940,8 @@ function BulkExportPanel(props: {
     const isUserAllSelected = userReports.every((r) => {
       const selected = selectedActivities[r.id] || [];
       return (
-        (r.activities || []).length > 0 && selected.length === (r.activities || []).length
+        (r.activities || []).length > 0 &&
+        selected.length === (r.activities || []).length
       );
     });
     setSelectedActivities((prev) => {
@@ -2531,11 +3028,24 @@ function BulkExportPanel(props: {
       setPdfResult(result);
       if (result.success) {
         setExportProgressState((prev) =>
-          prev ? { ...prev, status: "completed", message: `Selesai! ${result.downloadedCount} file PDF berhasil diunduh.` } : null
+          prev
+            ? {
+                ...prev,
+                status: "completed",
+                message: `Selesai! ${result.downloadedCount} file PDF berhasil diunduh.`,
+              }
+            : null,
         );
       } else {
         setExportProgressState((prev) =>
-          prev ? { ...prev, status: "error", message: "Gagal membuat sebagian file PDF", errorMessage: result.errors.join(", ") } : null
+          prev
+            ? {
+                ...prev,
+                status: "error",
+                message: "Gagal membuat sebagian file PDF",
+                errorMessage: result.errors.join(", "),
+              }
+            : null,
         );
       }
     } catch (err: any) {
@@ -2547,7 +3057,14 @@ function BulkExportPanel(props: {
         ],
       });
       setExportProgressState((prev) =>
-        prev ? { ...prev, status: "error", message: "Gagal membuat dokumen PDF", errorMessage: err?.message } : null
+        prev
+          ? {
+              ...prev,
+              status: "error",
+              message: "Gagal membuat dokumen PDF",
+              errorMessage: err?.message,
+            }
+          : null,
       );
     } finally {
       setPdfExporting(false);
@@ -2557,7 +3074,10 @@ function BulkExportPanel(props: {
   const handleStartExcelExport = async () => {
     if (!props.onHandleDownloadDeviceBackupExcel) return;
     if (selectedReportsCount === 0) {
-      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke Excel.");
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu laporan untuk diexport ke Excel.",
+      );
       return;
     }
     setViewMode("pdf-progress");
@@ -2584,7 +3104,9 @@ function BulkExportPanel(props: {
         status: "error",
         message: "Gagal mengekspor data ke Excel.",
         count: selectedReportsCount,
-        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file Excel.",
+        errorMessage:
+          err?.message ||
+          "Terjadi kesalahan tak terduga saat menyusun file Excel.",
       });
     }
   };
@@ -2592,7 +3114,10 @@ function BulkExportPanel(props: {
   const handleStartJsonExport = async () => {
     if (!props.onHandleDownloadDeviceBackupJson) return;
     if (selectedReportsCount === 0) {
-      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke JSON.");
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu laporan untuk diexport ke JSON.",
+      );
       return;
     }
     setViewMode("pdf-progress");
@@ -2619,14 +3144,19 @@ function BulkExportPanel(props: {
         status: "error",
         message: "Gagal mengekspor file JSON cadangan.",
         count: selectedReportsCount,
-        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file JSON.",
+        errorMessage:
+          err?.message ||
+          "Terjadi kesalahan tak terduga saat menyusun file JSON.",
       });
     }
   };
 
   const handleStartZipExport = async () => {
     if (selectedReportsCount === 0) {
-      await showInfo("Pilih Data", "Pilih setidaknya satu laporan untuk diexport ke ZIP.");
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu laporan untuk diexport ke ZIP.",
+      );
       return;
     }
     setViewMode("pdf-progress");
@@ -2653,7 +3183,9 @@ function BulkExportPanel(props: {
         status: "error",
         message: "Gagal mengekspor arsip ZIP Excel.",
         count: selectedReportsCount,
-        errorMessage: err?.message || "Terjadi kesalahan tak terduga saat menyusun file ZIP.",
+        errorMessage:
+          err?.message ||
+          "Terjadi kesalahan tak terduga saat menyusun file ZIP.",
       });
     }
   };
@@ -2726,7 +3258,9 @@ function BulkExportPanel(props: {
                     : "opacity-40 cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-muted)]"
               }`}
             >
-              {(pdfExporting || props.deviceBackupExporting || props.bulkExporting) && (
+              {(pdfExporting ||
+                props.deviceBackupExporting ||
+                props.bulkExporting) && (
                 <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
               )}
               <span>2. Progres Export</span>
@@ -2750,7 +3284,7 @@ function BulkExportPanel(props: {
                   type="text"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="mis. Andi / Kebakaran"
+                  placeholder="mis.  Kebakaran"
                   className={inputClassName}
                 />
               </label>
@@ -3029,7 +3563,8 @@ function BulkExportPanel(props: {
                 Tidak ada laporan yang sesuai dengan filter.
               </p>
               <p className="text-xs">
-                Coba ubah kata kunci pencarian, sumber data, atau rentang tanggal.
+                Coba ubah kata kunci pencarian, sumber data, atau rentang
+                tanggal.
               </p>
             </div>
           ) : (
@@ -3153,8 +3688,9 @@ function BulkExportPanel(props: {
                                       </span>
                                     )}
                                     <span className="text-xs text-[var(--text-muted)]">
-                                      • {selNos.length}/{report.activities.length}{" "}
-                                      Aktivitas terpilih
+                                      • {selNos.length}/
+                                      {report.activities.length} Aktivitas
+                                      terpilih
                                     </span>
                                   </div>
                                 </div>
@@ -3246,7 +3782,9 @@ function BulkExportPanel(props: {
                   <button
                     type="button"
                     onClick={() => setViewMode("selection")}
-                    disabled={props.deviceBackupExporting || props.bulkExporting}
+                    disabled={
+                      props.deviceBackupExporting || props.bulkExporting
+                    }
                     className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
                   >
                     <svg
@@ -3299,9 +3837,13 @@ function BulkExportPanel(props: {
                     {exportProgressState.status === "running" ? (
                       <SpinnerIcon className="h-4 w-4 animate-spin text-emerald-600" />
                     ) : exportProgressState.status === "completed" ? (
-                      <span className="text-emerald-500 font-extrabold text-sm">✓</span>
+                      <span className="text-emerald-500 font-extrabold text-sm">
+                        ✓
+                      </span>
                     ) : (
-                      <span className="text-red-500 font-extrabold text-sm">✕</span>
+                      <span className="text-red-500 font-extrabold text-sm">
+                        ✕
+                      </span>
                     )}
                     <span>{exportProgressState.message}</span>
                   </div>
@@ -3328,7 +3870,8 @@ function BulkExportPanel(props: {
 
                 {exportProgressState.errorMessage && (
                   <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-600 dark:text-red-400 font-medium">
-                    <strong>Detail Kesalahan:</strong> {exportProgressState.errorMessage}
+                    <strong>Detail Kesalahan:</strong>{" "}
+                    {exportProgressState.errorMessage}
                   </div>
                 )}
               </div>
@@ -3357,343 +3900,348 @@ function BulkExportPanel(props: {
           )}
 
           {/* B. Progress Page for PDF Massal Export */}
-          {livePdfProgressState && (!exportProgressState || exportProgressState.type === "pdf") && (
-            <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
-              {/* Header Progress PDF Page */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
-                <div className="flex items-center gap-3.5">
+          {livePdfProgressState &&
+            (!exportProgressState || exportProgressState.type === "pdf") && (
+              <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
+                {/* Header Progress PDF Page */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+                  <div className="flex items-center gap-3.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      disabled={pdfExporting}
+                      className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-4 w-4"
+                      >
+                        <polyline points="15 18 9 12 15 6" />
+                      </svg>
+                      <span>Kembali ke Seleksi Data</span>
+                    </button>
+                    <div>
+                      <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                        <span>Progres Export PDF Massal Harian</span>
+                        {pdfExporting ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
+                            Sedang Merender...
+                          </span>
+                        ) : livePdfProgressState.overallStatus ===
+                          "completed" ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            Selesai
+                          </span>
+                        ) : null}
+                      </h4>
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                        Mengunduh dokumen PDF harian per petugas secara otomatis
+                        ke perangkat Anda.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                      Total: {livePdfProgressState.totalUsers} Petugas •{" "}
+                      {livePdfProgressState.totalReports} PDF •{" "}
+                      {livePdfProgressState.totalActivities} Aktivitas
+                    </span>
+                  </div>
+                </div>
+
+                {/* Metric Status Cards & Progress Bar */}
+                <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+                    <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                      {pdfExporting ? (
+                        <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
+                      ) : (
+                        <span className="text-emerald-500">✓</span>
+                      )}
+                      <span className="font-extrabold">
+                        {livePdfProgressState.currentMessage}
+                      </span>
+                    </div>
+                    <div className="text-[var(--text-muted)]">
+                      {livePdfProgressState.totalReports > 0
+                        ? Math.round(
+                            (livePdfProgressState.downloadedReportsCount /
+                              livePdfProgressState.totalReports) *
+                              100,
+                          )
+                        : 0}
+                      % Selesai ({livePdfProgressState.downloadedReportsCount}/
+                      {livePdfProgressState.totalReports} File PDF)
+                    </div>
+                  </div>
+
+                  {/* Main Animated Progress Bar */}
+                  <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+                    <div
+                      className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          livePdfProgressState.totalReports > 0
+                            ? Math.min(
+                                100,
+                                (livePdfProgressState.downloadedReportsCount /
+                                  livePdfProgressState.totalReports) *
+                                  100,
+                              )
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Quick Metrics Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Petugas Aktif
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                        {livePdfProgressState.currentUserName || "-"}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        PDF Terunduh
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {livePdfProgressState.downloadedReportsCount} /{" "}
+                        {livePdfProgressState.totalReports}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Aktivitas Tercover
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {livePdfProgressState.downloadedActivitiesCount} /{" "}
+                        {livePdfProgressState.totalActivities}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Ukuran Kertas
+                      </span>
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
+                        {paperFormat}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hierarchical Progress Tree View */}
+                <div className="space-y-3">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+                    <span>Struktur Antrean &amp; Status Download PDF</span>
+                  </h5>
+
+                  <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+                    {livePdfProgressState.users.map((userGroup, uIdx) => {
+                      const isUserDownloading =
+                        userGroup.status === "downloading";
+                      const isUserSuccess = userGroup.status === "success";
+                      const isUserError = userGroup.status === "error";
+
+                      return (
+                        <div
+                          key={userGroup.userName}
+                          className={`p-3.5 sm:p-4 space-y-2.5 transition ${
+                            isUserDownloading
+                              ? "bg-rose-500/5"
+                              : isUserError
+                                ? "bg-red-500/5"
+                                : ""
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="shrink-0 flex items-center justify-center">
+                                {isUserDownloading ? (
+                                  <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
+                                    <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                                  </span>
+                                ) : isUserSuccess ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
+                                    ✓
+                                  </span>
+                                ) : isUserError ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
+                                    ✕
+                                  </span>
+                                ) : (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
+                                    ○
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                                  {userGroup.userName}
+                                </span>
+                                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                                  (Petugas #{uIdx + 1} •{" "}
+                                  {userGroup.completedReports}/
+                                  {userGroup.totalReports} PDF selesai)
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {isUserDownloading && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                                  <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                  <span>Merender PDF...</span>
+                                </span>
+                              )}
+                              {isUserSuccess && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                  PDF Selesai ✓
+                                </span>
+                              )}
+                              {isUserError && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                                  Error ✕
+                                </span>
+                              )}
+                              {userGroup.status === "pending" && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                                  Menunggu Antrean
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
+                            {userGroup.reports.map((reportItem) => {
+                              const isRepDownloading =
+                                reportItem.status === "downloading";
+                              const isRepSuccess =
+                                reportItem.status === "success";
+                              const isRepError = reportItem.status === "error";
+
+                              return (
+                                <div
+                                  key={reportItem.reportId}
+                                  className={`flex flex-wrap items-center justify-between gap-2.5 py-1.5 px-3 rounded-xl border transition-all text-xs ${
+                                    isRepDownloading
+                                      ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
+                                      : isRepSuccess
+                                        ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
+                                        : isRepError
+                                          ? "bg-red-500/10 border-red-500/30"
+                                          : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
+                                      └─
+                                    </span>
+
+                                    <div className="shrink-0 flex items-center justify-center">
+                                      {isRepDownloading ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
+                                          <SpinnerIcon className="h-3 w-3" />
+                                        </span>
+                                      ) : isRepSuccess ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                          ✓
+                                        </span>
+                                      ) : isRepError ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
+                                          ✕
+                                        </span>
+                                      ) : (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
+                                          ○
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-[var(--text-primary)]">
+                                        {formatWitaDate(reportItem.reportDate)}
+                                      </span>
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                        Tim {reportItem.tim || "TRC"}
+                                      </span>
+                                      <span className="text-[var(--text-muted)] text-[11px]">
+                                        • {reportItem.activitiesCount} Aktivitas
+                                      </span>
+                                      {reportItem.errorMessage && (
+                                        <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                                          ({reportItem.errorMessage})
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isRepDownloading && (
+                                      <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
+                                        <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                        <span>Merender PDF...</span>
+                                      </span>
+                                    )}
+                                    {isRepSuccess && (
+                                      <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                        Dokumen Terunduh ✓
+                                      </span>
+                                    )}
+                                    {isRepError && (
+                                      <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
+                                        Gagal ✕
+                                      </span>
+                                    )}
+                                    {reportItem.status === "pending" && (
+                                      <span className="text-[11px] text-[var(--text-muted)] italic">
+                                        Menunggu...
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Action Footer on Progress Page */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
                   <button
                     type="button"
                     onClick={() => setViewMode("selection")}
                     disabled={pdfExporting}
-                    className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                    className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
                   >
-                    <svg
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="h-4 w-4"
+                    ← Kembali ke Seleksi Data
+                  </button>
+
+                  {pdfResult && (
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
                     >
-                      <polyline points="15 18 9 12 15 6" />
-                    </svg>
-                    <span>Kembali ke Seleksi Data</span>
-                  </button>
-                  <div>
-                    <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
-                      <span>Progres Export PDF Massal Harian</span>
-                      {pdfExporting ? (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
-                          Sedang Merender...
-                        </span>
-                      ) : livePdfProgressState.overallStatus === "completed" ? (
-                        <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                          Selesai
-                        </span>
-                      ) : null}
-                    </h4>
-                    <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                      Mengunduh dokumen PDF harian per petugas secara otomatis ke
-                      perangkat Anda.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-                    Total: {livePdfProgressState.totalUsers} Petugas •{" "}
-                    {livePdfProgressState.totalReports} PDF •{" "}
-                    {livePdfProgressState.totalActivities} Aktivitas
-                  </span>
+                      Selesai &amp; Kembali
+                    </button>
+                  )}
                 </div>
               </div>
-
-              {/* Metric Status Cards & Progress Bar */}
-              <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
-                  <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                    {pdfExporting ? (
-                      <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
-                    ) : (
-                      <span className="text-emerald-500">✓</span>
-                    )}
-                    <span className="font-extrabold">
-                      {livePdfProgressState.currentMessage}
-                    </span>
-                  </div>
-                  <div className="text-[var(--text-muted)]">
-                    {livePdfProgressState.totalReports > 0
-                      ? Math.round(
-                          (livePdfProgressState.downloadedReportsCount /
-                            livePdfProgressState.totalReports) *
-                            100,
-                        )
-                      : 0}
-                    % Selesai ({livePdfProgressState.downloadedReportsCount}/
-                    {livePdfProgressState.totalReports} File PDF)
-                  </div>
-                </div>
-
-                {/* Main Animated Progress Bar */}
-                <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
-                  <div
-                    className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
-                    style={{
-                      width: `${
-                        livePdfProgressState.totalReports > 0
-                          ? Math.min(
-                              100,
-                              (livePdfProgressState.downloadedReportsCount /
-                                livePdfProgressState.totalReports) *
-                                100,
-                            )
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-
-                {/* Quick Metrics Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                      Petugas Aktif
-                    </span>
-                    <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
-                      {livePdfProgressState.currentUserName || "-"}
-                    </p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                      PDF Terunduh
-                    </span>
-                    <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                      {livePdfProgressState.downloadedReportsCount} /{" "}
-                      {livePdfProgressState.totalReports}
-                    </p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                      Aktivitas Tercover
-                    </span>
-                    <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                      {livePdfProgressState.downloadedActivitiesCount} /{" "}
-                      {livePdfProgressState.totalActivities}
-                    </p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                    <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                      Ukuran Kertas
-                    </span>
-                    <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
-                      {paperFormat}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Hierarchical Progress Tree View */}
-              <div className="space-y-3">
-                <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
-                  <span>Struktur Antrean &amp; Status Download PDF</span>
-                </h5>
-
-                <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
-                  {livePdfProgressState.users.map((userGroup, uIdx) => {
-                    const isUserDownloading = userGroup.status === "downloading";
-                    const isUserSuccess = userGroup.status === "success";
-                    const isUserError = userGroup.status === "error";
-
-                    return (
-                      <div
-                        key={userGroup.userName}
-                        className={`p-3.5 sm:p-4 space-y-2.5 transition ${
-                          isUserDownloading
-                            ? "bg-rose-500/5"
-                            : isUserError
-                              ? "bg-red-500/5"
-                              : ""
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2.5">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="shrink-0 flex items-center justify-center">
-                              {isUserDownloading ? (
-                                <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
-                                  <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
-                                </span>
-                              ) : isUserSuccess ? (
-                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
-                                  ✓
-                                </span>
-                              ) : isUserError ? (
-                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
-                                  ✕
-                                </span>
-                              ) : (
-                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
-                                  ○
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-bold text-[var(--text-primary)] truncate">
-                                {userGroup.userName}
-                              </span>
-                              <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                                (Petugas #{uIdx + 1} • {userGroup.completedReports}/
-                                {userGroup.totalReports} PDF selesai)
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            {isUserDownloading && (
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
-                                <SpinnerIcon className="h-3 w-3 animate-spin" />
-                                <span>Merender PDF...</span>
-                              </span>
-                            )}
-                            {isUserSuccess && (
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                                PDF Selesai ✓
-                              </span>
-                            )}
-                            {isUserError && (
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
-                                Error ✕
-                              </span>
-                            )}
-                            {userGroup.status === "pending" && (
-                              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
-                                Menunggu Antrean
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
-                          {userGroup.reports.map((reportItem) => {
-                            const isRepDownloading =
-                              reportItem.status === "downloading";
-                            const isRepSuccess = reportItem.status === "success";
-                            const isRepError = reportItem.status === "error";
-
-                            return (
-                              <div
-                                key={reportItem.reportId}
-                                className={`flex flex-wrap items-center justify-between gap-2.5 py-1.5 px-3 rounded-xl border transition-all text-xs ${
-                                  isRepDownloading
-                                    ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
-                                    : isRepSuccess
-                                      ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
-                                      : isRepError
-                                        ? "bg-red-500/10 border-red-500/30"
-                                        : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
-                                    └─
-                                  </span>
-
-                                  <div className="shrink-0 flex items-center justify-center">
-                                    {isRepDownloading ? (
-                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
-                                        <SpinnerIcon className="h-3 w-3" />
-                                      </span>
-                                    ) : isRepSuccess ? (
-                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
-                                        ✓
-                                      </span>
-                                    ) : isRepError ? (
-                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
-                                        ✕
-                                      </span>
-                                    ) : (
-                                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
-                                        ○
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div className="min-w-0 flex items-center gap-2 flex-wrap">
-                                    <span className="font-bold text-[var(--text-primary)]">
-                                      {formatWitaDate(reportItem.reportDate)}
-                                    </span>
-                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
-                                      Tim {reportItem.tim || "TRC"}
-                                    </span>
-                                    <span className="text-[var(--text-muted)] text-[11px]">
-                                      • {reportItem.activitiesCount} Aktivitas
-                                    </span>
-                                    {reportItem.errorMessage && (
-                                      <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
-                                        ({reportItem.errorMessage})
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {isRepDownloading && (
-                                    <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
-                                      <SpinnerIcon className="h-3 w-3 animate-spin" />
-                                      <span>Merender PDF...</span>
-                                    </span>
-                                  )}
-                                  {isRepSuccess && (
-                                    <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
-                                      Dokumen Terunduh ✓
-                                    </span>
-                                  )}
-                                  {isRepError && (
-                                    <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
-                                      Gagal ✕
-                                    </span>
-                                  )}
-                                  {reportItem.status === "pending" && (
-                                    <span className="text-[11px] text-[var(--text-muted)] italic">
-                                      Menunggu...
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Action Footer on Progress Page */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("selection")}
-                  disabled={pdfExporting}
-                  className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
-                >
-                  ← Kembali ke Seleksi Data
-                </button>
-
-                {pdfResult && (
-                  <button
-                    type="button"
-                    onClick={() => setViewMode("selection")}
-                    className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
-                  >
-                    Selesai &amp; Kembali
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
+            )}
         </>
       )}
     </div>
@@ -3711,7 +4259,9 @@ function BulkUploadPanel(props: {
   ) => Promise<BulkUploadResult>;
   deviceBackupBulkUploading?: boolean;
 }) {
-  const [viewMode, setViewMode] = useState<"selection" | "progress">("selection");
+  const [viewMode, setViewMode] = useState<"selection" | "progress">(
+    "selection",
+  );
   const [sourceType, setSourceType] = useState<"device" | "json">("device");
   const [deviceReports, setDeviceReports] = useState<Report[]>([]);
   const [importedReports, setImportedReports] = useState<Report[]>([]);
@@ -3720,10 +4270,14 @@ function BulkUploadPanel(props: {
   const [deleting, setDeleting] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [selectedUserFilter, setSelectedUserFilter] = useState("all");
-  const [syncStatusFilter, setSyncStatusFilter] = useState<"all" | "draft" | "synced">("all");
+  const [syncStatusFilter, setSyncStatusFilter] = useState<
+    "all" | "draft" | "synced"
+  >("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "user_asc">("newest");
+  const [sortMode, setSortMode] = useState<"newest" | "oldest" | "user_asc">(
+    "newest",
+  );
   const [selectedActivities, setSelectedActivities] = useState<
     Record<string, number[]>
   >({});
@@ -3814,12 +4368,13 @@ function BulkUploadPanel(props: {
     }
   };
 
-  const currentDataset = sourceType === "device" ? deviceReports : importedReports;
+  const currentDataset =
+    sourceType === "device" ? deviceReports : importedReports;
 
   // Daftar nama user unik untuk dropdown filter
   const allUniqueUsers = useMemo(() => {
     return deduplicateReporterNames(
-      currentDataset.map((r) => r.nama || "Tanpa Nama")
+      currentDataset.map((r) => r.nama || "Tanpa Nama"),
     ).sort((a, b) => a.localeCompare(b));
   }, [currentDataset]);
 
@@ -3829,12 +4384,16 @@ function BulkUploadPanel(props: {
     return currentDataset
       .filter((report) => {
         // Filter user
-        if (selectedUserFilter !== "all" && report.nama !== selectedUserFilter) {
+        if (
+          selectedUserFilter !== "all" &&
+          report.nama !== selectedUserFilter
+        ) {
           return false;
         }
 
         // Filter status sync database
-        const isDraft = report.source === "local" || report.id.startsWith("draft-");
+        const isDraft =
+          report.source === "local" || report.id.startsWith("draft-");
         if (syncStatusFilter === "draft" && !isDraft) return false;
         if (syncStatusFilter === "synced" && isDraft) return false;
 
@@ -3876,7 +4435,15 @@ function BulkUploadPanel(props: {
           return b.reportDate.localeCompare(a.reportDate);
         }
       });
-  }, [currentDataset, keyword, selectedUserFilter, syncStatusFilter, dateFrom, dateTo, sortMode]);
+  }, [
+    currentDataset,
+    keyword,
+    selectedUserFilter,
+    syncStatusFilter,
+    dateFrom,
+    dateTo,
+    sortMode,
+  ]);
 
   // Group by User
   const groupedByUser = useMemo(() => {
@@ -3893,12 +4460,18 @@ function BulkUploadPanel(props: {
 
   // Statistik Ringkasan Data
   const totalActivitiesCount = useMemo(() => {
-    return visibleReports.reduce((sum, r) => sum + (r.activities?.length || 0), 0);
+    return visibleReports.reduce(
+      (sum, r) => sum + (r.activities?.length || 0),
+      0,
+    );
   }, [visibleReports]);
 
   const totalPhotosCount = useMemo(() => {
     return visibleReports.reduce((sum, r) => {
-      const photoSum = (r.activities || []).reduce((p, a) => p + (a.photos?.length || 0), 0);
+      const photoSum = (r.activities || []).reduce(
+        (p, a) => p + (a.photos?.length || 0),
+        0,
+      );
       return sum + photoSum;
     }, 0);
   }, [visibleReports]);
@@ -3948,8 +4521,7 @@ function BulkUploadPanel(props: {
   const toggleReport = (report: Report) => {
     const allNos = (report.activities || []).map((a) => a.no);
     const current = selectedActivities[report.id] || [];
-    const isAllSelected =
-      allNos.length > 0 && current.length === allNos.length;
+    const isAllSelected = allNos.length > 0 && current.length === allNos.length;
     setSelectedActivities((prev) => ({
       ...prev,
       [report.id]: isAllSelected ? [] : allNos,
@@ -3960,7 +4532,8 @@ function BulkUploadPanel(props: {
     const isUserAllSelected = userReports.every((r) => {
       const selected = selectedActivities[r.id] || [];
       return (
-        (r.activities || []).length > 0 && selected.length === (r.activities || []).length
+        (r.activities || []).length > 0 &&
+        selected.length === (r.activities || []).length
       );
     });
     setSelectedActivities((prev) => {
@@ -4032,7 +4605,11 @@ function BulkUploadPanel(props: {
       await showSuccess("Sukses", "Cadangan laporan berhasil dihapus.");
       await loadFromDevice();
     } catch (err: any) {
-      await showInfo("Gagal", "Gagal menghapus cadangan: " + (err?.message || "Kesalahan tak terduga"));
+      await showInfo(
+        "Gagal",
+        "Gagal menghapus cadangan: " +
+          (err?.message || "Kesalahan tak terduga"),
+      );
     } finally {
       setDeleting(false);
     }
@@ -4044,7 +4621,10 @@ function BulkUploadPanel(props: {
       .map((r) => r.id);
 
     if (selectedIds.length === 0) {
-      await showInfo("Pilih Data", "Pilih setidaknya satu laporan cadangan untuk dihapus.");
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu laporan cadangan untuk dihapus.",
+      );
       return;
     }
 
@@ -4058,10 +4638,17 @@ function BulkUploadPanel(props: {
     setDeleting(true);
     try {
       await deleteDeviceBackupReports(selectedIds);
-      await showSuccess("Sukses", `${selectedIds.length} cadangan laporan berhasil dihapus.`);
+      await showSuccess(
+        "Sukses",
+        `${selectedIds.length} cadangan laporan berhasil dihapus.`,
+      );
       await loadFromDevice();
     } catch (err: any) {
-      await showInfo("Gagal", "Gagal menghapus cadangan: " + (err?.message || "Kesalahan tak terduga"));
+      await showInfo(
+        "Gagal",
+        "Gagal menghapus cadangan: " +
+          (err?.message || "Kesalahan tak terduga"),
+      );
     } finally {
       setDeleting(false);
     }
@@ -4071,9 +4658,13 @@ function BulkUploadPanel(props: {
     const reportsToExport = visibleReports.filter(
       (r) => (selectedActivities[r.id] || []).length > 0,
     );
-    const target = reportsToExport.length > 0 ? reportsToExport : visibleReports;
+    const target =
+      reportsToExport.length > 0 ? reportsToExport : visibleReports;
     if (target.length === 0) {
-      void showInfo("Informasi", "Tidak ada data cadangan yang dapat diexport.");
+      void showInfo(
+        "Informasi",
+        "Tidak ada data cadangan yang dapat diexport.",
+      );
       return;
     }
     const confirmed = await askConfirmation(
@@ -4084,10 +4675,15 @@ function BulkUploadPanel(props: {
     if (!confirmed) return;
 
     const jsonStr = JSON.stringify(target, null, 2);
-    const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8" });
+    const blob = new Blob([jsonStr], {
+      type: "application/json;charset=utf-8",
+    });
     const filename = `cadangan-silahar-${getWitaToday()}-${target.length}-laporan.json`;
     saveAs(blob, filename);
-    void showSuccess("Sukses Export", `Berhasil mengunduh JSON cadangan (${target.length} laporan).`);
+    void showSuccess(
+      "Sukses Export",
+      `Berhasil mengunduh JSON cadangan (${target.length} laporan).`,
+    );
   };
 
   const executeUploadProcess = async (
@@ -4129,7 +4725,10 @@ function BulkUploadPanel(props: {
   const handleStartUpload = async () => {
     if (!props.onHandleBulkUploadDeviceBackup) return;
     if (selectedActivitiesCount === 0) {
-      await showInfo("Pilih Data", "Pilih setidaknya satu aktivitas untuk diunggah ke database.");
+      await showInfo(
+        "Pilih Data",
+        "Pilih setidaknya satu aktivitas untuk diunggah ke database.",
+      );
       return;
     }
 
@@ -4206,7 +4805,9 @@ function BulkUploadPanel(props: {
                 </span>
               </div>
               <p className="mt-1.5 text-xs text-[var(--text-muted)] max-w-3xl leading-relaxed">
-                Kelola, lihat rincian detail, filter, hapus, export JSON, serta sinkronisasikan seluruh data cadangan (cache browser lokal, draft offline, atau file JSON) langsung ke database Supabase.
+                Kelola, lihat rincian detail, filter, hapus, export JSON, serta
+                sinkronisasikan seluruh data cadangan (cache browser lokal,
+                draft offline, atau file JSON) langsung ke database Supabase.
               </p>
             </div>
           </div>
@@ -4224,7 +4825,9 @@ function BulkUploadPanel(props: {
                 setSourceType("device");
                 void loadFromDevice();
               }}
-              disabled={deviceLoading || props.deviceBackupBulkUploading || deleting}
+              disabled={
+                deviceLoading || props.deviceBackupBulkUploading || deleting
+              }
               className={`h-[42px] px-4 text-xs font-bold rounded-xl transition flex items-center gap-2 border cursor-pointer ${
                 sourceType === "device"
                   ? "bg-purple-600 text-white border-purple-600 shadow-md"
@@ -4253,7 +4856,9 @@ function BulkUploadPanel(props: {
 
             <label
               className={`h-[42px] px-4 text-xs font-bold rounded-xl transition flex items-center gap-2 border cursor-pointer ${
-                props.deviceBackupBulkUploading || deleting ? "opacity-50 pointer-events-none" : ""
+                props.deviceBackupBulkUploading || deleting
+                  ? "opacity-50 pointer-events-none"
+                  : ""
               } ${
                 sourceType === "json"
                   ? "bg-purple-600 text-white border-purple-600 shadow-md"
@@ -4294,9 +4899,14 @@ function BulkUploadPanel(props: {
         {/* Dynamic Metric Cards Overview */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
           <div className="p-3.5 rounded-2xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs space-y-1">
-            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Total Cadangan</span>
+            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              Total Cadangan
+            </span>
             <div className="text-xl font-extrabold text-[var(--text-primary)]">
-              {currentDataset.length} <span className="text-xs font-medium text-[var(--text-muted)]">Laporan</span>
+              {currentDataset.length}{" "}
+              <span className="text-xs font-medium text-[var(--text-muted)]">
+                Laporan
+              </span>
             </div>
             <div className="text-[10.5px] text-[var(--text-muted)] truncate">
               {visibleReports.length} laporan sesuai filter
@@ -4304,9 +4914,14 @@ function BulkUploadPanel(props: {
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs space-y-1">
-            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Total Aktivitas</span>
+            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              Total Aktivitas
+            </span>
             <div className="text-xl font-extrabold text-[var(--text-primary)]">
-              {totalActivitiesCount} <span className="text-xs font-medium text-[var(--text-muted)]">Rincian</span>
+              {totalActivitiesCount}{" "}
+              <span className="text-xs font-medium text-[var(--text-muted)]">
+                Rincian
+              </span>
             </div>
             <div className="text-[10.5px] text-[var(--text-muted)] truncate">
               {selectedActivitiesCount} terpilih
@@ -4314,9 +4929,14 @@ function BulkUploadPanel(props: {
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs space-y-1">
-            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Lampiran Foto</span>
+            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              Lampiran Foto
+            </span>
             <div className="text-xl font-extrabold text-purple-600 dark:text-purple-400">
-              {totalPhotosCount} <span className="text-xs font-medium text-[var(--text-muted)]">Foto</span>
+              {totalPhotosCount}{" "}
+              <span className="text-xs font-medium text-[var(--text-muted)]">
+                Foto
+              </span>
             </div>
             <div className="text-[10.5px] text-[var(--text-muted)] truncate">
               Tersimpan di cache
@@ -4324,7 +4944,9 @@ function BulkUploadPanel(props: {
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs space-y-1">
-            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">Status Database</span>
+            <span className="text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wider">
+              Status Database
+            </span>
             <div className="flex items-center gap-2 text-xs font-bold mt-1">
               <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
                 {draftReportsCount} Draft
@@ -4341,10 +4963,12 @@ function BulkUploadPanel(props: {
           <div className="flex items-center gap-2">
             <span className="text-emerald-500 font-bold text-sm">✓</span>
             <span className="font-medium">
-              <strong>Keamanan Terjamin:</strong> Unggah cadangan ke database bersifat aman tanpa menghapus cache lokal kecuali Anda memilih opsi <strong>Hapus Cadangan</strong>.
+              <strong>Keamanan Terjamin:</strong> Unggah cadangan ke database
+              bersifat aman tanpa menghapus cache lokal kecuali Anda memilih
+              opsi <strong>Hapus Cadangan</strong>.
             </span>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -4369,7 +4993,9 @@ function BulkUploadPanel(props: {
                     : "opacity-40 cursor-not-allowed bg-[var(--surface-muted)] text-[var(--text-muted)]"
               }`}
             >
-              {props.deviceBackupBulkUploading && <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />}
+              {props.deviceBackupBulkUploading && (
+                <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+              )}
               <span>2. Progres Upload</span>
             </button>
           </div>
@@ -4417,14 +5043,17 @@ function BulkUploadPanel(props: {
                   ) : null}
                 </h4>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Mengunggah data cadangan secara bertahap per user dan per laporan ke Supabase.
+                  Mengunggah data cadangan secara bertahap per user dan per
+                  laporan ke Supabase.
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                Total: {liveProgressState.totalUsers} Petugas • {liveProgressState.totalReports} Laporan • {liveProgressState.totalActivities} Aktivitas
+                Total: {liveProgressState.totalUsers} Petugas •{" "}
+                {liveProgressState.totalReports} Laporan •{" "}
+                {liveProgressState.totalActivities} Aktivitas
               </span>
             </div>
           </div>
@@ -4438,7 +5067,9 @@ function BulkUploadPanel(props: {
                 ) : (
                   <span className="text-emerald-500">✓</span>
                 )}
-                <span className="font-extrabold">{liveProgressState.currentMessage}</span>
+                <span className="font-extrabold">
+                  {liveProgressState.currentMessage}
+                </span>
               </div>
               <div className="text-[var(--text-muted)]">
                 {liveProgressState.totalReports > 0
@@ -4475,25 +5106,35 @@ function BulkUploadPanel(props: {
             {/* Quick Metrics Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
               <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Petugas Aktif</span>
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                  Petugas Aktif
+                </span>
                 <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
                   {liveProgressState.currentUserName || "-"}
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Laporan Diproses</span>
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                  Laporan Diproses
+                </span>
                 <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                  {liveProgressState.uploadedReportsCount} / {liveProgressState.totalReports}
+                  {liveProgressState.uploadedReportsCount} /{" "}
+                  {liveProgressState.totalReports}
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Aktivitas Terunggah</span>
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                  Aktivitas Terunggah
+                </span>
                 <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
-                  {liveProgressState.uploadedActivitiesCount} / {liveProgressState.totalActivities}
+                  {liveProgressState.uploadedActivitiesCount} /{" "}
+                  {liveProgressState.totalActivities}
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
-                <span className="text-[11px] text-[var(--text-muted)] font-medium">Status Keamanan</span>
+                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                  Status Keamanan
+                </span>
                 <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
                   Cache Utuh 100%
                 </p>
@@ -4552,7 +5193,8 @@ function BulkUploadPanel(props: {
                             {userGroup.userName}
                           </span>
                           <span className="text-[11px] text-[var(--text-muted)] font-medium">
-                            (Petugas #{uIdx + 1} • {userGroup.completedReports}/{userGroup.totalReports} selesai)
+                            (Petugas #{uIdx + 1} • {userGroup.completedReports}/
+                            {userGroup.totalReports} selesai)
                           </span>
                         </div>
                       </div>
@@ -4585,7 +5227,8 @@ function BulkUploadPanel(props: {
                     {/* Level 2: Nested Reports Nodes ('- o date') */}
                     <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-purple-500/30 dark:border-purple-800/40 space-y-1.5 py-0.5">
                       {userGroup.reports.map((reportItem) => {
-                        const isRepUploading = reportItem.status === "uploading";
+                        const isRepUploading =
+                          reportItem.status === "uploading";
                         const isRepSuccess = reportItem.status === "success";
                         const isRepError = reportItem.status === "error";
 
@@ -4635,7 +5278,8 @@ function BulkUploadPanel(props: {
                                   Tim {reportItem.tim || "TRC"}
                                 </span>
                                 <span className="text-[var(--text-muted)] text-[11px]">
-                                  • {reportItem.selectedActivitiesCount} Aktivitas
+                                  • {reportItem.selectedActivitiesCount}{" "}
+                                  Aktivitas
                                 </span>
                                 {reportItem.errorMessage && (
                                   <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
@@ -4716,11 +5360,25 @@ function BulkUploadPanel(props: {
           <div className="surface-card rounded-[24px] p-5 space-y-4">
             <div className="flex items-center justify-between gap-3 pb-2">
               <div className="flex items-center gap-2">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-purple-500 shrink-0">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4 text-purple-500 shrink-0"
+                >
                   <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
                 </svg>
-                <h4 className="text-sm font-bold text-[var(--text-primary)]">Filter & Pencarian</h4>
-                {(keyword || selectedUserFilter !== "all" || syncStatusFilter !== "all" || dateFrom || dateTo) && (
+                <h4 className="text-sm font-bold text-[var(--text-primary)]">
+                  Filter & Pencarian
+                </h4>
+                {(keyword ||
+                  selectedUserFilter !== "all" ||
+                  syncStatusFilter !== "all" ||
+                  dateFrom ||
+                  dateTo) && (
                   <button
                     type="button"
                     onClick={() => {
@@ -4732,13 +5390,28 @@ function BulkUploadPanel(props: {
                     }}
                     className="text-[10.5px] font-bold text-rose-500 hover:text-rose-600 flex items-center gap-1 cursor-pointer px-2 py-0.5 rounded-lg hover:bg-rose-500/10 transition"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-3 w-3"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
                     Reset Filter
                   </button>
                 )}
               </div>
               <div className="text-[11px] text-[var(--text-muted)] font-medium">
-                Menampilkan <strong className="text-[var(--text-primary)]">{visibleReports.length}</strong> dari {currentDataset.length} laporan
+                Menampilkan{" "}
+                <strong className="text-[var(--text-primary)]">
+                  {visibleReports.length}
+                </strong>{" "}
+                dari {currentDataset.length} laporan
               </div>
             </div>
 
@@ -4765,7 +5438,9 @@ function BulkUploadPanel(props: {
                   onChange={(e) => setSelectedUserFilter(e.target.value)}
                   className={inputClassName}
                 >
-                  <option value="all">Semua Petugas ({allUniqueUsers.length})</option>
+                  <option value="all">
+                    Semua Petugas ({allUniqueUsers.length})
+                  </option>
                   {allUniqueUsers.map((user) => (
                     <option key={user} value={user}>
                       {user}
@@ -4781,7 +5456,9 @@ function BulkUploadPanel(props: {
                 <select
                   value={syncStatusFilter}
                   onChange={(e) =>
-                    setSyncStatusFilter(e.target.value as "all" | "draft" | "synced")
+                    setSyncStatusFilter(
+                      e.target.value as "all" | "draft" | "synced",
+                    )
                   }
                   className={inputClassName}
                 >
@@ -4822,7 +5499,20 @@ function BulkUploadPanel(props: {
             {/* Left: Sort & Expand/Collapse */}
             <div className="flex items-center gap-3 flex-wrap">
               <label className="flex items-center gap-2 text-xs font-semibold text-[var(--text-muted)]">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0 opacity-60"><path d="m3 16 4 4 4-4" /><path d="M7 20V4" /><path d="m21 8-4-4-4 4" /><path d="M17 4v16" /></svg>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-3.5 w-3.5 shrink-0 opacity-60"
+                >
+                  <path d="m3 16 4 4 4-4" />
+                  <path d="M7 20V4" />
+                  <path d="m21 8-4-4-4 4" />
+                  <path d="M17 4v16" />
+                </svg>
                 <select
                   value={sortMode}
                   onChange={(e) =>
@@ -4846,7 +5536,17 @@ function BulkUploadPanel(props: {
                   onClick={expandAll}
                   className="hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><polyline points="6 9 12 15 18 9" /></svg>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                   Buka Semua
                 </button>
                 <button
@@ -4854,7 +5554,17 @@ function BulkUploadPanel(props: {
                   onClick={collapseAll}
                   className="hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] px-2 py-1 rounded-md transition cursor-pointer flex items-center gap-1"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><polyline points="18 15 12 9 6 15" /></svg>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3"
+                  >
+                    <polyline points="18 15 12 9 6 15" />
+                  </svg>
                   Tutup Semua
                 </button>
               </div>
@@ -4868,7 +5578,17 @@ function BulkUploadPanel(props: {
                 disabled={visibleReports.length === 0}
                 className="h-[32px] px-3 text-[11px] font-bold rounded-lg border border-purple-500/25 bg-purple-500/8 text-purple-600 dark:text-purple-400 hover:bg-purple-500/15 transition disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><polyline points="20 6 9 17 4 12" /></svg>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-3 w-3"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
                 Pilih Semua
               </button>
               <button
@@ -4877,7 +5597,18 @@ function BulkUploadPanel(props: {
                 disabled={selectedActivitiesCount === 0}
                 className="h-[32px] px-3 text-[11px] font-bold rounded-lg border border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel-strong)] transition disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-3 w-3"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
                 Lepas Semua
               </button>
             </div>
@@ -4888,29 +5619,84 @@ function BulkUploadPanel(props: {
             {/* Selection Summary Row */}
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 text-xs">
-                <span className={`inline-flex items-center justify-center h-6 w-6 rounded-lg font-extrabold text-[11px] ${selectedActivitiesCount > 0 ? "bg-purple-600 text-white" : "bg-[var(--surface-muted)] text-[var(--text-muted)]"}`}>
+                <span
+                  className={`inline-flex items-center justify-center h-6 w-6 rounded-lg font-extrabold text-[11px] ${selectedActivitiesCount > 0 ? "bg-purple-600 text-white" : "bg-[var(--surface-muted)] text-[var(--text-muted)]"}`}
+                >
                   {selectedActivitiesCount > 0 ? "✓" : "—"}
                 </span>
-                <span className="font-semibold text-[var(--text-muted)]">Terpilih:</span>
+                <span className="font-semibold text-[var(--text-muted)]">
+                  Terpilih:
+                </span>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap text-xs">
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--surface-muted)] border border-[var(--border-soft)]">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-purple-500 shrink-0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
-                  <strong className="text-[var(--text-primary)]">{selectedUsersCount}</strong>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3 text-purple-500 shrink-0"
+                  >
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  <strong className="text-[var(--text-primary)]">
+                    {selectedUsersCount}
+                  </strong>
                   <span className="text-[var(--text-muted)]">Petugas</span>
                 </span>
 
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--surface-muted)] border border-[var(--border-soft)]">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 text-indigo-500 shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-                  <strong className="text-[var(--text-primary)]">{selectedReportsCount}</strong>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3 text-indigo-500 shrink-0"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <strong className="text-[var(--text-primary)]">
+                    {selectedReportsCount}
+                  </strong>
                   <span className="text-[var(--text-muted)]">Laporan</span>
                 </span>
 
-                <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border ${selectedActivitiesCount > 0 ? "bg-purple-500/10 border-purple-500/25 text-purple-600 dark:text-purple-400" : "bg-[var(--surface-muted)] border-[var(--border-soft)]"}`}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0"><rect width="18" height="18" x="3" y="3" rx="2" /><path d="m9 12 2 2 4-4" /></svg>
-                  <strong className={selectedActivitiesCount > 0 ? "font-extrabold" : "text-[var(--text-primary)]"}>{selectedActivitiesCount}</strong>
-                  <span className="text-[var(--text-muted)]">/ {totalVisibleActivities} Aktivitas</span>
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border ${selectedActivitiesCount > 0 ? "bg-purple-500/10 border-purple-500/25 text-purple-600 dark:text-purple-400" : "bg-[var(--surface-muted)] border-[var(--border-soft)]"}`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3 w-3 shrink-0"
+                  >
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
+                  <strong
+                    className={
+                      selectedActivitiesCount > 0
+                        ? "font-extrabold"
+                        : "text-[var(--text-primary)]"
+                    }
+                  >
+                    {selectedActivitiesCount}
+                  </strong>
+                  <span className="text-[var(--text-muted)]">
+                    / {totalVisibleActivities} Aktivitas
+                  </span>
                 </span>
               </div>
             </div>
@@ -4927,7 +5713,15 @@ function BulkUploadPanel(props: {
                   className="h-[38px] px-3 text-[11px] font-bold rounded-xl border border-indigo-500/25 bg-indigo-500/8 hover:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 transition disabled:opacity-40 cursor-pointer"
                   title="Unduh cadangan sebagai file JSON"
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3.5 w-3.5"
+                  >
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                     <polyline points="7 10 12 15 17 10" />
                     <line x1="12" y1="15" x2="12" y2="3" />
@@ -4952,7 +5746,15 @@ function BulkUploadPanel(props: {
                   {deleting ? (
                     <SpinnerIcon className="h-3.5 w-3.5" />
                   ) : (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-3.5 w-3.5"
+                    >
                       <polyline points="3 6 5 6 21 6" />
                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                     </svg>
@@ -4979,14 +5781,20 @@ function BulkUploadPanel(props: {
                     </>
                   ) : (
                     <>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-3.5 w-3.5"
+                      >
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                         <polyline points="17 8 12 3 7 8" />
                         <line x1="12" y1="3" x2="12" y2="15" />
                       </svg>
-                      <span>
-                        Upload ke DB ({selectedActivitiesCount})
-                      </span>
+                      <span>Upload ke DB ({selectedActivitiesCount})</span>
                     </>
                   )}
                 </button>
@@ -5005,7 +5813,9 @@ function BulkUploadPanel(props: {
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 font-bold text-sm">
-                  <span>{uploadResult.uploadedReportsCount > 0 ? "✓" : "✕"}</span>
+                  <span>
+                    {uploadResult.uploadedReportsCount > 0 ? "✓" : "✕"}
+                  </span>
                   <span>
                     {uploadResult.uploadedReportsCount > 0
                       ? `Sukses mengunggah ${uploadResult.uploadedReportsCount} laporan (${uploadResult.uploadedActivitiesCount} aktivitas) ke Supabase!`
@@ -5053,7 +5863,8 @@ function BulkUploadPanel(props: {
                   Tidak Ada Data Laporan Cadangan yang Ditemukan
                 </h4>
                 <p className="text-xs text-[var(--text-muted)] max-w-md mx-auto">
-                  Belum ada data laporan tersimpan pada cache perangkat ini atau file JSON yang sesuai dengan kriteria filter Anda.
+                  Belum ada data laporan tersimpan pada cache perangkat ini atau
+                  file JSON yang sesuai dengan kriteria filter Anda.
                 </p>
               </div>
             ) : (
@@ -5064,10 +5875,13 @@ function BulkUploadPanel(props: {
                     (sum, r) => sum + (r.activities?.length || 0),
                     0,
                   );
-                  const userSelectedActivities = userReports.reduce((sum, r) => {
-                    const sel = selectedActivities[r.id] || [];
-                    return sum + sel.length;
-                  }, 0);
+                  const userSelectedActivities = userReports.reduce(
+                    (sum, r) => {
+                      const sel = selectedActivities[r.id] || [];
+                      return sum + sel.length;
+                    },
+                    0,
+                  );
 
                   const isUserFullyChecked =
                     userTotalActivities > 0 &&
@@ -5101,7 +5915,9 @@ function BulkUploadPanel(props: {
                                 {userName}
                               </h4>
                               <span className="text-xs text-[var(--text-muted)] font-medium">
-                                ({userReports.length} Tanggal • {userSelectedActivities}/{userTotalActivities} Aktivitas Terpilih)
+                                ({userReports.length} Tanggal •{" "}
+                                {userSelectedActivities}/{userTotalActivities}{" "}
+                                Aktivitas Terpilih)
                               </span>
                             </div>
                           </div>
@@ -5113,7 +5929,9 @@ function BulkUploadPanel(props: {
                             onClick={() => toggleExpandUser(userName)}
                             className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 cursor-pointer py-1 px-2 rounded-lg hover:bg-[var(--surface-muted)]"
                           >
-                            <span>{isUserExpanded ? "Sembunyikan" : "Buka"}</span>
+                            <span>
+                              {isUserExpanded ? "Sembunyikan" : "Buka"}
+                            </span>
                             <svg
                               viewBox="0 0 24 24"
                               className={`h-3.5 w-3.5 transition-transform ${
@@ -5142,9 +5960,11 @@ function BulkUploadPanel(props: {
                               selectedActivities[report.id] || [];
                             const isReportFullyChecked =
                               reportActivities.length > 0 &&
-                              reportSelectedNos.length === reportActivities.length;
+                              reportSelectedNos.length ===
+                                reportActivities.length;
                             const isReportPartiallyChecked =
-                              reportSelectedNos.length > 0 && !isReportFullyChecked;
+                              reportSelectedNos.length > 0 &&
+                              !isReportFullyChecked;
 
                             const isDraft =
                               report.source === "local" ||
@@ -5163,13 +5983,16 @@ function BulkUploadPanel(props: {
                                       checked={isReportFullyChecked}
                                       ref={(el) => {
                                         if (el)
-                                          el.indeterminate = isReportPartiallyChecked;
+                                          el.indeterminate =
+                                            isReportPartiallyChecked;
                                       }}
                                       onChange={() => toggleReport(report)}
                                       className="h-3.5 w-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
                                     />
                                     <div
-                                      onClick={() => toggleExpandReport(report.id)}
+                                      onClick={() =>
+                                        toggleExpandReport(report.id)
+                                      }
                                       className="flex items-center gap-2 cursor-pointer select-none flex-wrap min-w-0"
                                     >
                                       <span className="text-xs sm:text-sm font-bold text-[var(--text-primary)]">
@@ -5201,7 +6024,9 @@ function BulkUploadPanel(props: {
                                     {/* Hapus Single Report Button */}
                                     <button
                                       type="button"
-                                      onClick={() => void handleDeleteSingleReport(report)}
+                                      onClick={() =>
+                                        void handleDeleteSingleReport(report)
+                                      }
                                       disabled={deleting}
                                       className="p-1.5 rounded-lg text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition cursor-pointer disabled:opacity-40"
                                       title="Hapus cadangan laporan ini dari perangkat"
@@ -5222,11 +6047,15 @@ function BulkUploadPanel(props: {
 
                                     <button
                                       type="button"
-                                      onClick={() => toggleExpandReport(report.id)}
+                                      onClick={() =>
+                                        toggleExpandReport(report.id)
+                                      }
                                       className="text-[11px] font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-1 cursor-pointer py-1 px-1.5 rounded-md hover:bg-[var(--surface-muted)]"
                                     >
                                       <span>
-                                        {isReportExpanded ? "Tutup Rincian" : "Rincian Aktivitas"}
+                                        {isReportExpanded
+                                          ? "Tutup Rincian"
+                                          : "Rincian Aktivitas"}
                                       </span>
                                       <svg
                                         viewBox="0 0 24 24"
@@ -5250,52 +6079,65 @@ function BulkUploadPanel(props: {
                                   <div className="pl-4 sm:pl-6 space-y-1.5 pt-2 border-t border-[var(--border-soft)]/50">
                                     {reportActivities.length === 0 ? (
                                       <p className="text-xs text-[var(--text-muted)] italic py-1">
-                                        Tidak ada aktivitas tercatat pada laporan ini.
+                                        Tidak ada aktivitas tercatat pada
+                                        laporan ini.
                                       </p>
                                     ) : (
-                                      reportActivities.map((activity, actIdx) => {
-                                        const isActChecked = reportSelectedNos.includes(
-                                          activity.no,
-                                        );
-                                        const photosCount =
-                                          activity.photos?.length || 0;
+                                      reportActivities.map(
+                                        (activity, actIdx) => {
+                                          const isActChecked =
+                                            reportSelectedNos.includes(
+                                              activity.no,
+                                            );
+                                          const photosCount =
+                                            activity.photos?.length || 0;
 
-                                        return (
-                                          <label
-                                            key={activity.no ?? actIdx}
-                                            className={`flex items-start gap-2.5 cursor-pointer select-none py-1.5 px-2.5 rounded-lg transition text-xs ${
-                                              isActChecked
-                                                ? "bg-purple-500/8 text-[var(--text-primary)] font-medium"
-                                                : "opacity-60 hover:opacity-100"
-                                            }`}
-                                          >
-                                            <input
-                                              type="checkbox"
-                                              checked={isActChecked}
-                                              onChange={() =>
-                                                toggleActivity(report.id, activity.no)
-                                              }
-                                              className="mt-0.5 h-3.5 w-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
-                                            />
-                                            <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                              <span className="font-bold text-purple-600 dark:text-purple-400">
-                                                #{activity.no ?? actIdx + 1}
-                                              </span>
-                                              <span className="text-[var(--text-muted)]">
-                                                [{activity.startTime && activity.endTime ? `${activity.startTime}-${activity.endTime}` : "-"}]
-                                              </span>
-                                              <span className="text-[var(--text-primary)] truncate">
-                                                {activity.description || "(Tanpa uraian)"}
-                                              </span>
-                                              {photosCount > 0 && (
-                                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                                                  {photosCount} Foto
+                                          return (
+                                            <label
+                                              key={activity.no ?? actIdx}
+                                              className={`flex items-start gap-2.5 cursor-pointer select-none py-1.5 px-2.5 rounded-lg transition text-xs ${
+                                                isActChecked
+                                                  ? "bg-purple-500/8 text-[var(--text-primary)] font-medium"
+                                                  : "opacity-60 hover:opacity-100"
+                                              }`}
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isActChecked}
+                                                onChange={() =>
+                                                  toggleActivity(
+                                                    report.id,
+                                                    activity.no,
+                                                  )
+                                                }
+                                                className="mt-0.5 h-3.5 w-3.5 accent-purple-600 rounded cursor-pointer shrink-0"
+                                              />
+                                              <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                                <span className="font-bold text-purple-600 dark:text-purple-400">
+                                                  #{activity.no ?? actIdx + 1}
                                                 </span>
-                                              )}
-                                            </div>
-                                          </label>
-                                        );
-                                      })
+                                                <span className="text-[var(--text-muted)]">
+                                                  [
+                                                  {activity.startTime &&
+                                                  activity.endTime
+                                                    ? `${activity.startTime}-${activity.endTime}`
+                                                    : "-"}
+                                                  ]
+                                                </span>
+                                                <span className="text-[var(--text-primary)] truncate">
+                                                  {activity.description ||
+                                                    "(Tanpa uraian)"}
+                                                </span>
+                                                {photosCount > 0 && (
+                                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                                                    {photosCount} Foto
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </label>
+                                          );
+                                        },
+                                      )
                                     )}
                                   </div>
                                 )}
@@ -5344,7 +6186,8 @@ function BulkUploadPanel(props: {
                       Deteksi Data Duplikat di Database
                     </h3>
                     <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                      Terdapat {conflictingItems.length} laporan cadangan yang tanggal &amp; petugasnya sudah ada di Supabase database.
+                      Terdapat {conflictingItems.length} laporan cadangan yang
+                      tanggal &amp; petugasnya sudah ada di Supabase database.
                     </p>
                   </div>
                 </div>
@@ -5362,10 +6205,18 @@ function BulkUploadPanel(props: {
                 <p className="font-semibold">Opsi Penanganan Per Laporan:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-[11.5px] opacity-90">
                   <li>
-                    <strong className="text-purple-600 dark:text-purple-300">Timpa Data DB (Overwrite)</strong>: Memperbarui data laporan di database dengan data cadangan ini.
+                    <strong className="text-purple-600 dark:text-purple-300">
+                      Timpa Data DB (Overwrite)
+                    </strong>
+                    : Memperbarui data laporan di database dengan data cadangan
+                    ini.
                   </li>
                   <li>
-                    <strong className="text-emerald-600 dark:text-emerald-400">Pertahankan Data DB (Skip)</strong>: Mempertahankan data lama di database dan tidak mengunggah cadangan ini.
+                    <strong className="text-emerald-600 dark:text-emerald-400">
+                      Pertahankan Data DB (Skip)
+                    </strong>
+                    : Mempertahankan data lama di database dan tidak mengunggah
+                    cadangan ini.
                   </li>
                 </ul>
               </div>
@@ -5408,9 +6259,13 @@ function BulkUploadPanel(props: {
               {/* Scrollable Items List */}
               <div className="overflow-y-auto max-h-[340px] space-y-3 pr-1 divide-y divide-[var(--border-soft)]">
                 {conflictingItems.map(({ backupReport, dbReport }) => {
-                  const currentChoice = conflictResolutions[backupReport.id] || "overwrite";
+                  const currentChoice =
+                    conflictResolutions[backupReport.id] || "overwrite";
                   return (
-                    <div key={backupReport.id} className="pt-3 first:pt-0 space-y-2">
+                    <div
+                      key={backupReport.id}
+                      className="pt-3 first:pt-0 space-y-2"
+                    >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div>
                           <div className="text-xs font-bold text-[var(--text-primary)]">
@@ -5421,11 +6276,13 @@ function BulkUploadPanel(props: {
                           </div>
                           <div className="text-[11px] text-[var(--text-muted)] flex items-center gap-3 mt-0.5">
                             <span>
-                              Cadangan Lokal: {backupReport.activities?.length || 0} Aktivitas
+                              Cadangan Lokal:{" "}
+                              {backupReport.activities?.length || 0} Aktivitas
                             </span>
                             <span>•</span>
                             <span>
-                              Di Database: {dbReport.activities?.length || 0} Aktivitas
+                              Di Database: {dbReport.activities?.length || 0}{" "}
+                              Aktivitas
                             </span>
                           </div>
                         </div>
@@ -5542,7 +6399,9 @@ function UserProfilePanel(props: {
   ) => Promise<void>;
   deviceBackupExporting?: boolean;
 }) {
-  const [activeTab, setActiveTab] = useState<"profile" | "sound" | "bulk-export">("profile");
+  const [activeTab, setActiveTab] = useState<
+    "profile" | "sound" | "bulk-export"
+  >("profile");
   const [name, setName] = useState(props.userSession.fullName);
   const [pass, setPass] = useState(props.userSession.password || "123123123");
   const [showPass, setShowPass] = useState(false);
@@ -5718,8 +6577,12 @@ function UserProfilePanel(props: {
                 {props.userSession.fullName.substring(0, 2).toUpperCase()}
               </div>
               <div>
-                <h3 className="text-base font-bold text-[var(--text-primary)]">Pengaturan Profil</h3>
-                <p className="text-xs text-[var(--text-muted)]">Perbarui nama dan password Anda</p>
+                <h3 className="text-base font-bold text-[var(--text-primary)]">
+                  Pengaturan Profil
+                </h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Perbarui nama dan password Anda
+                </p>
               </div>
             </div>
           </div>
@@ -5757,12 +6620,28 @@ function UserProfilePanel(props: {
                   title={showPass ? "Sembunyikan sandi" : "Tampilkan sandi"}
                 >
                   {showPass ? (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
                       <line x1="1" y1="1" x2="23" y2="23" />
                     </svg>
                   ) : (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                       <circle cx="12" cy="12" r="3" />
                     </svg>
@@ -5779,9 +6658,25 @@ function UserProfilePanel(props: {
               >
                 {props.userSubmitting ? (
                   <>
-                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    <svg
+                      className="animate-spin h-5 w-5 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      ></path>
                     </svg>
                     Menyimpan...
                   </>
@@ -5807,7 +6702,8 @@ function UserProfilePanel(props: {
                 Cadangan Perangkat Saya
               </h4>
               <p className="text-[11.5px] text-[var(--text-muted)] mt-0.5">
-                Unduh salinan data laporan yang tersimpan di perangkat ini dalam format Excel atau JSON.
+                Unduh salinan data laporan yang tersimpan di perangkat ini dalam
+                format Excel atau JSON.
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -5824,7 +6720,15 @@ function UserProfilePanel(props: {
                   {props.deviceBackupExporting ? (
                     <SpinnerIcon />
                   ) : (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                       <polyline points="7 10 12 15 17 10" />
                       <line x1="12" y1="15" x2="12" y2="3" />
@@ -5838,7 +6742,10 @@ function UserProfilePanel(props: {
                   type="button"
                   onClick={() =>
                     props.onHandleDownloadDeviceBackupJson &&
-                    void props.onHandleDownloadDeviceBackupJson(myReports, props.userSession.fullName)
+                    void props.onHandleDownloadDeviceBackupJson(
+                      myReports,
+                      props.userSession.fullName,
+                    )
                   }
                   disabled={props.deviceBackupExporting}
                   className="btn-secondary py-2.5 px-3 text-xs font-bold flex items-center justify-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
@@ -5846,7 +6753,15 @@ function UserProfilePanel(props: {
                   {props.deviceBackupExporting ? (
                     <SpinnerIcon />
                   ) : (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                       <polyline points="14 2 14 8 20 8" />
                     </svg>
@@ -5861,25 +6776,41 @@ function UserProfilePanel(props: {
         <div className="surface-card rounded-[28px] p-6 max-w-md mx-auto border border-[var(--border-soft)] shadow-sm space-y-5 animate-fadeIn">
           <div className="flex items-center gap-3.5 mb-2">
             <div className="h-12 w-12 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center font-bold text-lg shrink-0">
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-6 w-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
               </svg>
             </div>
             <div>
-              <h3 className="text-base font-bold text-[var(--text-primary)]">Suara & Notifikasi</h3>
-              <p className="text-xs text-[var(--text-muted)]">Pengaturan efek audio lokal perangkat</p>
+              <h3 className="text-base font-bold text-[var(--text-primary)]">
+                Suara & Notifikasi
+              </h3>
+              <p className="text-xs text-[var(--text-muted)]">
+                Pengaturan efek audio lokal perangkat
+              </p>
             </div>
           </div>
 
           <div className="rounded-2xl border border-[var(--border-soft)] bg-[var(--surface-muted)]/50 p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <label className="text-sm font-bold text-[var(--text-primary)] cursor-pointer" htmlFor="user-sound-toggle">
+                <label
+                  className="text-sm font-bold text-[var(--text-primary)] cursor-pointer"
+                  htmlFor="user-sound-toggle"
+                >
                   Efek Suara Notifikasi
                 </label>
                 <p className="text-[11px] text-[var(--text-muted)] mt-0.5 leading-relaxed">
-                  Putar efek audio respons saat berhasil menyimpan laporan, terjadi kesalahan input, atau peringatan.
+                  Putar efek audio respons saat berhasil menyimpan laporan,
+                  terjadi kesalahan input, atau peringatan.
                 </p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -5900,7 +6831,9 @@ function UserProfilePanel(props: {
 
             <div className="pt-2 border-t border-[var(--border-soft)] flex items-center justify-between text-[11px] text-[var(--text-muted)] font-medium">
               <span>Status saat ini:</span>
-              <span className={`font-bold px-2.5 py-0.5 rounded-full text-[10px] ${soundEnabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+              <span
+                className={`font-bold px-2.5 py-0.5 rounded-full text-[10px] ${soundEnabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}
+              >
                 {soundEnabled ? "🔊 Suara Aktif" : "🔇 Suara Dibisukan"}
               </span>
             </div>
@@ -5930,7 +6863,8 @@ function UserProfilePanel(props: {
               </button>
             </div>
             <p className="text-[10.5px] text-[var(--text-muted)] italic text-center mt-2">
-              * Pengaturan ini disimpan mandiri di browser perangkat ini dan tidak mengubah database atau pengguna lain.
+              * Pengaturan ini disimpan mandiri di browser perangkat ini dan
+              tidak mengubah database atau pengguna lain.
             </p>
           </div>
         </div>
@@ -5964,7 +6898,8 @@ function UserProfilePanel(props: {
                   </span>
                 </div>
                 <p className="text-xs text-[var(--text-muted)] mt-1 max-w-2xl leading-relaxed">
-                  Unduh seluruh riwayat dan cache laporan Anda di perangkat ini dalam format Excel (.xlsx) atau JSON (.json) lengkap.
+                  Unduh seluruh riwayat dan cache laporan Anda di perangkat ini
+                  dalam format Excel (.xlsx) atau JSON (.json) lengkap.
                 </p>
               </div>
             </div>
@@ -5983,7 +6918,15 @@ function UserProfilePanel(props: {
                   {props.deviceBackupExporting ? (
                     <SpinnerIcon />
                   ) : (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                       <polyline points="7 10 12 15 17 10" />
                       <line x1="12" y1="15" x2="12" y2="3" />
@@ -5997,7 +6940,10 @@ function UserProfilePanel(props: {
                   type="button"
                   onClick={() =>
                     props.onHandleDownloadDeviceBackupJson &&
-                    void props.onHandleDownloadDeviceBackupJson(myReports, props.userSession.fullName)
+                    void props.onHandleDownloadDeviceBackupJson(
+                      myReports,
+                      props.userSession.fullName,
+                    )
                   }
                   disabled={props.deviceBackupExporting}
                   className="btn-secondary h-[42px] px-4 text-xs font-bold flex items-center gap-2 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 justify-center"
@@ -6005,7 +6951,15 @@ function UserProfilePanel(props: {
                   {props.deviceBackupExporting ? (
                     <SpinnerIcon />
                   ) : (
-                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                       <polyline points="14 2 14 8 20 8" />
                     </svg>
@@ -6023,7 +6977,8 @@ function UserProfilePanel(props: {
                   Unduh Massal Laporan ({props.userSession.fullName})
                 </h3>
                 <p className="text-xs text-[var(--text-muted)]">
-                  Pilih rentang tanggal dan unduh laporan-laporan Anda ke file Excel atau JSON sekaligus
+                  Pilih rentang tanggal dan unduh laporan-laporan Anda ke file
+                  Excel atau JSON sekaligus
                 </p>
               </div>
               <span className="inline-flex items-center gap-1.5 self-start rounded-full bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-600 dark:text-purple-400">
@@ -6100,16 +7055,29 @@ function UserProfilePanel(props: {
                     type="button"
                     onClick={() =>
                       props.onHandleDownloadDeviceBackupExcel &&
-                      void props.onHandleDownloadDeviceBackupExcel(selectedReports)
+                      void props.onHandleDownloadDeviceBackupExcel(
+                        selectedReports,
+                      )
                     }
-                    disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                    disabled={
+                      props.deviceBackupExporting ||
+                      selectedReports.length === 0
+                    }
                     className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-amber-500/30 text-amber-600 dark:text-amber-400"
                     title="Unduh laporan terpilih dalam format Excel"
                   >
                     {props.deviceBackupExporting ? (
                       <SpinnerIcon />
                     ) : (
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
                       </svg>
@@ -6122,16 +7090,30 @@ function UserProfilePanel(props: {
                     type="button"
                     onClick={() =>
                       props.onHandleDownloadDeviceBackupJson &&
-                      void props.onHandleDownloadDeviceBackupJson(selectedReports, props.userSession.fullName)
+                      void props.onHandleDownloadDeviceBackupJson(
+                        selectedReports,
+                        props.userSession.fullName,
+                      )
                     }
-                    disabled={props.deviceBackupExporting || selectedReports.length === 0}
+                    disabled={
+                      props.deviceBackupExporting ||
+                      selectedReports.length === 0
+                    }
                     className="btn-secondary h-[42px] px-3.5 text-xs font-semibold disabled:opacity-60 flex items-center gap-2 border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
                     title="Unduh laporan terpilih dalam format JSON"
                   >
                     {props.deviceBackupExporting ? (
                       <SpinnerIcon />
                     ) : (
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
                       </svg>
@@ -6141,8 +7123,13 @@ function UserProfilePanel(props: {
                 )}
                 <button
                   type="button"
-                  onClick={() => props.onHandleBulkExport && void props.onHandleBulkExport(selectedReports)}
-                  disabled={Boolean(props.bulkExporting) || selectedReports.length === 0}
+                  onClick={() =>
+                    props.onHandleBulkExport &&
+                    void props.onHandleBulkExport(selectedReports)
+                  }
+                  disabled={
+                    Boolean(props.bulkExporting) || selectedReports.length === 0
+                  }
                   className="btn-primary h-[42px] px-5 text-xs font-semibold disabled:opacity-50 flex items-center gap-2"
                 >
                   {props.bulkExporting ? (
@@ -6152,7 +7139,15 @@ function UserProfilePanel(props: {
                     </>
                   ) : (
                     <>
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                         <polyline points="7 10 12 15 17 10" />
                         <line x1="12" y1="15" x2="12" y2="3" />
@@ -6238,15 +7233,17 @@ function UserProfilePanel(props: {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
-                            {report.nama} {report.tim ? `• Tim ${report.tim}` : ""}
+                            {report.nama}{" "}
+                            {report.tim ? `• Tim ${report.tim}` : ""}
                           </p>
                           <span className="text-[11px] text-[var(--text-muted)] shrink-0">
                             {report.activities.length} aktivitas
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-[var(--text-muted)] line-clamp-2">
-                          {report.activities.map((a) => a.description).join(" • ") ||
-                            "Tidak ada rincian aktivitas."}
+                          {report.activities
+                            .map((a) => a.description)
+                            .join(" • ") || "Tidak ada rincian aktivitas."}
                         </p>
                         <p className="mt-1.5 text-[11px] text-[var(--text-muted)] opacity-80">
                           Diperbarui {formatWitaDateTime(report.updatedAt)}
@@ -6338,7 +7335,6 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
           deviceBackupExporting={props.deviceBackupExporting}
         />
       ) : (
-
         <>
           {!props.adminSession ? <AdminLoginCard {...props} /> : null}
 

@@ -173,7 +173,18 @@ export const PDF_REPORT_CSS = `
 }
 
 .pdf-report-approval .signature-space {
-  min-height: 90px;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pdf-report-approval .approval-signature-img {
+  max-height: 75px;
+  max-width: 150px;
+  object-fit: contain;
+  margin: 0 auto;
+  display: block;
 }
 
 .pdf-report-approval .approval-name {

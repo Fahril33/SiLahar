@@ -7,6 +7,7 @@ export type TeamType = {
   coordinatorName?: string;
   coordinatorNip?: string;
   coordinatorLabel?: string;
+  signatureUrl?: string;
   isDefault: boolean;
   isActive: boolean;
   createdAt: string;
@@ -22,6 +23,7 @@ export type TeamTypeDraft = {
   coordinatorName?: string;
   coordinatorNip?: string;
   coordinatorLabel?: string;
+  signatureUrl?: string;
   isDefault?: boolean;
 };
 

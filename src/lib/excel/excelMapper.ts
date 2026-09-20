@@ -30,6 +30,14 @@ export type ExcelMappedReport = {
     divisionHeadTitleCell: string;
     divisionHeadNipCell: string;
   };
+  signatureCells?: {
+    coordinatorSignatureUrl?: string;
+    divisionHeadSignatureUrl?: string;
+    coordinatorSignatureRow: number;
+    coordinatorSignatureCol: number;
+    divisionHeadSignatureRow: number;
+    divisionHeadSignatureCol: number;
+  };
 };
 
 export const EXCEL_TEMPLATE_LAYOUT = {
@@ -121,6 +129,14 @@ export function mapReportToExcelTemplate(report: Report): ExcelMappedReport {
       divisionHeadNameCell: `${EXCEL_TEMPLATE_LAYOUT.divisionHeadNameColumn}${EXCEL_TEMPLATE_LAYOUT.approvalAnchorRow}`,
       divisionHeadTitleCell: `${EXCEL_TEMPLATE_LAYOUT.divisionHeadTitleColumn}${EXCEL_TEMPLATE_LAYOUT.approvalAnchorRow + 1}`,
       divisionHeadNipCell: `${EXCEL_TEMPLATE_LAYOUT.divisionHeadNipColumn}${EXCEL_TEMPLATE_LAYOUT.approvalAnchorRow + 2}`,
+    },
+    signatureCells: {
+      coordinatorSignatureUrl: report.approverCoordinatorSignatureUrl,
+      divisionHeadSignatureUrl: report.approverDivisionHeadSignatureUrl,
+      coordinatorSignatureRow: EXCEL_TEMPLATE_LAYOUT.approvalAnchorRow - 1,
+      coordinatorSignatureCol: 2,
+      divisionHeadSignatureRow: EXCEL_TEMPLATE_LAYOUT.approvalAnchorRow - 1,
+      divisionHeadSignatureCol: 9,
     },
   };
 }

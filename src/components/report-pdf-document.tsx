@@ -1,8 +1,16 @@
 import type { Report } from "../types/report";
 import { supabase } from "../lib/supabase";
+import { getCachedSignatureDataUrl } from "../lib/storage";
 
 export function ReportPdfDocument(props: { report: Report; headerLines?: string[] }) {
   const { report } = props;
+  const coordinatorSignature =
+    getCachedSignatureDataUrl(report.approverCoordinatorSignatureUrl) ||
+    report.approverCoordinatorSignatureUrl;
+  const divisionHeadSignature =
+    getCachedSignatureDataUrl(report.approverDivisionHeadSignatureUrl) ||
+    report.approverDivisionHeadSignatureUrl;
+
   const activeHeaders =
     props.headerLines && props.headerLines.length > 0
       ? props.headerLines
@@ -113,8 +121,18 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
         <p className="approval-title">PERSETUJUAN</p>
         <div className="approval-grid">
           <section className="approval-column">
-            <p className="approval-role">KOORDINATOR TIM</p>
-            <div className="signature-space" />
+            <p className="approval-role">{report.approverCoordinatorLabel || "KOORDINATOR TIM"}</p>
+            <div className="signature-space">
+              {coordinatorSignature ? (
+                <img
+                  src={coordinatorSignature}
+                  alt={`TTD ${report.approverCoordinator}`}
+                  className="approval-signature-img"
+                  loading="eager"
+                  crossOrigin="anonymous"
+                />
+              ) : null}
+            </div>
             <p className="approval-name">{report.approverCoordinator || "-"}</p>
             <p className="approval-meta">
               NIP: {report.approverCoordinatorNip || "-"}
@@ -125,7 +143,17 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
             <p className="approval-role">
               KEPALA BIDANG KEDARURATAN &amp; LOGISTIK
             </p>
-            <div className="signature-space" />
+            <div className="signature-space">
+              {divisionHeadSignature ? (
+                <img
+                  src={divisionHeadSignature}
+                  alt={`TTD ${report.approverDivisionHead}`}
+                  className="approval-signature-img"
+                  loading="eager"
+                  crossOrigin="anonymous"
+                />
+              ) : null}
+            </div>
             <p className="approval-name">
               {report.approverDivisionHead || "-"}
             </p>

@@ -32,10 +32,12 @@ export type Report = {
   approverCoordinator: string;
   approverCoordinatorNip: string;
   approverCoordinatorLabel: string;
+  approverCoordinatorSignatureUrl?: string;
   approverDivisionHeadTemplateId: string | null;
   approverDivisionHead: string;
   approverDivisionHeadTitle: string;
   approverDivisionHeadNip: string;
+  approverDivisionHeadSignatureUrl?: string;
   notes: string[];
   headerLines?: string[];
   createdAt: string;

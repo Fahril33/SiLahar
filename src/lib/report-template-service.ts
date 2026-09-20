@@ -21,6 +21,7 @@ type ReportTemplateApproverRow = {
   official_name: string;
   official_title: string | null;
   official_nip: string | null;
+  signature_url?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -49,6 +50,7 @@ function mapApproverRow(row: ReportTemplateApproverRow): ReportTemplateApprover 
     officialName: row.official_name,
     officialTitle: row.official_title ?? "",
     officialNip: row.official_nip ?? "",
+    signatureUrl: row.signature_url ?? "",
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -101,65 +103,83 @@ export function createApproverDraftFromTemplate(
     officialName: approver?.officialName ?? "",
     officialTitle: approver?.officialTitle ?? "",
     officialNip: approver?.officialNip ?? "",
+    signatureUrl: approver?.signatureUrl ?? "",
   };
 }
 
+import {
+  loadCachedReportTemplateConfig,
+  saveCachedReportTemplateConfig,
+  loadCachedTeamTypes,
+  saveCachedTeamTypes,
+  prefetchAndCacheSignatureImage,
+} from "./storage";
+
 export async function fetchActiveReportTemplateConfig() {
   if (!supabase) {
-    return fallbackReportTemplateConfig;
+    return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
   }
 
-  const { data, error } = await supabase
-    .from("report_templates")
-    .select(
-      `
-      id,
-      template_code,
-      template_name,
-      organization_name,
-      budget_year,
-      header_lines,
-      team_type_id,
-      is_active,
-      updated_at,
-      report_template_notes (
-        note_order,
-        note_text
-      ),
-      report_template_approvers (
+  try {
+    const { data, error } = await supabase
+      .from("report_templates")
+      .select(
+        `
         id,
-        template_id,
-        approver_role,
-        scope_label,
-        official_name,
-        official_title,
-        official_nip,
+        template_code,
+        template_name,
+        organization_name,
+        budget_year,
+        header_lines,
+        team_type_id,
         is_active,
-        created_at,
-        updated_at
+        updated_at,
+        report_template_notes (
+          note_order,
+          note_text
+        ),
+        report_template_approvers (
+          id,
+          template_id,
+          approver_role,
+          scope_label,
+          official_name,
+          official_title,
+          official_nip,
+          signature_url,
+          is_active,
+          created_at,
+          updated_at
+        )
+      `,
       )
-    `,
-    )
-    .eq("is_active", true)
-    .order("note_order", {
-      foreignTable: "report_template_notes",
-      ascending: true,
-    })
-    .maybeSingle();
+      .eq("is_active", true)
+      .order("note_order", {
+        foreignTable: "report_template_notes",
+        ascending: true,
+      })
+      .maybeSingle();
 
-  if (error) {
-    console.warn(
-      "Gagal memuat template laporan aktif dari database, memakai fallback lokal.",
-      error,
-    );
-    return fallbackReportTemplateConfig;
+    if (error || !data) {
+      return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
+    }
+
+    const mapped = mapTemplateRow(data as ReportTemplateConfigRow);
+    saveCachedReportTemplateConfig(mapped);
+
+    // Prefetch all approver signatures into local memory/data-cache
+    if (mapped.approvers) {
+      mapped.approvers.forEach((app) => {
+        if (app.signatureUrl) {
+          void prefetchAndCacheSignatureImage(app.signatureUrl);
+        }
+      });
+    }
+
+    return mapped;
+  } catch {
+    return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
   }
-
-  if (!data) {
-    return fallbackReportTemplateConfig;
-  }
-
-  return mapTemplateRow(data as ReportTemplateConfigRow);
 }
 
 export async function saveTemplateApproverDefaults(
@@ -199,6 +219,7 @@ export async function saveTemplateApproverDefaults(
           ? null
           : draft.officialTitle.trim().toUpperCase() || null,
       official_nip: draft.officialNip.trim() || null,
+      signature_url: draft.signatureUrl || null,
       is_active: true,
       updated_at: new Date().toISOString(),
     };
@@ -259,6 +280,59 @@ export async function saveCustomHeaderLines(
   return fetchActiveReportTemplateConfig();
 }
 
+export async function uploadOfficialSignature(file: File): Promise<string> {
+  const fileExt = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const cleanExt = ["png", "jpg", "jpeg", "webp", "svg"].includes(fileExt) ? fileExt : "png";
+  const fileName = `sig-${Date.now()}-${Math.random().toString(36).slice(2)}.${cleanExt}`;
+
+  if (supabase) {
+    // 1. Try uploading to dedicated official-signatures bucket
+    try {
+      const { error: sigBucketErr } = await supabase.storage
+        .from("official-signatures")
+        .upload(fileName, file, { upsert: true, contentType: file.type || undefined });
+
+      if (!sigBucketErr) {
+        const { data } = supabase.storage
+          .from("official-signatures")
+          .getPublicUrl(fileName);
+        if (data?.publicUrl) return data.publicUrl;
+      } else {
+        console.warn("[uploadOfficialSignature] official-signatures bucket upload failed, trying daily-report-proofs:", sigBucketErr);
+      }
+    } catch (err) {
+      console.warn("[uploadOfficialSignature] official-signatures bucket error:", err);
+    }
+
+    // 2. Fallback to daily-report-proofs bucket under signatures/ path
+    try {
+      const filePath = `signatures/${fileName}`;
+      const { error: proofBucketErr } = await supabase.storage
+        .from("daily-report-proofs")
+        .upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+
+      if (!proofBucketErr) {
+        const { data } = supabase.storage
+          .from("daily-report-proofs")
+          .getPublicUrl(filePath);
+        if (data?.publicUrl) return data.publicUrl;
+      } else {
+        console.warn("[uploadOfficialSignature] daily-report-proofs bucket upload failed:", proofBucketErr);
+      }
+    } catch (err) {
+      console.warn("[uploadOfficialSignature] daily-report-proofs bucket error:", err);
+    }
+  }
+
+  // 3. Fallback to Base64 Data URL if Supabase Storage is not reachable/configured
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function fetchTeamTypes() {
   const fallback = [
     {
@@ -271,6 +345,10 @@ export async function fetchTeamTypes() {
         "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
         "TAHUN ANGGARAN 2026",
       ],
+      coordinatorName: "",
+      coordinatorNip: "",
+      coordinatorLabel: "KOORDINATOR TIM",
+      signatureUrl: "",
       isDefault: true,
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -286,6 +364,10 @@ export async function fetchTeamTypes() {
         "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH",
         "TAHUN ANGGARAN 2026",
       ],
+      coordinatorName: "",
+      coordinatorNip: "",
+      coordinatorLabel: "KOORDINATOR PUSDALOPS",
+      signatureUrl: "",
       isDefault: false,
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -294,7 +376,7 @@ export async function fetchTeamTypes() {
   ];
 
   if (!supabase) {
-    return fallback;
+    return loadCachedTeamTypes<TeamType[]>() ?? fallback;
   }
 
   try {
@@ -305,10 +387,10 @@ export async function fetchTeamTypes() {
       .order("is_default", { ascending: false });
 
     if (error || !data || data.length === 0) {
-      return fallback;
+      return loadCachedTeamTypes<TeamType[]>() ?? fallback;
     }
 
-    return data.map((row: any) => ({
+    const mapped: TeamType[] = data.map((row: any) => ({
       id: row.id,
       code: row.code,
       name: row.name,
@@ -319,13 +401,25 @@ export async function fetchTeamTypes() {
       coordinatorName: row.coordinator_name || "",
       coordinatorNip: row.coordinator_nip || "",
       coordinatorLabel: row.coordinator_label || "",
+      signatureUrl: row.signature_url || "",
       isDefault: Boolean(row.is_default),
       isActive: Boolean(row.is_active),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
+
+    saveCachedTeamTypes(mapped);
+
+    // Prefetch all team coordinator signature images into cache
+    mapped.forEach((team) => {
+      if (team.signatureUrl) {
+        void prefetchAndCacheSignatureImage(team.signatureUrl);
+      }
+    });
+
+    return mapped;
   } catch {
-    return fallback;
+    return loadCachedTeamTypes<TeamType[]>() ?? fallback;
   }
 }
 
@@ -388,6 +482,7 @@ export async function saveTeamType(draft: TeamTypeDraft): Promise<TeamType[]> {
       p_coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
       p_coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
       p_coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
+      p_signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
       p_is_default: Boolean(draft.isDefault),
     });
 
@@ -403,6 +498,7 @@ export async function saveTeamType(draft: TeamTypeDraft): Promise<TeamType[]> {
           coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
           coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
           coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
+          signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
           is_default: Boolean(draft.isDefault),
           is_active: true,
           updated_at: new Date().toISOString(),

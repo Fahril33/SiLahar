@@ -98,6 +98,8 @@ export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
       coordinator?.officialName ?? defaultDraft.approverCoordinator,
     approverCoordinatorNip:
       coordinator?.officialNip ?? defaultDraft.approverCoordinatorNip,
+    approverCoordinatorSignatureUrl:
+      coordinator?.signatureUrl ?? defaultDraft.approverCoordinatorSignatureUrl,
     approverDivisionHeadTemplateId:
       divisionHead?.id ?? defaultDraft.approverDivisionHeadTemplateId,
     approverDivisionHead:
@@ -106,6 +108,8 @@ export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
       divisionHead?.officialTitle ?? defaultDraft.approverDivisionHeadTitle,
     approverDivisionHeadNip:
       divisionHead?.officialNip ?? defaultDraft.approverDivisionHeadNip,
+    approverDivisionHeadSignatureUrl:
+      divisionHead?.signatureUrl ?? defaultDraft.approverDivisionHeadSignatureUrl,
   });
 }
 
@@ -161,6 +165,8 @@ export function applyTemplateDefaultsToDraft(
     )
       ? (nextCoordinator?.officialNip ?? draft.approverCoordinatorNip)
       : draft.approverCoordinatorNip,
+    approverCoordinatorSignatureUrl:
+      nextCoordinator?.signatureUrl ?? draft.approverCoordinatorSignatureUrl,
     approverDivisionHeadTemplateId: shouldReplace(
       draft.approverDivisionHead,
       previousDivisionHead?.officialName ?? "",
@@ -173,6 +179,8 @@ export function applyTemplateDefaultsToDraft(
     )
       ? (nextDivisionHead?.officialName ?? draft.approverDivisionHead)
       : draft.approverDivisionHead,
+    approverDivisionHeadSignatureUrl:
+      nextDivisionHead?.signatureUrl ?? draft.approverDivisionHeadSignatureUrl,
     approverDivisionHeadTitle: shouldReplace(
       draft.approverDivisionHeadTitle,
       previousDivisionHead?.officialTitle ?? "",

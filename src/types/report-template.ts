@@ -11,6 +11,7 @@ export type ReportTemplateApprover = {
   officialName: string;
   officialTitle: string;
   officialNip: string;
+  signatureUrl?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -35,4 +36,5 @@ export type ReportTemplateApproverDraft = {
   officialName: string;
   officialTitle: string;
   officialNip: string;
+  signatureUrl?: string;
 };

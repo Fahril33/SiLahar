@@ -34,7 +34,11 @@ import {
   updateExcelReportTemplateMetadata,
   uploadExcelReportTemplate,
 } from "../lib/excel-template-service";
-import { exportReportAsPdf, printReportDocument } from "../lib/exporters";
+import {
+  exportReportAsPdf,
+  printReportDocument,
+  printMultipleReportsDocument,
+} from "../lib/exporters";
 import { getSimilarName } from "../lib/name-utils";
 import {
   deduplicateReporterNames,
@@ -100,6 +104,7 @@ import {
   clearDraft,
   loadCachedReporterNames,
   loadCachedReports,
+  loadCachedReportTemplateConfig,
   loadDeviceSubmittedNames,
   loadDraft,
   pushDeviceSubmittedName,
@@ -312,7 +317,11 @@ export function useReportDashboard() {
     return "entry";
   });
   const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
-  const [draft, setDraft] = useState<DraftReport>(() => normalizeDraft(loadDraft(createEmptyDraft())));
+  const [activeReportTemplateConfig, setActiveReportTemplateConfig] =
+    useState<ReportTemplateConfig | null>(() => loadCachedReportTemplateConfig<ReportTemplateConfig>());
+  const [draft, setDraft] = useState<DraftReport>(() =>
+    normalizeDraft(loadDraft(createEmptyDraft(loadCachedReportTemplateConfig<ReportTemplateConfig>()))),
+  );
   const [reports, setReports] = useState<Report[]>(() => {
     const cached = loadCachedReports();
     return cached.map((r) => ({
@@ -321,8 +330,6 @@ export function useReportDashboard() {
     }));
   });
   const [reporterProfiles, setReporterProfiles] = useState<ReporterDirectoryProfile[]>([]);
-  const [activeReportTemplateConfig, setActiveReportTemplateConfig] =
-    useState<ReportTemplateConfig | null>(null);
   const [notificationSettings, setNotificationSettings] =
     useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
   const [excelTemplates, setExcelTemplates] = useState<ExcelReportTemplate[]>([]);
@@ -785,7 +792,29 @@ export function useReportDashboard() {
       }));
       saveCachedReports(mergedReports);
       saveCachedReporterNames(allReporterNames);
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : (userSession ? { ...createEmptyDraft(dbATC), nama: userSession.fullName } : createEmptyDraft(dbATC)));
+      setDraft((c) => {
+        const base =
+          hasMeaningfulDraft(c) || c.nama.trim()
+            ? c
+            : userSession
+            ? { ...createEmptyDraft(dbATC), nama: userSession.fullName }
+            : createEmptyDraft(dbATC);
+
+        const timCode = (base.tim || "PUSDALOPS").toLowerCase();
+        const currentCoord = getTemplateApproverByRole(
+          dbATC,
+          `coordinator_team_${timCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
+        );
+        const currentDivHead = getTemplateApproverByRole(dbATC, "division_head");
+
+        return normalizeDraft({
+          ...base,
+          approverCoordinatorSignatureUrl:
+            base.approverCoordinatorSignatureUrl || currentCoord?.signatureUrl || "",
+          approverDivisionHeadSignatureUrl:
+            base.approverDivisionHeadSignatureUrl || currentDivHead?.signatureUrl || "",
+        });
+      });
     } catch (err) {
       logSafeError(err, "Dashboard/LoadData");
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
@@ -913,14 +942,16 @@ export function useReportDashboard() {
     setDraft(c => {
       const updated = { ...c, [key]: value };
       if (key === "tim") {
+        const teamCode = (value as string).toLowerCase();
         const coordinator = getTemplateApproverByRole(
           activeReportTemplateConfig,
-          `coordinator_team_${(value as string).toLowerCase()}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
+          `coordinator_team_${teamCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
         );
         if (coordinator) {
           updated.approverCoordinatorTemplateId = coordinator.id;
           updated.approverCoordinator = coordinator.officialName;
           updated.approverCoordinatorNip = coordinator.officialNip;
+          updated.approverCoordinatorSignatureUrl = coordinator.signatureUrl || "";
         }
       }
       return normalizeDraft(updated);
@@ -1752,6 +1783,22 @@ export function useReportDashboard() {
     }
   }
 
+  async function handlePrintAll(
+    reports: Report[],
+    format?: "a4" | "f4" | "legal" | "letter",
+  ) {
+    if (!reports || reports.length === 0) {
+      await showInfo("Tidak Ada Laporan", "Tidak ada laporan aktif untuk dicetak.");
+      return;
+    }
+    try {
+      await printMultipleReportsDocument(reports, format ?? paperFormat);
+    } catch (err) {
+      logSafeError(err, "Dashboard/PrintAll");
+      await showError("Print Gagal", "Dokumen belum berhasil diproses untuk dicetak.");
+    }
+  }
+
   async function handleSaveAsPdf(report: Report) {
     setPdfExportingReportId(report.id);
     const toast = openProgressToast("Export Dokumen PDF", [
@@ -2280,18 +2327,34 @@ export function useReportDashboard() {
   }
 
   function changeAdminTemplateApproverDraft<K extends keyof ReportTemplateApproverDraft>(role: ReportTemplateApproverRole, key: K, value: ReportTemplateApproverDraft[K]) {
-    setAdminTemplateApproverDrafts(c => ({ ...c, [role]: { ...c[role], [key]: typeof value === "string" ? value.toUpperCase() : value }}));
+    setAdminTemplateApproverDrafts(c => ({ ...c, [role]: { ...c[role], [key]: (typeof value === "string" && key !== "signatureUrl") ? value.toUpperCase() : value }}));
   }
 
-  async function handleSaveTemplateApproverDefaults() {
+  async function handleSaveTemplateApproverDefaults(
+    overrideDrafts?: Record<ReportTemplateApproverRole, ReportTemplateApproverDraft>,
+  ) {
     if (!adminSession || !activeReportTemplateConfig) { await showError("Error", "Missing session or config."); return; }
     setAdminSubmitting(true);
     setAdminActiveAction("save-template-approvers");
     try {
-      const next = await saveTemplateApproverDefaults(activeReportTemplateConfig.id, adminTemplateApproverDrafts);
+      const draftsToSave = overrideDrafts ?? adminTemplateApproverDrafts;
+      const next = await saveTemplateApproverDefaults(activeReportTemplateConfig.id, draftsToSave);
       setActiveReportTemplateConfig(next);
       setAdminTemplateApproverDrafts(createDefaultApproverDraftMap(next));
-      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? c : createEmptyDraft(next));
+      setDraft(c => (hasMeaningfulDraft(c) || c.nama.trim()) ? {
+        ...c,
+        approverCoordinatorSignatureUrl:
+          c.approverCoordinatorSignatureUrl ||
+          getTemplateApproverByRole(
+            next,
+            `coordinator_team_${(c.tim || "PUSDALOPS").toLowerCase()}` as any,
+          )?.signatureUrl ||
+          "",
+        approverDivisionHeadSignatureUrl:
+          getTemplateApproverByRole(next, "division_head")?.signatureUrl ||
+          c.approverDivisionHeadSignatureUrl ||
+          "",
+      } : createEmptyDraft(next));
       await loadDashboardData();
       await showSuccess("Pejabat diperbarui", "Berhasil disimpan.");
     } catch (err) { logSafeError(err, "Dashboard/SaveApprovers"); await showError("Simpan gagal", "Gagal menyimpan pejabat."); }
@@ -2373,7 +2436,7 @@ export function useReportDashboard() {
     showRenameOverwriteWarning, renameOverwriteWarningKey,
     change, changeActivity, addActivity, removeActivity, moveActivity, setActivityFiles, clearActivityFiles,
     restoreActivityFiles, editableOriginalPhotos, handleDeleteReport, handleAdminDirectDeleteReport, handleLoadEdit,
-    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handleDownloadDeviceBackupExcel, handleDownloadDeviceBackupJson, handleBulkUploadDeviceBackup, handlePrint, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
+    handleResetDraft, handleReloadDashboardData, handleExport, handleBulkExport, handleDownloadDeviceBackupExcel, handleDownloadDeviceBackupJson, handleBulkUploadDeviceBackup, handlePrint, handlePrintAll, handleSaveAsPdf, handleExportLocalDraftPdf, handleUnsupportedMobilePrint, saveReport,
     persistCurrentAsLocalDraft, handleLoadLocalDraft, handleDeleteLocalDraft,
     handleQueueLocalDraftUpload, openSavedDraftHistory,
     handleRemoveSavedName, changeAdminRule, changeNotificationSettings,

@@ -470,6 +470,8 @@ export default function App() {
             onHandleLoadEdit={dashboard.handleLoadEdit}
             onHandleExport={dashboard.handleExport}
             onHandlePrint={dashboard.handlePrint}
+            onHandlePrintAll={dashboard.handlePrintAll}
+            paperFormat={dashboard.paperFormat}
             onHandleSaveAsPdf={dashboard.handleSaveAsPdf}
             onHandleUnsupportedMobilePrint={dashboard.handleUnsupportedMobilePrint}
             onHandleDeleteReport={dashboard.handleAdminDirectDeleteReport}
