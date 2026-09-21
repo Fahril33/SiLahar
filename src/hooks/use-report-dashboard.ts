@@ -1786,13 +1786,14 @@ export function useReportDashboard() {
   async function handlePrintAll(
     reports: Report[],
     format?: "a4" | "f4" | "legal" | "letter",
+    onProgress?: (step: string, pct: number) => void,
   ) {
     if (!reports || reports.length === 0) {
       await showInfo("Tidak Ada Laporan", "Tidak ada laporan aktif untuk dicetak.");
       return;
     }
     try {
-      await printMultipleReportsDocument(reports, format ?? paperFormat);
+      await printMultipleReportsDocument(reports, format ?? paperFormat, onProgress);
     } catch (err) {
       logSafeError(err, "Dashboard/PrintAll");
       await showError("Print Gagal", "Dokumen belum berhasil diproses untuk dicetak.");

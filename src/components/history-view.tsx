@@ -311,6 +311,7 @@ export function HistoryView(props: {
   onHandlePrintAll?: (
     reports: Report[],
     format?: "a4" | "f4" | "legal" | "letter",
+    onProgress?: (step: string, pct: number) => void,
   ) => Promise<void>;
   paperFormat?: "a4" | "f4" | "legal" | "letter";
   onHandleSaveAsPdf: (report: Report) => Promise<void>;
@@ -576,7 +577,7 @@ export function HistoryView(props: {
     onProgress?: (step: string, pct: number) => void,
   ) => {
     if (props.onHandlePrintAll) {
-      await props.onHandlePrintAll(reportsToPrint, paperFormat);
+      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress);
     } else {
       await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress);
     }

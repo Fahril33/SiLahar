@@ -54,7 +54,8 @@ function SpinnerIcon(props: { className?: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      className={props.className || "h-4 w-4 animate-spin"}
+      className={`animate-spin ${props.className || "h-4 w-4"}`}
+      style={{ animation: "spin 0.85s linear infinite" }}
       fill="none"
     >
       <circle
@@ -225,26 +226,32 @@ function ModernPrintLoader(props: { statusText: string; progress: number }) {
   return (
     <div className="p-3.5 rounded-2xl bg-[var(--surface-card)] border border-[var(--primary)]/30 shadow-md flex items-center gap-3.5 animate-fadeIn">
       {/* Sleek rotating ring loader with document icon */}
-      <div className="relative h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-[var(--primary)]/10 text-[var(--primary)] border border-[var(--primary)]/20">
+      <div className="relative h-10 w-10 shrink-0 flex items-center justify-center rounded-xl bg-[var(--primary)]/10 text-[var(--primary)] border border-[var(--primary)]/20 shadow-xs">
         <SpinnerIcon className="h-5 w-5 text-[var(--primary)]" />
       </div>
 
       {/* Progress detail and bar */}
       <div className="flex-1 min-w-0 space-y-1.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-bold text-[var(--text-primary)] truncate">
-            {props.statusText}
-          </p>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="flex h-2 w-2 relative shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--primary)] opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--primary)]"></span>
+            </span>
+            <p className="text-xs font-bold text-[var(--text-primary)] truncate">
+              {props.statusText}
+            </p>
+          </div>
           <span className="font-mono text-xs font-bold text-[var(--primary)] shrink-0">
             {props.progress}%
           </span>
         </div>
 
-        {/* Minimalist Smooth Progress Bar */}
-        <div className="h-1.5 w-full bg-[var(--surface-muted)] rounded-full overflow-hidden">
+        {/* Minimalist Smooth Progress Bar with Active Motion */}
+        <div className="h-2 w-full bg-[var(--surface-muted)] rounded-full overflow-hidden p-0.5 border border-[var(--border-soft)]">
           <div
-            className="h-full bg-gradient-to-r from-blue-500 via-[var(--primary)] to-emerald-400 rounded-full transition-all duration-300 ease-out"
-            style={{ width: `${Math.max(6, props.progress)}%` }}
+            className="h-full bg-gradient-to-r from-blue-500 via-[var(--primary)] to-emerald-400 rounded-full transition-all duration-200 ease-out shadow-xs"
+            style={{ width: `${Math.min(100, Math.max(8, props.progress))}%` }}
           />
         </div>
       </div>
@@ -508,6 +515,17 @@ export function AdminPrintSelectionModal({
     setPrintProgress(15);
     setPrintStatusText(`Menyiapkan data (${selectedIds.length} laporan)...`);
 
+    // Active timer to smoothly increment progress while async operations run
+    let tickerId: number | null = null;
+    tickerId = window.setInterval(() => {
+      setPrintProgress((prev) => {
+        if (prev < 88) {
+          return prev + Math.floor(Math.random() * 3 + 1);
+        }
+        return prev;
+      });
+    }, 150);
+
     try {
       // Filter and sort chronologically
       const reportsToPrint = userReports
@@ -519,9 +537,10 @@ export function AdminPrintSelectionModal({
 
       await onExecutePrint(reportsToPrint, paperFormat, (step, pct) => {
         setPrintStatusText(step);
-        setPrintProgress(pct);
+        setPrintProgress((prev) => Math.max(prev, pct));
       });
 
+      if (tickerId) window.clearInterval(tickerId);
       setPrintProgress(100);
       setPrintStatusText("Membuka dialog cetak...");
 
@@ -530,6 +549,7 @@ export function AdminPrintSelectionModal({
         onClose();
       }, 400);
     } catch (err) {
+      if (tickerId) window.clearInterval(tickerId);
       console.error("Gagal mencetak dokumen:", err);
       setIsPrinting(false);
       setPrintProgress(0);
