@@ -4,7 +4,16 @@ import pdfStyles from "../styles/report-pdf.css?inline";
 import { ReportPdfDocument } from "../components/report-pdf-document";
 import type { Report } from "../types/report";
 import type { PendingPhotoMap } from "./report-draft";
-import { fetchTeamTypes, getHeaderLinesForTeam } from "./report-template-service";
+import {
+  fetchActiveReportTemplateConfig,
+  fetchTeamTypes,
+  getHeaderLinesForTeam,
+} from "./report-template-service";
+import {
+  getCachedSignatureDataUrl,
+  prefetchAndCacheSignatureImage,
+} from "./storage";
+import { supabase } from "./supabase";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
 const PDF_IMAGE_MAX_EDGE_PX = 1080;
@@ -82,6 +91,27 @@ function fileToDataUrl(file: File): Promise<string> {
   return compressImageBlobToDataUrl(file);
 }
 
+async function resolveAndMaterializeSignature(url?: string): Promise<string> {
+  if (!url || typeof url !== "string" || !url.trim()) return "";
+  const trimmed = url.trim();
+  if (trimmed.startsWith("data:image/")) {
+    return trimmed;
+  }
+  const cached = getCachedSignatureDataUrl(trimmed);
+  if (cached && cached.startsWith("data:image/")) {
+    return cached;
+  }
+  try {
+    const dataUrl = await prefetchAndCacheSignatureImage(trimmed);
+    if (dataUrl && dataUrl.startsWith("data:image/")) {
+      return dataUrl;
+    }
+  } catch (err) {
+    console.warn("Gagal mematerialisasi tanda tangan:", err);
+  }
+  return trimmed;
+}
+
 function renderReportMarkup(report: Report) {
   return `<div class="pdf-report-shell">${renderToStaticMarkup(createElement(ReportPdfDocument, { report }))}</div>`;
 }
@@ -130,7 +160,7 @@ async function waitForImages(container: HTMLElement) {
           image.loading = "eager";
           image.decoding = "sync";
 
-          if (image.complete && image.currentSrc) {
+          if (image.complete) {
             finish();
             return;
           }
@@ -163,15 +193,13 @@ async function preloadReportImages(report: Report) {
             void waitForImageDecode(image).finally(resolve);
           };
 
-          const timeoutId = window.setTimeout(resolve, IMAGE_READY_TIMEOUT_MS);
+          const timeoutId = window.setTimeout(resolve, 3000);
           image.loading = "eager";
           image.decoding = "sync";
-          image.fetchPriority = "high";
-          image.crossOrigin = "anonymous";
           image.referrerPolicy = "no-referrer";
           image.src = source;
 
-          if (image.complete && image.currentSrc) {
+          if (image.complete) {
             finish();
             return;
           }
@@ -186,7 +214,7 @@ async function preloadReportImages(report: Report) {
 async function materializeReportImages(
   report: Report,
   pendingPhotos?: PendingPhotoMap,
-) {
+): Promise<Report> {
   const cache = new Map<string, string>();
 
   const activities = await Promise.all(
@@ -198,7 +226,7 @@ async function materializeReportImages(
         photos: await Promise.all(
           activity.photos.map(async (photo) => {
             const isPendingLocalPhoto =
-              !photo.storagePath && photo.publicUrl.startsWith("blob:");
+              !photo.storagePath && photo.publicUrl && photo.publicUrl.startsWith("blob:");
             if (isPendingLocalPhoto) {
               pendingPhotoIndex += 1;
               const localPendingFile =
@@ -221,29 +249,50 @@ async function materializeReportImages(
               }
             }
 
-          const source = photo.publicUrl;
-          if (!source) {
-            return photo;
-          }
-
-          const cached = cache.get(source);
-          if (cached) {
-            return { ...photo, publicUrl: cached };
-          }
-
-          try {
-            const response = await fetch(source, { mode: "cors", credentials: "omit" });
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}`);
+            let source = photo.publicUrl;
+            // Resolve from Supabase storage if publicUrl is missing or invalid
+            if (
+              (!source || source.trim() === "" || source.includes("undefined")) &&
+              photo.storagePath &&
+              supabase
+            ) {
+              try {
+                const { data } = supabase.storage
+                  .from("daily-report-proofs")
+                  .getPublicUrl(photo.storagePath);
+                if (data?.publicUrl) {
+                  source = data.publicUrl;
+                }
+              } catch {}
             }
 
-            const dataUrl = await compressImageBlobToDataUrl(await response.blob());
-            cache.set(source, dataUrl);
-            return { ...photo, publicUrl: dataUrl };
-          } catch {
-            cache.set(source, source);
-            return photo;
-          }
+            if (!source) {
+              return photo;
+            }
+
+            if (source.startsWith("data:image/")) {
+              return { ...photo, publicUrl: source };
+            }
+
+            const cached = cache.get(source);
+            if (cached) {
+              return { ...photo, publicUrl: cached };
+            }
+
+            try {
+              const response = await fetch(source, { mode: "cors", credentials: "omit" });
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+
+              const dataUrl = await compressImageBlobToDataUrl(await response.blob());
+              cache.set(source, dataUrl);
+              return { ...photo, publicUrl: dataUrl };
+            } catch {
+              // Always retain valid resolved source URL so the browser can load it in the iframe
+              cache.set(source, source);
+              return { ...photo, publicUrl: source };
+            }
           }),
         ),
       };
@@ -251,19 +300,86 @@ async function materializeReportImages(
   );
 
   let headerLines = report.headerLines;
-  if (!headerLines || headerLines.length === 0) {
-    try {
-      const teamTypes = await fetchTeamTypes();
+  let coordinatorSig = report.approverCoordinatorSignatureUrl;
+  let divisionHeadSig = report.approverDivisionHeadSignatureUrl;
+  let coordinatorName = report.approverCoordinator;
+  let coordinatorNip = report.approverCoordinatorNip;
+  let coordinatorLabel = report.approverCoordinatorLabel;
+  let divisionHeadName = report.approverDivisionHead;
+  let divisionHeadNip = report.approverDivisionHeadNip;
+  let divisionHeadTitle = report.approverDivisionHeadTitle;
+
+  // Resolve team headers and coordinator signatures if missing
+  try {
+    const teamTypes = await fetchTeamTypes();
+    if (!headerLines || headerLines.length === 0) {
       headerLines = getHeaderLinesForTeam(report.tim, teamTypes);
-    } catch {
+    }
+    const matchedTeam = teamTypes.find(
+      (t) =>
+        t.code.toLowerCase() === (report.tim || "trc").toLowerCase() ||
+        t.name.toLowerCase() === (report.tim || "trc").toLowerCase(),
+    );
+    if (matchedTeam) {
+      if (!coordinatorSig && matchedTeam.signatureUrl) {
+        coordinatorSig = matchedTeam.signatureUrl;
+      }
+      if (!coordinatorName && matchedTeam.coordinatorName) {
+        coordinatorName = matchedTeam.coordinatorName;
+      }
+      if (!coordinatorNip && matchedTeam.coordinatorNip) {
+        coordinatorNip = matchedTeam.coordinatorNip;
+      }
+      if (!coordinatorLabel && matchedTeam.coordinatorLabel) {
+        coordinatorLabel = matchedTeam.coordinatorLabel;
+      }
+    }
+  } catch {
+    if (!headerLines || headerLines.length === 0) {
       headerLines = getHeaderLinesForTeam(report.tim, []);
     }
   }
+
+  // Resolve active template approver config for division head if missing
+  try {
+    const activeConfig = await fetchActiveReportTemplateConfig();
+    const divApprover = activeConfig.approvers?.find(
+      (a) => a.approverRole === "division_head",
+    );
+    if (divApprover) {
+      if (!divisionHeadSig && divApprover.signatureUrl) {
+        divisionHeadSig = divApprover.signatureUrl;
+      }
+      if (!divisionHeadName && divApprover.officialName) {
+        divisionHeadName = divApprover.officialName;
+      }
+      if (!divisionHeadNip && divApprover.officialNip) {
+        divisionHeadNip = divApprover.officialNip;
+      }
+      if (!divisionHeadTitle && divApprover.officialTitle) {
+        divisionHeadTitle = divApprover.officialTitle;
+      }
+    }
+  } catch {}
+
+  // Materialize signatures to base64 Data URLs so they render 100% reliably in print
+  const [materializedCoordSig, materializedDivSig] = await Promise.all([
+    resolveAndMaterializeSignature(coordinatorSig),
+    resolveAndMaterializeSignature(divisionHeadSig),
+  ]);
 
   return {
     ...report,
     headerLines,
     activities,
+    approverCoordinator: coordinatorName || report.approverCoordinator,
+    approverCoordinatorNip: coordinatorNip || report.approverCoordinatorNip,
+    approverCoordinatorLabel: coordinatorLabel || report.approverCoordinatorLabel,
+    approverCoordinatorSignatureUrl: materializedCoordSig,
+    approverDivisionHead: divisionHeadName || report.approverDivisionHead,
+    approverDivisionHeadNip: divisionHeadNip || report.approverDivisionHeadNip,
+    approverDivisionHeadTitle: divisionHeadTitle || report.approverDivisionHeadTitle,
+    approverDivisionHeadSignatureUrl: materializedDivSig,
   };
 }
 
@@ -479,17 +595,24 @@ export async function printReportDocument(
 export async function printMultipleReportsDocument(
   reports: Report[],
   paperFormat: "a4" | "f4" | "legal" | "letter",
+  onProgress?: (step: string, pct: number) => void,
 ) {
   if (!reports || reports.length === 0) return;
+
+  onProgress?.(`Menyiapkan data & tanda tangan (${reports.length} laporan)...`, 25);
 
   const originalTitle = document.title;
   const printReadyReports = await Promise.all(
     reports.map((report) => materializeReportImages(report)),
   );
 
+  onProgress?.("Memuat aset visual & tata letak...", 55);
+
   await Promise.all(
     printReadyReports.map((report) => preloadReportImages(report)),
   );
+
+  onProgress?.("Menyusun lembar halaman cetak...", 80);
 
   const combinedMarkup = printReadyReports
     .map(
@@ -560,6 +683,8 @@ export async function printMultipleReportsDocument(
   try {
     await waitForImages(frameDoc.body);
     await waitForPaint();
+    await new Promise((r) => setTimeout(r, 200));
+    onProgress?.("Membuka dialog cetak dokumen...", 95);
     await new Promise<void>((resolve) => {
       document.title = docTitle;
       const cleanupAndResolve = () => resolve();

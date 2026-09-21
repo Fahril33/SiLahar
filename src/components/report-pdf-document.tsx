@@ -86,12 +86,11 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
                           <img
                             key={photo.id || photo.storagePath || photoUrl}
                             src={photoUrl}
-                            alt={photo.originalFileName}
+                            alt={photo.originalFileName || "Bukti aktivitas"}
                             className="proof-image"
                             loading="eager"
                             decoding="sync"
                             {...{ fetchpriority: "high" }}
-                            crossOrigin="anonymous"
                             referrerPolicy="no-referrer"
                             onError={(e) => {
                               if (photo.storagePath && supabase) {
@@ -129,7 +128,6 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
                   alt={`TTD ${report.approverCoordinator}`}
                   className="approval-signature-img"
                   loading="eager"
-                  crossOrigin="anonymous"
                 />
               ) : null}
             </div>
@@ -150,7 +148,6 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
                   alt={`TTD ${report.approverDivisionHead}`}
                   className="approval-signature-img"
                   loading="eager"
-                  crossOrigin="anonymous"
                 />
               ) : null}
             </div>

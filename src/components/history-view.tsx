@@ -21,6 +21,8 @@ import {
   getSystemStartDateLabel,
 } from "../lib/system-date";
 import { printMultipleReportsDocument } from "../lib/exporters";
+import { getAllCombinedReports } from "../lib/browser-cache-recovery";
+import { AdminPrintSelectionModal } from "./admin-print-selection-modal";
 
 function FileTextIcon(props: { className?: string }) {
   return (
@@ -496,6 +498,90 @@ export function HistoryView(props: {
     }
   };
 
+  // Combined DB + Local/Cache reports for comprehensive modal selection
+  const [combinedAllReports, setCombinedAllReports] = useState<Report[]>(allReports);
+
+  useEffect(() => {
+    let alive = true;
+    getAllCombinedReports(allReports)
+      .then((combined) => {
+        if (alive) {
+          setCombinedAllReports(combined);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [allReports]);
+
+  // Admin Print Selection Modal State
+  const [adminPrintModal, setAdminPrintModal] = useState<{
+    isOpen: boolean;
+    userName: string;
+    targetReportId: string | null;
+  } | null>(null);
+
+  const adminPrintUserReports = useMemo(() => {
+    if (!adminPrintModal?.isOpen) return [];
+    const targetName = adminPrintModal.userName;
+    return combinedAllReports
+      .filter((r) => {
+        if (!r || !r.reportDate) return false;
+        return (
+          isSameReporterName(r.nama, targetName) ||
+          (r.nama || "").trim().toLowerCase() === targetName.trim().toLowerCase()
+        );
+      })
+      .sort((a, b) => (b.reportDate || "").localeCompare(a.reportDate || ""));
+  }, [adminPrintModal, combinedAllReports]);
+
+  const handleOpenPrintAction = (report: Report) => {
+    if (isMobileOrTablet) {
+      void onHandleUnsupportedMobilePrint();
+      return;
+    }
+
+    if (props.adminSession) {
+      setAdminPrintModal({
+        isOpen: true,
+        userName: report.nama || "Petugas",
+        targetReportId: report.id,
+      });
+    } else {
+      void onHandlePrint(report, props.paperFormat ?? "a4");
+    }
+  };
+
+  const handleOpenPrintForUser = (userName: string, defaultReportId?: string) => {
+    if (isMobileOrTablet) {
+      void onHandleUnsupportedMobilePrint();
+      return;
+    }
+
+    if (props.adminSession) {
+      setAdminPrintModal({
+        isOpen: true,
+        userName,
+        targetReportId: defaultReportId || null,
+      });
+    } else {
+      void handlePrintAllReports();
+    }
+  };
+
+  const handleExecuteAdminPrint = async (
+    reportsToPrint: Report[],
+    paperFormat: "a4" | "f4" | "legal" | "letter",
+    onProgress?: (step: string, pct: number) => void,
+  ) => {
+    if (props.onHandlePrintAll) {
+      await props.onHandlePrintAll(reportsToPrint, paperFormat);
+    } else {
+      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress);
+    }
+  };
+
   const consistencyStats = useMemo(() => {
     if (!showChronologicalView || !props.userSession) return null;
 
@@ -968,6 +1054,19 @@ export function HistoryView(props: {
                       <span>Cetak Semua ({activeReportsToPrint.length})</span>
                     </>
                   )}
+                </button>
+              )}
+
+              {/* Desktop-only Print Button for Admin viewing a searched user */}
+              {Boolean(props.adminSession) && isSearching && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrintForUser(statusSearchQuery.trim())}
+                  className="hidden md:inline-flex items-center gap-2 h-[46px] px-4 rounded-full bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] hover:border-[var(--primary)] text-xs font-bold text-[var(--text-primary)] hover:text-[var(--primary)] shadow-sm hover:shadow transition-all cursor-pointer shrink-0"
+                  title={`Cetak dokumen laporan petugas ${statusSearchQuery.trim()}`}
+                >
+                  <PrintIcon className="h-4 w-4 text-[var(--primary)]" />
+                  <span>Cetak Laporan</span>
                 </button>
               )}
 
@@ -1561,11 +1660,7 @@ export function HistoryView(props: {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (isMobileOrTablet) {
-                                    void onHandleUnsupportedMobilePrint();
-                                  } else {
-                                    void onHandlePrint(report, "a4");
-                                  }
+                                  handleOpenPrintAction(report);
                                 }}
                                 className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                                 title="Cetak PDF"
@@ -1684,11 +1779,7 @@ export function HistoryView(props: {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (isMobileOrTablet) {
-                                void onHandleUnsupportedMobilePrint();
-                              } else {
-                                void onHandlePrint(report, "a4");
-                              }
+                              handleOpenPrintAction(report);
                             }}
                             className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                             title="Cetak PDF"
@@ -1979,11 +2070,7 @@ export function HistoryView(props: {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (isMobileOrTablet) {
-                                  void onHandleUnsupportedMobilePrint();
-                                } else {
-                                  void onHandlePrint(row.report!, "a4");
-                                }
+                                handleOpenPrintAction(row.report!);
                               }}
                               className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                               title="Cetak PDF"
@@ -2108,11 +2195,7 @@ export function HistoryView(props: {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (isMobileOrTablet) {
-                            void onHandleUnsupportedMobilePrint();
-                          } else {
-                            void onHandlePrint(row.report!, "a4");
-                          }
+                          handleOpenPrintAction(row.report!);
                         }}
                         className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
                         title="Cetak PDF"
@@ -2389,6 +2472,19 @@ export function HistoryView(props: {
           onHandleDeleteLocalDraft={onHandleDeleteLocalDraft}
           onHandleQueueLocalDraftUpload={onHandleQueueLocalDraftUpload}
           onHandleDownloadLocalDraftPdf={onHandleDownloadLocalDraftPdf}
+        />
+      )}
+
+      {/* Admin Print Selection Modal */}
+      {Boolean(props.adminSession) && adminPrintModal?.isOpen && (
+        <AdminPrintSelectionModal
+          isOpen={adminPrintModal.isOpen}
+          onClose={() => setAdminPrintModal(null)}
+          userName={adminPrintModal.userName}
+          targetReportId={adminPrintModal.targetReportId}
+          userReports={adminPrintUserReports}
+          onExecutePrint={handleExecuteAdminPrint}
+          defaultPaperFormat={props.paperFormat ?? "a4"}
         />
       )}
     </section>
