@@ -6,6 +6,7 @@ import type {
   Report,
   ReporterDirectoryProfile,
   ReportActivity,
+  DocumentPresentationMode,
 } from "../types/report";
 import type { AdminSessionState } from "../types/admin";
 import type { LocalReportDraftSummary } from "../types/local-draft";
@@ -312,6 +313,7 @@ export function HistoryView(props: {
     reports: Report[],
     format?: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
+    presentationMode?: DocumentPresentationMode,
   ) => Promise<void>;
   paperFormat?: "a4" | "f4" | "legal" | "letter";
   onHandleSaveAsPdf: (report: Report) => Promise<void>;
@@ -475,7 +477,6 @@ export function HistoryView(props: {
     effectiveStartDate,
   ]);
 
-  const [isPrintingAll, setIsPrintingAll] = useState(false);
 
   // Active reports for logged-in user in chronological view (sorted by date ascending)
   const activeReportsToPrint = useMemo(() => {
@@ -485,18 +486,17 @@ export function HistoryView(props: {
       .sort((a, b) => a.reportDate.localeCompare(b.reportDate));
   }, [props.userSession, chronoReports]);
 
-  const handlePrintAllReports = async () => {
-    if (activeReportsToPrint.length === 0 || isPrintingAll) return;
-    setIsPrintingAll(true);
-    try {
-      if (props.onHandlePrintAll) {
-        await props.onHandlePrintAll(activeReportsToPrint, props.paperFormat ?? "a4");
-      } else {
-        await printMultipleReportsDocument(activeReportsToPrint, props.paperFormat ?? "a4");
-      }
-    } finally {
-      setIsPrintingAll(false);
+  const handlePrintAllReports = () => {
+    if (isMobileOrTablet) {
+      void onHandleUnsupportedMobilePrint();
+      return;
     }
+    const userName = props.userSession?.fullName || "Petugas";
+    setAdminPrintModal({
+      isOpen: true,
+      userName,
+      targetReportId: null,
+    });
   };
 
   // Combined DB + Local/Cache reports for comprehensive modal selection
@@ -529,13 +529,16 @@ export function HistoryView(props: {
     return combinedAllReports
       .filter((r) => {
         if (!r || !r.reportDate) return false;
+        if (props.userSession && !props.adminSession) {
+          return Boolean(r.nama && isSameReporterName(r.nama, props.userSession.fullName));
+        }
         return (
           isSameReporterName(r.nama, targetName) ||
           (r.nama || "").trim().toLowerCase() === targetName.trim().toLowerCase()
         );
       })
       .sort((a, b) => (b.reportDate || "").localeCompare(a.reportDate || ""));
-  }, [adminPrintModal, combinedAllReports]);
+  }, [adminPrintModal, combinedAllReports, props.userSession, props.adminSession]);
 
   const handleOpenPrintAction = (report: Report) => {
     if (isMobileOrTablet) {
@@ -560,26 +563,23 @@ export function HistoryView(props: {
       return;
     }
 
-    if (props.adminSession) {
-      setAdminPrintModal({
-        isOpen: true,
-        userName,
-        targetReportId: defaultReportId || null,
-      });
-    } else {
-      void handlePrintAllReports();
-    }
+    setAdminPrintModal({
+      isOpen: true,
+      userName,
+      targetReportId: defaultReportId || null,
+    });
   };
 
   const handleExecuteAdminPrint = async (
     reportsToPrint: Report[],
     paperFormat: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
+    presentationMode: DocumentPresentationMode = "daily",
   ) => {
     if (props.onHandlePrintAll) {
-      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress);
+      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress, presentationMode);
     } else {
-      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress);
+      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress, presentationMode);
     }
   };
 
@@ -1039,22 +1039,13 @@ export function HistoryView(props: {
               {Boolean(props.userSession) && (
                 <button
                   type="button"
-                  onClick={() => void handlePrintAllReports()}
-                  disabled={isPrintingAll || activeReportsToPrint.length === 0}
+                  onClick={handlePrintAllReports}
+                  disabled={activeReportsToPrint.length === 0}
                   className="hidden md:inline-flex items-center gap-2 h-[46px] px-4 rounded-full bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] hover:border-[var(--primary)] text-xs font-bold text-[var(--text-primary)] hover:text-[var(--primary)] shadow-sm hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                  title={`Cetak semua laporan aktif (${activeReportsToPrint.length} laporan) - Terpisah per halaman per tanggal`}
+                  title={`Cetak laporan (${activeReportsToPrint.length} laporan aktif)`}
                 >
-                  {isPrintingAll ? (
-                    <>
-                      <SpinnerIcon />
-                      <span>Menyiapkan Cetak...</span>
-                    </>
-                  ) : (
-                    <>
-                      <PrintIcon className="h-4 w-4 text-[var(--primary)]" />
-                      <span>Cetak Semua ({activeReportsToPrint.length})</span>
-                    </>
-                  )}
+                  <PrintIcon className="h-4 w-4 text-[var(--primary)]" />
+                  <span>Cetak Semua ({activeReportsToPrint.length})</span>
                 </button>
               )}
 
@@ -2476,8 +2467,8 @@ export function HistoryView(props: {
         />
       )}
 
-      {/* Admin Print Selection Modal */}
-      {Boolean(props.adminSession) && adminPrintModal?.isOpen && (
+      {/* Print Selection Modal (for Admin & User Login) */}
+      {adminPrintModal?.isOpen && (
         <AdminPrintSelectionModal
           isOpen={adminPrintModal.isOpen}
           onClose={() => setAdminPrintModal(null)}

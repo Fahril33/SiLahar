@@ -127,6 +127,7 @@ export function renderReportToHtml(report: Report): string {
       padding: 0 !important;
     }
 
+    .pdf-report-main-table tbody.date-group-tbody,
     .pdf-report-main-table tr {
       page-break-inside: avoid !important;
       break-inside: avoid !important;

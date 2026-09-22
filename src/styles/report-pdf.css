@@ -1,18 +1,17 @@
 @page {
-  size: A4 portrait;
   margin: 20mm 18mm 20mm 20mm;
 }
 
 .pdf-report-shell {
-  width: 210mm;
+  width: 100%;
   background: #ffffff;
 }
 
 .pdf-report-page {
   box-sizing: border-box;
-  width: 210mm;
-  min-height: 297mm;
-  padding: 20mm 18mm 20mm 20mm;
+  width: 100%;
+  min-height: auto;
+  padding: 0;
   background: #ffffff;
   color: #000000;
   font-family: Calibri, Arial, Helvetica, sans-serif;
@@ -56,29 +55,44 @@
 
 .pdf-report-main-table table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   table-layout: fixed;
-  border-top: 1px solid #000000;
-  border-left: 1px solid #000000;
+  border: none;
 }
 
-.pdf-report-main-table th,
-.pdf-report-main-table td {
-  border-right: 1px solid #000000;
-  border-bottom: 1px solid #000000;
-  border-top: none;
-  border-left: none;
-  padding: 8px 7px;
-  vertical-align: middle;
-  box-sizing: border-box;
-  page-break-inside: avoid;
-  break-inside: avoid;
+.pdf-report-main-table thead {
+  display: table-header-group;
+}
+
+.pdf-report-main-table tbody {
+  display: table-row-group;
+}
+
+.pdf-report-main-table tbody.date-group-tbody {
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
 }
 
 .pdf-report-main-table tr {
   page-break-inside: avoid;
   break-inside: avoid;
+}
+
+.pdf-report-main-table th,
+.pdf-report-main-table td {
+  border: 1px solid #000000 !important;
+  padding: 8px 7px;
+  vertical-align: middle;
+  box-sizing: border-box;
+}
+
+/* Ensure rightmost outer border is solid and immune to browser subpixel margin clipping */
+.pdf-report-main-table th:last-child,
+.pdf-report-main-table td:last-child,
+.pdf-report-main-table th.col-proof,
+.pdf-report-main-table th.col-consolidated-proof,
+.pdf-report-main-table td.proof-cell {
+  border-right: 2px solid #000000 !important;
 }
 
 .pdf-report-main-table th {
@@ -108,8 +122,37 @@
   width: 20%;
 }
 
+/* Consolidated / Weekly Report Columns */
+.pdf-report-main-table .col-consolidated-no {
+  width: 6%;
+}
+
+.pdf-report-main-table .col-consolidated-date {
+  width: 18%;
+}
+
+.pdf-report-main-table .col-consolidated-detail {
+  width: 40%;
+}
+
+.pdf-report-main-table .col-consolidated-time {
+  width: 16%;
+}
+
+.pdf-report-main-table .col-consolidated-proof {
+  width: 20%;
+}
+
 .pdf-report-main-table .no-cell {
   text-align: center;
+  vertical-align: middle;
+}
+
+.pdf-report-main-table .date-cell {
+  text-align: center;
+  vertical-align: middle;
+  font-size: 10pt;
+  word-break: break-word;
 }
 
 .pdf-report-main-table .time-cell {

@@ -131,6 +131,7 @@ import type {
   Report,
   ReportActivityPhoto,
   ReporterDirectoryProfile,
+  DocumentPresentationMode,
 } from "../types/report";
 import type {
   LocalDraftFileMap,
@@ -1787,13 +1788,14 @@ export function useReportDashboard() {
     reports: Report[],
     format?: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
+    presentationMode: DocumentPresentationMode = "daily",
   ) {
     if (!reports || reports.length === 0) {
       await showInfo("Tidak Ada Laporan", "Tidak ada laporan aktif untuk dicetak.");
       return;
     }
     try {
-      await printMultipleReportsDocument(reports, format ?? paperFormat, onProgress);
+      await printMultipleReportsDocument(reports, format ?? paperFormat, onProgress, presentationMode);
     } catch (err) {
       logSafeError(err, "Dashboard/PrintAll");
       await showError("Print Gagal", "Dokumen belum berhasil diproses untuk dicetak.");

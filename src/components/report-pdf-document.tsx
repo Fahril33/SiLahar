@@ -58,7 +58,14 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
             </tr>
           </thead>
           <tbody>
-            {report.activities.map((activity) => (
+            {report.activities.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="empty-table-cell" style={{ textAlign: "center", padding: "14px" }}>
+                  Tidak ada data aktivitas.
+                </td>
+              </tr>
+            ) : (
+              report.activities.map((activity) => (
               <tr key={activity.id || activity.no}>
                 <td className="no-cell">{activity.no}</td>
                 <td className="detail-cell">{activity.description?.trim() || "-"}</td>
@@ -111,7 +118,7 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
                   )}
                 </td>
               </tr>
-            ))}
+            )))}
           </tbody>
         </table>
       </section>

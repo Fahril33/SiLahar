@@ -2,7 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import pdfStyles from "../styles/report-pdf.css?inline";
 import { ReportPdfDocument } from "../components/report-pdf-document";
-import type { Report } from "../types/report";
+import { ReportConsolidatedPdfDocument } from "../components/report-consolidated-pdf-document";
+import type { Report, DocumentPresentationMode } from "../types/report";
 import type { PendingPhotoMap } from "./report-draft";
 import {
   fetchActiveReportTemplateConfig,
@@ -14,6 +15,8 @@ import {
   prefetchAndCacheSignatureImage,
 } from "./storage";
 import { supabase } from "./supabase";
+import { groupReportsByCalendarWeek } from "./calendar-week-utils";
+import { formatWitaDate } from "./time";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
 const PDF_IMAGE_MAX_EDGE_PX = 1080;
@@ -116,9 +119,34 @@ function renderReportMarkup(report: Report) {
   return `<div class="pdf-report-shell">${renderToStaticMarkup(createElement(ReportPdfDocument, { report }))}</div>`;
 }
 
+function renderConsolidatedReportMarkup(
+  reports: Report[],
+  titlePeriod: string,
+) {
+  const firstReport = reports[0];
+  if (!firstReport) return "";
+  return `<div class="pdf-report-shell">${renderToStaticMarkup(
+    createElement(ReportConsolidatedPdfDocument, {
+      titlePeriod,
+      reporterName: firstReport.nama,
+      teamName: firstReport.tim,
+      headerLines: firstReport.headerLines,
+      reports,
+      approverCoordinator: firstReport.approverCoordinator,
+      approverCoordinatorNip: firstReport.approverCoordinatorNip,
+      approverCoordinatorLabel: firstReport.approverCoordinatorLabel,
+      approverCoordinatorSignatureUrl: firstReport.approverCoordinatorSignatureUrl,
+      approverDivisionHead: firstReport.approverDivisionHead,
+      approverDivisionHeadTitle: firstReport.approverDivisionHeadTitle,
+      approverDivisionHeadNip: firstReport.approverDivisionHeadNip,
+      approverDivisionHeadSignatureUrl: firstReport.approverDivisionHeadSignatureUrl,
+    }),
+  )}</div>`;
+}
+
 function createPdfContainer(report: Report) {
   const container = document.createElement("div");
-  container.style.width = "210mm";
+  container.style.width = "100%";
   container.style.background = "#ffffff";
   container.innerHTML = `
     <style>${pdfStyles}</style>
@@ -399,9 +427,11 @@ function getPdfOptions(
   paperFormat: "a4" | "f4" | "legal" | "letter",
 ) {
   const formatArray = paperFormat === "f4" ? [210, 330] : paperFormat;
+  const isWider = paperFormat === "legal" || paperFormat === "letter";
 
   return {
-    margin: [20, 0, 20, 0], // Hanya top dan bottom yang ditangani library agar lebar canvas asli 210mm tidak terdistorsi
+    // html2pdf margin order: [top, left, bottom, right]
+    margin: [20, 20, 20, 18],
     filename: buildPdfFileName(report),
     image: { type: "jpeg", quality: 0.85 },
     html2canvas: {
@@ -412,7 +442,7 @@ function getPdfOptions(
       logging: false,
       scrollX: 0,
       scrollY: 0,
-      windowWidth: 794,
+      windowWidth: isWider ? 816 : 794,
     },
     jsPDF: {
       unit: "mm",
@@ -421,7 +451,7 @@ function getPdfOptions(
     },
     pagebreak: {
       mode: ["css", "legacy"],
-      avoid: ["tr", "img", ".pdf-report-footer", ".pdf-report-identity"],
+      avoid: ["tr", "img", ".pdf-report-footer", ".pdf-report-identity", ".date-group-tbody"],
     },
   };
 }
@@ -521,6 +551,26 @@ export async function exportReportAsPdf(
   }
 }
 
+export const PAPER_DIMENSIONS: Record<
+  "a4" | "f4" | "legal" | "letter",
+  { size: string; widthMm: number; heightMm: number; iframeWidth: string; iframeHeight: string }
+> = {
+  a4: { size: "210mm 297mm", widthMm: 210, heightMm: 297, iframeWidth: "794px", iframeHeight: "1123px" },
+  f4: { size: "210mm 330mm", widthMm: 210, heightMm: 330, iframeWidth: "794px", iframeHeight: "1247px" },
+  legal: { size: "215.9mm 355.6mm", widthMm: 215.9, heightMm: 355.6, iframeWidth: "816px", iframeHeight: "1344px" },
+  letter: { size: "215.9mm 279.4mm", widthMm: 215.9, heightMm: 279.4, iframeWidth: "816px", iframeHeight: "1056px" },
+};
+
+export function getPaperPageCss(paperFormat: "a4" | "f4" | "legal" | "letter"): string {
+  const paper = PAPER_DIMENSIONS[paperFormat] || PAPER_DIMENSIONS.a4;
+  return `
+    @page {
+      size: ${paper.size};
+      margin: 20mm 18mm 20mm 20mm;
+    }
+  `;
+}
+
 export async function printReportDocument(
   report: Report,
   paperFormat: "a4" | "f4" | "legal" | "letter",
@@ -528,14 +578,15 @@ export async function printReportDocument(
 ) {
   const originalTitle = document.title;
   const printReadyReport = await materializeReportImages(report, pendingPhotos);
-  const container = createPdfContainer(printReadyReport);
   await preloadReportImages(printReadyReport);
+
+  const paperConfig = PAPER_DIMENSIONS[paperFormat] || PAPER_DIMENSIONS.a4;
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.left = "-10000px";
   iframe.style.top = "0";
-  iframe.style.width = "794px";
-  iframe.style.height = "1123px";
+  iframe.style.width = paperConfig.iframeWidth;
+  iframe.style.height = paperConfig.iframeHeight;
   iframe.style.opacity = "0";
   iframe.style.pointerEvents = "none";
   iframe.style.border = "0";
@@ -553,10 +604,8 @@ export async function printReportDocument(
   frameDoc.open();
   frameDoc.write(`<!DOCTYPE html><html><head><title>${buildDocumentTitle(report)}</title>
   <style>
-    @page {
-      size: ${paperFormat === "f4" ? "210mm 330mm" : paperFormat} portrait !important;
-      margin: 20mm 18mm 20mm 20mm !important;
-    }
+    ${pdfStyles}
+    ${getPaperPageCss(paperFormat)}
     body {
       margin: 0 !important;
       -webkit-print-color-adjust: exact !important;
@@ -569,7 +618,7 @@ export async function printReportDocument(
     }
   </style>
   </head><body>`);
-  frameDoc.write(container.innerHTML);
+  frameDoc.write(renderReportMarkup(printReadyReport));
   frameDoc.write("</body></html>");
   frameDoc.close();
 
@@ -596,6 +645,7 @@ export async function printMultipleReportsDocument(
   reports: Report[],
   paperFormat: "a4" | "f4" | "legal" | "letter",
   onProgress?: (step: string, pct: number) => void,
+  presentationMode: DocumentPresentationMode = "daily",
 ) {
   if (!reports || reports.length === 0) return;
 
@@ -614,22 +664,51 @@ export async function printMultipleReportsDocument(
 
   onProgress?.("Menyusun lembar halaman cetak...", 80);
 
-  const combinedMarkup = printReadyReports
-    .map(
-      (report) => `
-      <div class="print-report-page-block" style="page-break-after: always; break-after: page;">
-        ${renderReportMarkup(report)}
+  let combinedMarkup = "";
+  if (presentationMode === "weekly") {
+    const weekGroups = groupReportsByCalendarWeek(printReadyReports);
+    combinedMarkup = weekGroups
+      .map(
+        (group) => `
+        <div class="print-report-page-block" style="page-break-after: always; break-after: page;">
+          ${renderConsolidatedReportMarkup(group.reports, group.periodLabel)}
+        </div>
+      `,
+      )
+      .join("\n");
+  } else if (presentationMode === "custom") {
+    const sorted = [...printReadyReports].sort((a, b) =>
+      (a.reportDate || "").localeCompare(b.reportDate || ""),
+    );
+    const earliest = sorted[0]?.reportDate ? formatWitaDate(sorted[0].reportDate) : "";
+    const latest = sorted[sorted.length - 1]?.reportDate
+      ? formatWitaDate(sorted[sorted.length - 1].reportDate)
+      : earliest;
+    const periodLabel = earliest === latest ? earliest : `${earliest} s/d ${latest}`;
+    combinedMarkup = `
+      <div class="print-report-page-block">
+        ${renderConsolidatedReportMarkup(sorted, periodLabel)}
       </div>
-    `,
-    )
-    .join("\n");
+    `;
+  } else {
+    combinedMarkup = printReadyReports
+      .map(
+        (report) => `
+        <div class="print-report-page-block" style="page-break-after: always; break-after: page;">
+          ${renderReportMarkup(report)}
+        </div>
+      `,
+      )
+      .join("\n");
+  }
 
+  const paperConfig = PAPER_DIMENSIONS[paperFormat] || PAPER_DIMENSIONS.a4;
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.left = "-10000px";
   iframe.style.top = "0";
-  iframe.style.width = "794px";
-  iframe.style.height = "1123px";
+  iframe.style.width = paperConfig.iframeWidth;
+  iframe.style.height = paperConfig.iframeHeight;
   iframe.style.opacity = "0";
   iframe.style.pointerEvents = "none";
   iframe.style.border = "0";
@@ -652,10 +731,7 @@ export async function printMultipleReportsDocument(
   frameDoc.write(`<!DOCTYPE html><html><head><title>${docTitle}</title>
   <style>
     ${pdfStyles}
-    @page {
-      size: ${paperFormat === "f4" ? "210mm 330mm" : paperFormat} portrait !important;
-      margin: 20mm 18mm 20mm 20mm !important;
-    }
+    ${getPaperPageCss(paperFormat)}
     body {
       margin: 0 !important;
       -webkit-print-color-adjust: exact !important;

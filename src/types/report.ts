@@ -62,3 +62,5 @@ export type ReporterDirectoryProfile = {
   isActive: boolean;
   password?: string;
 };
+
+export type DocumentPresentationMode = "daily" | "weekly" | "custom";
