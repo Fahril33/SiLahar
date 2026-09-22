@@ -361,12 +361,12 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
 
   // ── Stats computation ──
   const stats = useMemo(() => {
-    // 1. Filter reports by dateRange & effectiveStartDate
+    // 1. Filter reports by dateRange (do not drop valid historical reports when inspecting past periods)
     let filteredReports = reports.filter(
       (r) =>
         r.reportDate >= dateRange.start &&
         r.reportDate <= dateRange.end &&
-        r.reportDate >= effectiveStartDate,
+        (!effectiveStartDate || r.reportDate >= effectiveStartDate || dateRange.end < effectiveStartDate),
     );
 
     // If bulanan or tahunan, filter out weekends and holidays
@@ -499,11 +499,11 @@ export function RekapView({ reports, reporterNames, systemStartDate }: RekapView
           );
         const memberTeam = memberReportWithTeam?.tim?.trim().toUpperCase() || "-";
 
-        // Only count unique working days submitted starting from effective operational start date
+        // Count unique working days submitted starting from effective operational start date (or in selected past range)
         const uniqueWorkingDays = new Set(
           memberReports
             .map((r) => r.reportDate)
-            .filter((d) => isWorkDay(d) && (!effectiveStartDate || d >= effectiveStartDate)),
+            .filter((d) => isWorkDay(d) && (!effectiveStartDate || d >= effectiveStartDate || dateRange.end < effectiveStartDate)),
         ).size;
         const memberActivities = memberReports.reduce(
           (acc, r) => acc + (r.activities?.length || 0),

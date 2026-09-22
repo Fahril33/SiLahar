@@ -126,9 +126,7 @@ export async function fetchReports() {
   }
 
   const templateFallback = fallbackReportTemplateConfig.notes;
-  const { data, error } = await supabase
-    .from("daily_reports")
-    .select(`
+  const selectQuery = `
       id,
       template_id,
       reporter_name,
@@ -178,15 +176,38 @@ export async function fetchReports() {
           created_at
         )
       )
-    `)
-    .order("report_date", { ascending: false })
-    .order("updated_at", { ascending: false });
+    `;
 
-  if (error) {
-    throw error;
+  // Fetch in batches of 1000 to prevent PostgREST default row-count cut-offs
+  // and guarantee users can always read all historical reports regardless of size.
+  const allRows: any[] = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("daily_reports")
+      .select(selectQuery)
+      .order("report_date", { ascending: false })
+      .order("updated_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    allRows.push(...data);
+    if (data.length < pageSize) {
+      break;
+    }
+    from += pageSize;
   }
 
-  return (data ?? []).map((row) =>
+  return allRows.map((row) =>
     mapReportRow({
       ...row,
       report_template_notes:

@@ -420,6 +420,25 @@ export function HistoryView(props: {
   // All reports list passed from props
   const allReports = props.reports || [];
 
+  // Dynamic available years based on actual reports and current year
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<number>();
+    const currentYear = new Date().getFullYear();
+    yearsSet.add(currentYear);
+    yearsSet.add(currentYear - 1);
+    yearsSet.add(currentYear + 1);
+
+    for (const r of allReports) {
+      if (r && r.reportDate) {
+        const y = parseInt(r.reportDate.slice(0, 4), 10);
+        if (!isNaN(y) && y >= 2020 && y <= 2050) {
+          yearsSet.add(y);
+        }
+      }
+    }
+    return Array.from(yearsSet).sort((a, b) => b - a);
+  }, [allReports]);
+
   // Tanggal acuan mulai operasional: murni dari konfigurasi database (systemStartDate)
   const effectiveStartDate = useMemo(
     () => resolveEffectiveSystemStartDate(systemStartDate),
@@ -455,8 +474,6 @@ export function HistoryView(props: {
           if (!matchName) return false;
         }
 
-        if (effectiveStartDate && r.reportDate < effectiveStartDate) return false;
-
         const [rY, rM] = (r.reportDate || "").split("-").map(Number);
         return rM - 1 === chronoMonth && rY === chronoYear;
       })
@@ -474,7 +491,6 @@ export function HistoryView(props: {
     statusSearchQuery,
     chronoMonth,
     chronoYear,
-    effectiveStartDate,
   ]);
 
 
@@ -610,15 +626,28 @@ export function HistoryView(props: {
     // Clamp effectiveEnd to today if viewing current month or future
     const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
 
+    // Submitted working days in the whole month (regardless of start date, so past reports are counted)
+    const submittedDaysSet = new Set(
+      chronoReports
+        .map((r) => r.reportDate)
+        .filter(
+          (d) =>
+            d >= rawStart &&
+            d <= endOfMonth &&
+            isWorkDay(d),
+        ),
+    );
+    const submittedCount = submittedDaysSet.size;
+
     if (effectiveStart > endOfMonth || totalMonthTarget === 0) {
       return {
-        percentage: 0,
-        submitted: 0,
+        percentage: 100,
+        submitted: submittedCount,
         missed: 0,
         upcoming: 0,
         totalMonthTarget: 0,
         target: 0,
-        pctSubmitted: 0,
+        pctSubmitted: 100,
         pctMissed: 0,
         pctUpcoming: 0,
       };
@@ -634,19 +663,6 @@ export function HistoryView(props: {
       : { totalWorkingDays: 0 };
 
     const elapsedTargetDays = elapsedStats.totalWorkingDays;
-
-    // Submitted working days in the whole month
-    const submittedDaysSet = new Set(
-      chronoReports
-        .map((r) => r.reportDate)
-        .filter(
-          (d) =>
-            d >= effectiveStart &&
-            d <= endOfMonth &&
-            isWorkDay(d),
-        ),
-    );
-    const submittedCount = submittedDaysSet.size;
 
     // Submitted days up to today
     const submittedSoFarCount = new Set(
@@ -771,14 +787,13 @@ export function HistoryView(props: {
     > = [];
 
     sortedDates.forEach((date) => {
-      if (effectiveStartDate && date < effectiveStartDate) return;
-
       const reportsForDate = chronoReports.filter((r) => r.reportDate === date);
       if (reportsForDate.length > 0) {
         reportsForDate.forEach((report) => {
           items.push({ type: "report", date, report });
         });
       } else {
+        // Hanya tampilkan status 'missing' untuk hari kerja setelah tanggal acuan operasional
         if (!effectiveStartDate || date >= effectiveStartDate) {
           items.push({ type: "missing", date, report: null });
         }
@@ -1010,7 +1025,7 @@ export function HistoryView(props: {
                       onChange={(e) => setChronoYear(Number(e.target.value))}
                       className="field-input py-1 px-2 text-xs rounded-lg min-w-[70px] cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)]"
                     >
-                      {[2026, 2027, 2028].map((y) => (
+                      {availableYears.map((y) => (
                         <option key={y} value={y}>
                           {y}
                         </option>
@@ -1348,7 +1363,7 @@ export function HistoryView(props: {
                       onChange={(e) => setChronoYear(Number(e.target.value))}
                       className="w-full field-input py-2 px-3 text-xs rounded-xl cursor-pointer bg-[var(--surface-panel-strong)] text-[var(--text-primary)] border border-[var(--border-soft)] focus:outline-none focus:border-purple-500"
                     >
-                      {[2026, 2027, 2028].map((y) => (
+                      {availableYears.map((y) => (
                         <option key={y} value={y}>
                           {y}
                         </option>
