@@ -690,8 +690,10 @@ export function useReportDashboard() {
       const dbReportIds = new Set(dbReportsWithSource.map(r => r.id));
 
       const existingCached = loadCachedReports();
+      // Only keep reports that were genuinely local (never synced to DB)
+      // Do NOT re-add former DB reports that were deleted server-side
       const localOnlyReports: Report[] = existingCached
-        .filter(r => !dbReportIds.has(r.id))
+        .filter(r => r.source === "local" && !dbReportIds.has(r.id))
         .map(r => ({ ...r, source: "local" as const }));
 
       const mergedReports = [...dbReportsWithSource, ...localOnlyReports];
@@ -1321,18 +1323,30 @@ export function useReportDashboard() {
       localDraft.sourceReportId,
     );
     if (sourceReport && conflictingDatabaseReport) {
-      await updateLocalReportDraftStatus(draftId, {
-        uploadStatus: "failed",
-        uploadError:
-          "Tanggal baru bentrok dengan laporan lain yang sudah ada di database.",
-        lastUploadFinishedAt: new Date().toISOString(),
-      });
-      await refreshLocalDrafts();
-      await showError(
-        "Tanggal bentrok",
-        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Edit laporan target itu langsung atau pilih tanggal lain.`,
+      const overwrite = await askConfirmation(
+        "Timpa laporan yang sudah ada?",
+        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Data lama akan dihapus dan diganti dengan data baru.`,
+        "Timpa & Simpan",
       );
-      return;
+      if (!overwrite) {
+        await showInfo("Upload dibatalkan", "Draft lokal tetap aman.");
+        return;
+      }
+      try {
+        await deleteReportFromDatabase(conflictingDatabaseReport.report);
+        const currentCached = loadCachedReports();
+        saveCachedReports(currentCached.filter(r => r.id !== conflictingDatabaseReport.report.id));
+      } catch (err) {
+        logSafeError(err, "Dashboard/OverwriteConflictDraft");
+        await updateLocalReportDraftStatus(draftId, {
+          uploadStatus: "failed",
+          uploadError: "Gagal menghapus laporan lama untuk menimpa.",
+          lastUploadFinishedAt: new Date().toISOString(),
+        });
+        await refreshLocalDrafts();
+        await showError("Gagal menghapus laporan lama", "Tidak bisa menimpa. Coba lagi nanti.");
+        return;
+      }
     }
 
     const confirmation = await askDraftUploadConfirmation({
@@ -1410,9 +1424,10 @@ export function useReportDashboard() {
         localDraft.sourceReportId,
       );
       if (sourceReport && conflictingDatabaseReport) {
-        throw new Error(
-          `Tanggal baru bentrok dengan laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}.`,
-        );
+        // Auto-overwrite: user already confirmed during the interactive upload step
+        await deleteReportFromDatabase(conflictingDatabaseReport.report);
+        const currentCached = loadCachedReports();
+        saveCachedReports(currentCached.filter(r => r.id !== conflictingDatabaseReport.report.id));
       }
 
       const savedReport = await saveReportToDatabase(
@@ -1907,11 +1922,22 @@ export function useReportDashboard() {
       loadedSearchReportId,
     );
     if (sourceReport && conflictingDatabaseReport) {
-      await showError(
-        "Tanggal bentrok",
-        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Ubah tanggal lain atau edit laporan target itu langsung.`,
+      const overwrite = await askConfirmation(
+        "Timpa laporan yang sudah ada?",
+        `Sudah ada laporan ${conflictingDatabaseReport.report.nama} pada ${conflictingDatabaseReport.report.tanggal}. Data lama akan dihapus dan diganti dengan data baru.`,
+        "Timpa & Simpan",
       );
-      return;
+      if (!overwrite) return;
+      // Delete the conflicting report before saving
+      try {
+        await deleteReportFromDatabase(conflictingDatabaseReport.report);
+        const currentCached = loadCachedReports();
+        saveCachedReports(currentCached.filter(r => r.id !== conflictingDatabaseReport.report.id));
+      } catch (err) {
+        logSafeError(err, "Dashboard/OverwriteConflict");
+        await showError("Gagal menghapus laporan lama", "Tidak bisa menimpa. Coba lagi nanti.");
+        return;
+      }
     }
 
     if (await askConfirmation(duplicateReport ? "Perbarui laporan?" : "Simpan laporan?", duplicateReport ? "Laporan sudah ada dan akan diperbarui." : "Laporan akan disimpan ke database.", duplicateReport ? "Perbarui" : "Simpan")) {
