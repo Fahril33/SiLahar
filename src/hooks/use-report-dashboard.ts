@@ -12,6 +12,7 @@ import {
 import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
+import { getNextWorkDay } from "../lib/holidays";
 import { supabase } from "../lib/supabase";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
@@ -1492,7 +1493,23 @@ export function useReportDashboard() {
     setShowDraftsModal(true);
   }
 
-  function resetDraftState() {
+  function scrollFormToTop() {
+    if (typeof window === "undefined") return;
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      document.documentElement?.scrollTo?.({ top: 0, left: 0, behavior: "smooth" });
+      document.body?.scrollTo?.({ top: 0, left: 0, behavior: "smooth" });
+      const entryContainer = document.getElementById("entry-form-scroll-container");
+      if (entryContainer) {
+        entryContainer.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      }
+      document.querySelectorAll(".entry-scroll-area, .overflow-y-auto").forEach((el) => {
+        el.scrollTo?.({ top: 0, left: 0, behavior: "smooth" });
+      });
+    } catch {}
+  }
+
+  function resetDraftState(customDate?: string) {
     revokePreviewMap(pendingPreviews);
     setPendingPhotos({});
     setPendingPreviews({});
@@ -1501,7 +1518,7 @@ export function useReportDashboard() {
     setLoadedSearchSnapshot(null);
     setLoadedLocalDraftId(null);
     clearDraft();
-    const emptyDraft = createEmptyDraft(activeReportTemplateConfig);
+    const emptyDraft = createEmptyDraft(activeReportTemplateConfig, customDate);
     if (userSession) {
       emptyDraft.nama = userSession.fullName;
     }
@@ -1963,6 +1980,7 @@ export function useReportDashboard() {
         });
       }, SLOW_SAVE_PROMPT_DELAY_MS);
       try {
+        const submittedDate = draft.reportDate;
         await saveReportToDatabase(
           draft,
           pendingPhotos,
@@ -1973,8 +1991,25 @@ export function useReportDashboard() {
         toast.close();
         await loadDashboardData();
         setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
-        resetDraftState();
-        await showSuccess("Laporan tersimpan", isWitaFriday(draft.reportDate) ? "terimakasih atas kerja keras anda. sampai jumpa hari senin." : "terimakasih atas kerja keras anda. sampai jumpa besok");
+
+        const canPickAnyDate =
+          OFFLINE_EMERGENCY_MODE.forceAllowAnyReportDate ||
+          Boolean(adminSession) ||
+          (rulesLoaded && reportRules.allowAnyReportDate);
+
+        const nextDate = canPickAnyDate
+          ? getNextWorkDay(submittedDate)
+          : getWitaToday();
+
+        resetDraftState(nextDate);
+        scrollFormToTop();
+
+        await showSuccess(
+          "Laporan tersimpan",
+          isWitaFriday(submittedDate)
+            ? "terimakasih atas kerja keras anda. sampai jumpa hari senin."
+            : "terimakasih atas kerja keras anda. sampai jumpa besok",
+        );
       } catch (err) {
         logSafeError(err, "Dashboard/SaveReport");
         toast.close();

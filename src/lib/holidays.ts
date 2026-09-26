@@ -270,3 +270,36 @@ export function getEffectiveWorkingDaysInRange(
     holidayDates,
   };
 }
+
+/**
+ * Mendapatkan tanggal kerja berikutnya (+1 hari kerja, otomatis melewati akhir pekan & hari libur nasional).
+ */
+export function getNextWorkDay(currentDateStr: string): string {
+  if (!currentDateStr || currentDateStr.length < 10) {
+    return "";
+  }
+  const cleanDate = currentDateStr.slice(0, 10);
+  const parts = cleanDate.split("-").map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return currentDateStr;
+
+  const current = new Date(parts[0], parts[1] - 1, parts[2]);
+  if (isNaN(current.getTime())) return currentDateStr;
+
+  // Cari tanggal kerja selanjutnya (maksimal coba hingga 45 hari ke depan)
+  for (let i = 0; i < 45; i++) {
+    current.setDate(current.getDate() + 1);
+    const yyyy = current.getFullYear();
+    const mm = String(current.getMonth() + 1).padStart(2, "0");
+    const dd = String(current.getDate()).padStart(2, "0");
+    const candidateDate = `${yyyy}-${mm}-${dd}`;
+
+    if (isWorkDay(candidateDate)) {
+      return candidateDate;
+    }
+  }
+
+  const yyyy = current.getFullYear();
+  const mm = String(current.getMonth() + 1).padStart(2, "0");
+  const dd = String(current.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}

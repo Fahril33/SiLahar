@@ -75,7 +75,10 @@ export function normalizeDraft(draft: DraftReport): DraftReport {
   };
 }
 
-export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
+export function createEmptyDraft(
+  templateConfig?: ReportTemplateConfig | null,
+  initialReportDate?: string,
+) {
   const defaultTim = "PUSDALOPS";
   const coordinator = getTemplateApproverByRole(
     templateConfig,
@@ -85,12 +88,13 @@ export function createEmptyDraft(templateConfig?: ReportTemplateConfig | null) {
     templateConfig,
     "division_head",
   );
+  const targetDate = initialReportDate || getWitaToday();
 
   return normalizeDraft({
     ...defaultDraft,
     templateId: templateConfig?.id ?? defaultDraft.templateId,
-    reportDate: getWitaToday(),
-    tanggal: getWitaDisplayDateUppercase(getWitaToday()),
+    reportDate: targetDate,
+    tanggal: getWitaDisplayDateUppercase(targetDate),
     notes: templateConfig?.notes ?? defaultDraft.notes,
     approverCoordinatorTemplateId:
       coordinator?.id ?? defaultDraft.approverCoordinatorTemplateId,
