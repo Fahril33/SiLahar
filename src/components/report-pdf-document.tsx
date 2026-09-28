@@ -1,9 +1,28 @@
 import type { Report } from "../types/report";
 import { supabase } from "../lib/supabase";
 import { getCachedSignatureDataUrl } from "../lib/storage";
+import {
+  JAN_MAR_PUSDALOPS_COORDINATOR,
+  isJanToMarPeriod,
+  isPusdalopsTeam,
+} from "../lib/report-template-defaults";
 
 export function ReportPdfDocument(props: { report: Report; headerLines?: string[] }) {
   const { report } = props;
+  const isPusdalops = isPusdalopsTeam(report.tim);
+  const isJanMar = isJanToMarPeriod(report.reportDate || report.tanggal);
+  const useJanMarPusdalops = isPusdalops && isJanMar;
+
+  const coordinatorName = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+    : (report.approverCoordinator || "-");
+  const coordinatorNip = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+    : (report.approverCoordinatorNip || "-");
+  const coordinatorLabel = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+    : (report.approverCoordinatorLabel || "KOORDINATOR TIM");
+
   const coordinatorSignature =
     getCachedSignatureDataUrl(report.approverCoordinatorSignatureUrl) ||
     report.approverCoordinatorSignatureUrl;
@@ -127,20 +146,20 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
         <p className="approval-title">PERSETUJUAN</p>
         <div className="approval-grid">
           <section className="approval-column">
-            <p className="approval-role">{report.approverCoordinatorLabel || "KOORDINATOR TIM"}</p>
+            <p className="approval-role">{coordinatorLabel}</p>
             <div className="signature-space">
               {coordinatorSignature ? (
                 <img
                   src={coordinatorSignature}
-                  alt={`TTD ${report.approverCoordinator}`}
+                  alt={`TTD ${coordinatorName}`}
                   className="approval-signature-img"
                   loading="eager"
                 />
               ) : null}
             </div>
-            <p className="approval-name">{report.approverCoordinator || "-"}</p>
+            <p className="approval-name">{coordinatorName}</p>
             <p className="approval-meta">
-              NIP: {report.approverCoordinatorNip || "-"}
+              NIP: {coordinatorNip}
             </p>
           </section>
 

@@ -808,6 +808,7 @@ export function useReportDashboard() {
         const currentCoord = getTemplateApproverByRole(
           dbATC,
           `coordinator_team_${timCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
+          base.reportDate,
         );
         const currentDivHead = getTemplateApproverByRole(dbATC, "division_head");
 
@@ -945,17 +946,19 @@ export function useReportDashboard() {
     
     setDraft(c => {
       const updated = { ...c, [key]: value };
-      if (key === "tim") {
-        const teamCode = (value as string).toLowerCase();
+      if (key === "tim" || key === "reportDate") {
+        const teamCode = (updated.tim || "pusdalops").toLowerCase();
         const coordinator = getTemplateApproverByRole(
           activeReportTemplateConfig,
-          `coordinator_team_${teamCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops"
+          `coordinator_team_${teamCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
+          updated.reportDate,
         );
         if (coordinator) {
           updated.approverCoordinatorTemplateId = coordinator.id;
           updated.approverCoordinator = coordinator.officialName;
           updated.approverCoordinatorNip = coordinator.officialNip;
           updated.approverCoordinatorSignatureUrl = coordinator.signatureUrl || "";
+          updated.approverCoordinatorLabel = coordinator.scopeLabel || (updated.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS");
         }
       }
       return normalizeDraft(updated);

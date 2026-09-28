@@ -2,6 +2,11 @@ import type { Report } from "../types/report";
 import { supabase } from "../lib/supabase";
 import { getCachedSignatureDataUrl } from "../lib/storage";
 import { groupReportsToConsolidatedDateEntries } from "../lib/calendar-week-utils";
+import {
+  JAN_MAR_PUSDALOPS_COORDINATOR,
+  isJanToMarPeriod,
+  isPusdalopsTeam,
+} from "../lib/report-template-defaults";
 
 export interface ReportConsolidatedPdfDocumentProps {
   titlePeriod?: string;
@@ -25,6 +30,7 @@ export function ReportConsolidatedPdfDocument(
 ) {
   const {
     reporterName,
+    teamName,
     headerLines,
     reports,
     approverCoordinator,
@@ -36,6 +42,20 @@ export function ReportConsolidatedPdfDocument(
     approverDivisionHeadNip,
     approverDivisionHeadSignatureUrl,
   } = props;
+
+  const isPusdalops = isPusdalopsTeam(teamName || (reports[0]?.tim));
+  const isJanMar = reports.length > 0 && reports.every((r) => isJanToMarPeriod(r.reportDate || r.tanggal));
+  const useJanMarPusdalops = isPusdalops && isJanMar;
+
+  const effectiveCoordinatorName = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+    : (approverCoordinator || "-");
+  const effectiveCoordinatorNip = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+    : (approverCoordinatorNip || "-");
+  const effectiveCoordinatorLabel = useJanMarPusdalops
+    ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+    : (approverCoordinatorLabel || "KOORDINATOR TIM");
 
   const coordinatorSignature =
     getCachedSignatureDataUrl(approverCoordinatorSignatureUrl) ||
@@ -202,21 +222,21 @@ export function ReportConsolidatedPdfDocument(
         <div className="approval-grid">
           <section className="approval-column">
             <p className="approval-role">
-              {approverCoordinatorLabel || "KOORDINATOR TIM"}
+              {effectiveCoordinatorLabel}
             </p>
             <div className="signature-space">
               {coordinatorSignature ? (
                 <img
                   src={coordinatorSignature}
-                  alt={`TTD ${approverCoordinator || "Koordinator"}`}
+                  alt={`TTD ${effectiveCoordinatorName}`}
                   className="approval-signature-img"
                   loading="eager"
                 />
               ) : null}
             </div>
-            <p className="approval-name">{approverCoordinator || "-"}</p>
+            <p className="approval-name">{effectiveCoordinatorName}</p>
             <p className="approval-meta">
-              NIP: {approverCoordinatorNip || "-"}
+              NIP: {effectiveCoordinatorNip}
             </p>
           </section>
 

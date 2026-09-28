@@ -76,10 +76,55 @@ export const fallbackReportTemplateConfig: ReportTemplateConfig = {
   ],
 };
 
+export const JAN_MAR_PUSDALOPS_COORDINATOR = {
+  id: "jan-mar-coordinator-pusdalops",
+  scopeLabel: "KOORDINATOR PUSDALOPS",
+  officialName: "FERA FAKTA EFA, SKM.,MM",
+  officialNip: "19870225 2010001 2 003",
+};
+
+export function isJanToMarPeriod(dateStr?: string | null): boolean {
+  if (!dateStr || typeof dateStr !== "string") return false;
+  const clean = dateStr.trim().slice(0, 10);
+  const match = clean.match(/^\d{4}-(\d{2})-\d{2}$/);
+  if (match) {
+    const month = parseInt(match[1], 10);
+    return month >= 1 && month <= 3;
+  }
+  const upper = dateStr.toUpperCase();
+  return (
+    upper.includes("JANUARI") ||
+    upper.includes("FEBRUARI") ||
+    upper.includes("MARET")
+  );
+}
+
+export function isPusdalopsTeam(tim?: string | null): boolean {
+  if (!tim) return true;
+  const normalized = tim.trim().toUpperCase();
+  return normalized.includes("PUSDALOPS");
+}
+
 export function getTemplateApproverByRole(
   template: ReportTemplateConfig | null | undefined,
   role: ReportTemplateApproverRole,
+  reportDate?: string | null,
 ) {
+  if (role === "coordinator_team_pusdalops" && isJanToMarPeriod(reportDate)) {
+    return {
+      id: JAN_MAR_PUSDALOPS_COORDINATOR.id,
+      templateId: template?.id ?? FALLBACK_TEMPLATE_ID,
+      approverRole: "coordinator_team_pusdalops" as ReportTemplateApproverRole,
+      scopeLabel: JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel,
+      officialName: JAN_MAR_PUSDALOPS_COORDINATOR.officialName,
+      officialTitle: "",
+      officialNip: JAN_MAR_PUSDALOPS_COORDINATOR.officialNip,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   const source = template ?? fallbackReportTemplateConfig;
   return (
     source.approvers.find(
@@ -87,3 +132,4 @@ export function getTemplateApproverByRole(
     ) ?? null
   );
 }
+

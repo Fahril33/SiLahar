@@ -1,5 +1,10 @@
 import type { Report, ReportActivity, ReportActivityPhoto } from "../types/report";
 import { supabase } from "./supabase";
+import {
+  JAN_MAR_PUSDALOPS_COORDINATOR,
+  isJanToMarPeriod,
+  isPusdalopsTeam,
+} from "./report-template-defaults";
 
 type PhotoRow = {
   id: string;
@@ -77,6 +82,10 @@ function mapActivity(row: ActivityRow): ReportActivity {
 }
 
 export function mapReportRow(row: ReportRow): Report {
+  const isPusdalops = isPusdalopsTeam(row.tim);
+  const isJanMar = isJanToMarPeriod(row.report_date);
+  const useJanMarPusdalops = isPusdalops && isJanMar;
+
   return {
     id: row.id,
     templateId: row.template_id,
@@ -85,12 +94,20 @@ export function mapReportRow(row: ReportRow): Report {
     tanggal: row.display_date_text.toUpperCase(),
     reportDate: row.report_date,
     activities: (row.daily_report_activities ?? []).sort((a, b) => a.activity_order - b.activity_order).map(mapActivity),
-    approverCoordinatorTemplateId: row.template_approver_coordinator_id,
-    approverCoordinator: row.approver_coordinator_name ?? "",
-    approverCoordinatorNip: row.approver_coordinator_nip ?? "",
-    approverCoordinatorLabel: (Array.isArray(row.approver_coordinator_role)
-      ? row.approver_coordinator_role[0]?.scope_label
-      : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS"),
+    approverCoordinatorTemplateId: useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.id
+      : row.template_approver_coordinator_id,
+    approverCoordinator: useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+      : (row.approver_coordinator_name ?? ""),
+    approverCoordinatorNip: useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+      : (row.approver_coordinator_nip ?? ""),
+    approverCoordinatorLabel: useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+      : ((Array.isArray(row.approver_coordinator_role)
+          ? row.approver_coordinator_role[0]?.scope_label
+          : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS")),
     approverCoordinatorSignatureUrl: (Array.isArray(row.approver_coordinator_role)
       ? row.approver_coordinator_role[0]?.signature_url
       : row.approver_coordinator_role?.signature_url) ?? row.approver_coordinator_signature_url ?? "",

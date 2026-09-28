@@ -17,6 +17,11 @@ import {
 import { supabase } from "./supabase";
 import { groupReportsByCalendarWeek } from "./calendar-week-utils";
 import { formatWitaDate } from "./time";
+import {
+  JAN_MAR_PUSDALOPS_COORDINATOR,
+  isJanToMarPeriod,
+  isPusdalopsTeam,
+} from "./report-template-defaults";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
 const PDF_IMAGE_MAX_EDGE_PX = 1080;
@@ -366,6 +371,13 @@ async function materializeReportImages(
     if (!headerLines || headerLines.length === 0) {
       headerLines = getHeaderLinesForTeam(report.tim, []);
     }
+  }
+
+  // Khusus periode Januari - Maret: koordinator Pusdalops menggunakan FERA FAKTA EFA, SKM.,MM
+  if (isPusdalopsTeam(report.tim) && isJanToMarPeriod(report.reportDate || report.tanggal)) {
+    coordinatorName = JAN_MAR_PUSDALOPS_COORDINATOR.officialName;
+    coordinatorNip = JAN_MAR_PUSDALOPS_COORDINATOR.officialNip;
+    coordinatorLabel = JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel;
   }
 
   // Resolve active template approver config for division head if missing
