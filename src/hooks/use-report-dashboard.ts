@@ -5,6 +5,7 @@ import {
   askDraftUploadConfirmation,
   askSlowSaveFallback,
   openProgressToast,
+  resolveSaveErrorContext,
   showError,
   showInfo,
   showSuccess,
@@ -823,7 +824,13 @@ export function useReportDashboard() {
     } catch (err) {
       logSafeError(err, "Dashboard/LoadData");
       if (reportsRef.current.length === 0 && reporterNamesRef.current.length === 0) {
-        await showError("Database belum tersedia", "Data database belum bisa dimuat.");
+        const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
+        await showError(
+          isOffline ? "Koneksi Terputus" : "Gagal Memuat Data Server",
+          isOffline
+            ? "Perangkat Anda sedang offline. Sistem menggunakan data lokal."
+            : "Tidak dapat menyinkronkan data dari server database saat ini. Menampilkan data lokal.",
+        );
       }
     } finally { setLoading(false); }
   }
@@ -2016,16 +2023,22 @@ export function useReportDashboard() {
       } catch (err) {
         logSafeError(err, "Dashboard/SaveReport");
         toast.close();
-        const msg = (typeof err === "object" && err !== null && "message" in err && typeof err.message === "string") ? err.message : "Gagal menyimpan laporan.";
+        const errContext = resolveSaveErrorContext(err);
         const saveLocal = await askConfirmation(
-          "Database Sedang Offline",
-          `${msg}\n\nKoneksi database sedang terputus. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
-          "Simpan ke Draft Lokal"
+          errContext.title,
+          errContext.text,
+          errContext.confirmText,
         );
         if (saveLocal) {
           await persistCurrentAsLocalDraft({ showToast: true });
         } else {
-          await showError("Simpan gagal", msg);
+          const rawMsg =
+            err instanceof Error
+              ? err.message
+              : typeof err === "object" && err !== null && "message" in err && typeof err.message === "string"
+              ? err.message
+              : "Gagal menyimpan laporan.";
+          await showError("Simpan belum berhasil", rawMsg);
         }
       } finally {
         window.clearTimeout(slowSaveTimer);

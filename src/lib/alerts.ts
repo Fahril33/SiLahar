@@ -200,6 +200,62 @@ export async function askDraftUploadConfirmation(options: {
   };
 }
 
+export function resolveSaveErrorContext(err: unknown): {
+  title: string;
+  text: string;
+  confirmText: string;
+  isOffline: boolean;
+} {
+  const isBrowserOffline = typeof navigator !== "undefined" && !navigator.onLine;
+  const rawMsg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && "message" in err && typeof err.message === "string"
+      ? err.message
+      : typeof err === "string"
+      ? err
+      : "Terjadi kesalahan saat memproses data.";
+
+  if (isBrowserOffline) {
+    return {
+      title: "Koneksi Internet Terputus",
+      text: "Perangkat Anda sedang tidak terhubung ke jaringan internet.\n\nIngin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?",
+      confirmText: "Simpan ke Draft Lokal",
+      isOffline: true,
+    };
+  }
+
+  const lower = rawMsg.toLowerCase();
+  const isNetworkError =
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("network request failed") ||
+    lower.includes("net::err") ||
+    lower.includes("timeout") ||
+    lower.includes("abort") ||
+    lower.includes("gateway") ||
+    lower.includes("service unavailable") ||
+    lower.includes("502") ||
+    lower.includes("503") ||
+    lower.includes("504");
+
+  if (isNetworkError) {
+    return {
+      title: "Koneksi Server Terkendala",
+      text: `${rawMsg}\n\nTidak dapat menjangkau server saat ini. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
+      confirmText: "Simpan ke Draft Lokal",
+      isOffline: false,
+    };
+  }
+
+  return {
+    title: "Gagal Menyimpan ke Database",
+    text: `${rawMsg}\n\nTerjadi kendala saat menyimpan laporan. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
+    confirmText: "Simpan ke Draft Lokal",
+    isOffline: false,
+  };
+}
+
 export function showSuccess(title: string, text: string) {
   playSound("success");
   return fireToast("success", title, text);

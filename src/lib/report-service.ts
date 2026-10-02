@@ -1,11 +1,5 @@
 import { type ReportRules, initialReportRules } from "../types/report-rules";
-import {
-  fallbackReportTemplateConfig,
-  FALLBACK_TEMPLATE_ID,
-  FALLBACK_COORDINATOR_TRC_ID,
-  FALLBACK_COORDINATOR_PUSDALOPS_ID,
-  FALLBACK_DIVISION_HEAD_ID,
-} from "./report-template-defaults";
+import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
 import { supabase } from "./supabase";
@@ -825,16 +819,14 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
 
   const reporterDirectoryId = await upsertReporterDirectory(draft.nama);
 
-  // Helper: return the ID only if it's a real DB UUID (not a client-side fallback)
-  const isFallbackId = (id: string | null | undefined): boolean =>
-    !id ||
-    id === FALLBACK_TEMPLATE_ID ||
-    id === FALLBACK_COORDINATOR_TRC_ID ||
-    id === FALLBACK_COORDINATOR_PUSDALOPS_ID ||
-    id === FALLBACK_DIVISION_HEAD_ID;
+  const isValidUuid = (id: string | null | undefined): id is string =>
+    Boolean(
+      id &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+    );
 
   const resolveTemplateId = (primary: string | null | undefined, fallback: string | null | undefined) =>
-    !isFallbackId(primary) ? primary : !isFallbackId(fallback) ? fallback : null;
+    isValidUuid(primary) ? primary : isValidUuid(fallback) ? fallback : null;
 
   const payload: any = {
     template_id: resolveTemplateId(draft.templateId, existingReport?.templateId),

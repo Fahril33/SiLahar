@@ -1183,20 +1183,30 @@ export async function bulkUploadDeviceBackupReportsToDatabase(params: {
           // Fallback targetReportId baru
         }
 
+        const isValidUuid = (id: string | null | undefined): id is string =>
+          Boolean(
+            id &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+          );
+
         // Validasi Template IDs
         const safeTemplateId =
-          report.templateId && validTemplateIds.has(report.templateId)
+          report.templateId &&
+          isValidUuid(report.templateId) &&
+          validTemplateIds.has(report.templateId)
             ? report.templateId
             : null;
 
         const safeCoordinatorId =
           report.approverCoordinatorTemplateId &&
+          isValidUuid(report.approverCoordinatorTemplateId) &&
           validTemplateIds.has(report.approverCoordinatorTemplateId)
             ? report.approverCoordinatorTemplateId
             : null;
 
         const safeDivisionHeadId =
           report.approverDivisionHeadTemplateId &&
+          isValidUuid(report.approverDivisionHeadTemplateId) &&
           validTemplateIds.has(report.approverDivisionHeadTemplateId)
             ? report.approverDivisionHeadTemplateId
             : null;
