@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import type { Report, DocumentPresentationMode } from "../types/report";
-import { formatWitaDate } from "../lib/time";
+import { formatWitaDate, getWitaToday } from "../lib/time";
 import {
   getCalendarWeekRange,
   getMonthCalendarWeeks,
@@ -20,6 +20,7 @@ export interface AdminPrintSelectionModalProps {
     paperFormat: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
     presentationMode?: DocumentPresentationMode,
+    includeDivisionHeadOnLastWeek?: boolean,
   ) => Promise<void>;
   defaultPaperFormat?: "a4" | "f4" | "legal" | "letter";
 }
@@ -280,9 +281,25 @@ export function AdminPrintSelectionModal({
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
   const [weekFilter, setWeekFilter] = useState<string>("all");
+  const [includeKabidSignature, setIncludeKabidSignature] = useState<boolean>(false);
   const [selectionMode, setSelectionMode] = useState<"clicked" | "all" | "custom">(
     "clicked",
   );
+
+  const currentMonthKey = useMemo(() => {
+    return getWitaToday().slice(0, 7);
+  }, []);
+
+  const isMonthCompleted = useMemo(() => {
+    if (monthFilter === "all") {
+      const latestDate = userReports.reduce((max, r) => {
+        const d = r.reportDate || "";
+        return d > max ? d : max;
+      }, "");
+      return latestDate ? latestDate.slice(0, 7) < currentMonthKey : false;
+    }
+    return monthFilter < currentMonthKey;
+  }, [monthFilter, currentMonthKey, userReports]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isPrinting, setIsPrinting] = useState(false);
   const [printProgress, setPrintProgress] = useState(0);
@@ -479,9 +496,6 @@ export function AdminPrintSelectionModal({
   // Initialize selection when modal opens
   useEffect(() => {
     if (isOpen) {
-      const now = new Date();
-      const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-
       setIsPrinting(false);
       setPrintProgress(0);
       setPrintStatusText("Menyiapkan dokumen...");
@@ -491,11 +505,12 @@ export function AdminPrintSelectionModal({
       setWeekFilter("all"); // Default all weeks
       setPaperFormat(defaultPaperFormat);
 
+      let effectiveTargetMonth = currentMonthKey;
       if (targetReportId) {
         const target = userReports.find((r) => r.id === targetReportId);
         if (target?.reportDate) {
-          const targetMonth = target.reportDate.substring(0, 7);
-          setMonthFilter(targetMonth);
+          effectiveTargetMonth = target.reportDate.substring(0, 7);
+          setMonthFilter(effectiveTargetMonth);
         } else {
           setMonthFilter(currentMonthKey);
         }
@@ -504,6 +519,7 @@ export function AdminPrintSelectionModal({
       } else {
         // Default month to current month
         setMonthFilter(currentMonthKey);
+        effectiveTargetMonth = currentMonthKey;
 
         // Pre-select reports matching initial default filters (DB + current month)
         const initialMatching = userReports.filter((r) => {
@@ -520,8 +536,11 @@ export function AdminPrintSelectionModal({
         }
         setSelectionMode("all");
       }
+
+      // Default TTD Kabid: true jika bulan telah selesai secara real (< currentMonthKey), false jika masih berjalan
+      setIncludeKabidSignature(effectiveTargetMonth < currentMonthKey);
     }
-  }, [isOpen, targetReportId, userReports, defaultPaperFormat]);
+  }, [isOpen, targetReportId, userReports, defaultPaperFormat, currentMonthKey]);
 
   // Filtered reports based on correlated source filter, month filter, week filter, and search query
   const filteredReports = useMemo(() => {
@@ -655,6 +674,7 @@ export function AdminPrintSelectionModal({
           setPrintProgress((prev) => Math.max(prev, pct));
         },
         presentationMode,
+        includeKabidSignature,
       );
 
       if (tickerId) window.clearInterval(tickerId);
@@ -791,7 +811,13 @@ export function AdminPrintSelectionModal({
                   <select
                     value={monthFilter}
                     disabled={isPrinting}
-                    onChange={(e) => setMonthFilter(e.target.value)}
+                    onChange={(e) => {
+                      const nextMonth = e.target.value;
+                      setMonthFilter(nextMonth);
+                      if (nextMonth !== "all") {
+                        setIncludeKabidSignature(nextMonth < currentMonthKey);
+                      }
+                    }}
                     className="w-full h-[34px] pl-7 pr-7 text-xs font-semibold bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-xl text-[var(--text-primary)] outline-none focus:border-[var(--primary)] cursor-pointer appearance-none disabled:opacity-50"
                   >
                     <option value="all">Semua Bulan ({totalMonthsSourceCount})</option>
@@ -881,6 +907,42 @@ export function AdminPrintSelectionModal({
               )}
 
             </div>
+
+            {/* Opsi TTD Kabid untuk format mingguan & konsolidasian */}
+            {presentationMode !== "daily" && (
+              <div className="pt-2.5 pb-0.5 border-t border-[var(--border-soft)] flex flex-wrap items-center justify-between gap-2.5">
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={includeKabidSignature}
+                    disabled={isPrinting}
+                    onChange={(e) => setIncludeKabidSignature(e.target.checked)}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-[var(--border-soft)] bg-[var(--surface-muted)] cursor-pointer disabled:opacity-50"
+                  />
+                  <span className="text-xs font-semibold text-[var(--text-primary)] group-hover:text-[var(--primary)] transition">
+                    Sertakan TTD Kabid pada lembar minggu terakhir
+                  </span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                      isMonthCompleted
+                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
+                        : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20"
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isMonthCompleted ? "bg-emerald-500" : "bg-amber-500"
+                      }`}
+                    />
+                    {isMonthCompleted
+                      ? "Bulan lampau (otomatis tercentang di minggu laporan terakhir)"
+                      : "Bulan berjalan (opsional untuk tutup dinas / SPJ)"}
+                  </span>
+                </div>
+              </div>
+            )}
             
           </div>
 

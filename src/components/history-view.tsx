@@ -314,6 +314,7 @@ export function HistoryView(props: {
     format?: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
     presentationMode?: DocumentPresentationMode,
+    includeDivisionHeadOnLastWeek?: boolean,
   ) => Promise<void>;
   paperFormat?: "a4" | "f4" | "legal" | "letter";
   onHandleSaveAsPdf: (report: Report) => Promise<void>;
@@ -591,11 +592,12 @@ export function HistoryView(props: {
     paperFormat: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
     presentationMode: DocumentPresentationMode = "daily",
+    includeDivisionHeadOnLastWeek: boolean = true,
   ) => {
     if (props.onHandlePrintAll) {
-      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress, presentationMode);
+      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress, presentationMode, includeDivisionHeadOnLastWeek);
     } else {
-      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress, presentationMode);
+      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress, presentationMode, includeDivisionHeadOnLastWeek);
     }
   };
 

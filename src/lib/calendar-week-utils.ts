@@ -325,3 +325,120 @@ export function getCalendarWeeksFromReports(
   });
 }
 
+export const BULAN_NAMES_FULL = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
+export interface WeekAndMonthInfo {
+  monthLabel: string;
+  monthUpperLabel: string;
+  weekNumber: number;
+  weekNumberStr: string;
+  weekLabel: string;
+}
+
+export function getWeekAndMonthFromDate(dateStr: string): WeekAndMonthInfo {
+  if (!dateStr || dateStr.length < 7) {
+    return {
+      monthLabel: "-",
+      monthUpperLabel: "-",
+      weekNumber: 1,
+      weekNumberStr: "-",
+      weekLabel: "-",
+    };
+  }
+
+  const parts = dateStr.slice(0, 10).split("-");
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+    return {
+      monthLabel: "-",
+      monthUpperLabel: "-",
+      weekNumber: 1,
+      weekNumberStr: "-",
+      weekLabel: "-",
+    };
+  }
+
+  const mName = BULAN_NAMES_FULL[month - 1] || "";
+  const monthLabel = `${mName} ${year}`;
+  const monthUpperLabel = `${mName.toUpperCase()} ${year}`;
+
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+  const monthWeeks = getMonthCalendarWeeks(ym);
+  const { monday, sunday } = getCalendarWeekRange(dateStr);
+  const weekKey = `${monday}_${sunday}`;
+
+  const matchedWeek = monthWeeks.find((w) => w.weekKey === weekKey);
+  const weekNumber = matchedWeek?.weekNumber ?? 1;
+
+  return {
+    monthLabel,
+    monthUpperLabel,
+    weekNumber,
+    weekNumberStr: String(weekNumber),
+    weekLabel: `Minggu ${weekNumber}`,
+  };
+}
+
+export function getWeekAndMonthFromReports(
+  reports: Report[],
+  fallbackDate?: string,
+): WeekAndMonthInfo {
+  const dates = (reports || [])
+    .map((r) => r.reportDate || (r.tanggal && r.tanggal.slice(0, 10)) || "")
+    .filter(Boolean)
+    .sort();
+
+  const refDate = dates[0] || fallbackDate || "";
+  if (!refDate) {
+    return {
+      monthLabel: "-",
+      monthUpperLabel: "-",
+      weekNumber: 1,
+      weekNumberStr: "-",
+      weekLabel: "-",
+    };
+  }
+
+  const baseInfo = getWeekAndMonthFromDate(refDate);
+  if (dates.length <= 1) {
+    return baseInfo;
+  }
+
+  // Check distinct week numbers across reports
+  const weekNums = new Set<number>();
+  for (const d of dates) {
+    const info = getWeekAndMonthFromDate(d);
+    weekNums.add(info.weekNumber);
+  }
+
+  const sortedNums = Array.from(weekNums).sort((a, b) => a - b);
+  if (sortedNums.length === 1) {
+    return baseInfo;
+  }
+
+  const minNum = sortedNums[0];
+  const maxNum = sortedNums[sortedNums.length - 1];
+  const rangeStr = `${minNum} s/d ${maxNum}`;
+
+  return {
+    ...baseInfo,
+    weekNumberStr: rangeStr,
+    weekLabel: `Minggu ${rangeStr}`,
+  };
+}
+
+

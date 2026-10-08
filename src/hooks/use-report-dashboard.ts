@@ -1831,13 +1831,20 @@ export function useReportDashboard() {
     format?: "a4" | "f4" | "legal" | "letter",
     onProgress?: (step: string, pct: number) => void,
     presentationMode: DocumentPresentationMode = "daily",
+    includeDivisionHeadOnLastWeek: boolean = true,
   ) {
     if (!reports || reports.length === 0) {
       await showInfo("Tidak Ada Laporan", "Tidak ada laporan aktif untuk dicetak.");
       return;
     }
     try {
-      await printMultipleReportsDocument(reports, format ?? paperFormat, onProgress, presentationMode);
+      await printMultipleReportsDocument(
+        reports,
+        format ?? paperFormat,
+        onProgress,
+        presentationMode,
+        includeDivisionHeadOnLastWeek,
+      );
     } catch (err) {
       logSafeError(err, "Dashboard/PrintAll");
       await showError("Print Gagal", "Dokumen belum berhasil diproses untuk dicetak.");

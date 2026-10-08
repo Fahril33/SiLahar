@@ -15,7 +15,10 @@ import {
   prefetchAndCacheSignatureImage,
 } from "./storage";
 import { supabase } from "./supabase";
-import { groupReportsByCalendarWeek } from "./calendar-week-utils";
+import {
+  groupReportsByCalendarWeek,
+  getWeekAndMonthFromReports,
+} from "./calendar-week-utils";
 import { formatWitaDate } from "./time";
 import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
@@ -127,6 +130,11 @@ function renderReportMarkup(report: Report) {
 function renderConsolidatedReportMarkup(
   reports: Report[],
   titlePeriod: string,
+  options?: {
+    showDivisionHead?: boolean;
+    monthLabel?: string;
+    weekLabel?: string;
+  },
 ) {
   const firstReport = reports[0];
   if (!firstReport) return "";
@@ -145,6 +153,9 @@ function renderConsolidatedReportMarkup(
       approverDivisionHeadTitle: firstReport.approverDivisionHeadTitle,
       approverDivisionHeadNip: firstReport.approverDivisionHeadNip,
       approverDivisionHeadSignatureUrl: firstReport.approverDivisionHeadSignatureUrl,
+      showDivisionHead: options?.showDivisionHead ?? true,
+      monthLabel: options?.monthLabel,
+      weekLabel: options?.weekLabel,
     }),
   )}</div>`;
 }
@@ -658,6 +669,7 @@ export async function printMultipleReportsDocument(
   paperFormat: "a4" | "f4" | "legal" | "letter",
   onProgress?: (step: string, pct: number) => void,
   presentationMode: DocumentPresentationMode = "daily",
+  includeDivisionHeadOnLastWeek: boolean = true,
 ) {
   if (!reports || reports.length === 0) return;
 
@@ -679,13 +691,23 @@ export async function printMultipleReportsDocument(
   let combinedMarkup = "";
   if (presentationMode === "weekly") {
     const weekGroups = groupReportsByCalendarWeek(printReadyReports);
+    const totalWeeks = weekGroups.length;
     combinedMarkup = weekGroups
       .map(
-        (group) => `
+        (group, index) => {
+          const isLastWeekInBatch = index === totalWeeks - 1;
+          const showDivisionHead = includeDivisionHeadOnLastWeek ? isLastWeekInBatch : false;
+          const weekInfo = getWeekAndMonthFromReports(group.reports, group.mondayDate);
+          return `
         <div class="print-report-page-block" style="page-break-after: always; break-after: page;">
-          ${renderConsolidatedReportMarkup(group.reports, group.periodLabel)}
+          ${renderConsolidatedReportMarkup(group.reports, group.periodLabel, {
+            showDivisionHead,
+            monthLabel: weekInfo.monthUpperLabel,
+            weekLabel: String(weekInfo.weekNumber),
+          })}
         </div>
-      `,
+      `;
+        },
       )
       .join("\n");
   } else if (presentationMode === "custom") {
@@ -697,9 +719,14 @@ export async function printMultipleReportsDocument(
       ? formatWitaDate(sorted[sorted.length - 1].reportDate)
       : earliest;
     const periodLabel = earliest === latest ? earliest : `${earliest} s/d ${latest}`;
+    const weekInfo = getWeekAndMonthFromReports(sorted);
     combinedMarkup = `
       <div class="print-report-page-block">
-        ${renderConsolidatedReportMarkup(sorted, periodLabel)}
+        ${renderConsolidatedReportMarkup(sorted, periodLabel, {
+          showDivisionHead: includeDivisionHeadOnLastWeek,
+          monthLabel: weekInfo.monthUpperLabel,
+          weekLabel: weekInfo.weekNumberStr,
+        })}
       </div>
     `;
   } else {

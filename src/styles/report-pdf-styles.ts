@@ -206,6 +206,17 @@ export const PDF_REPORT_CSS = `
   gap: 28px;
 }
 
+.pdf-report-approval .approval-grid.single-approval {
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 28px;
+}
+
+.pdf-report-approval .approval-grid.single-approval .approval-column {
+  min-width: 260px;
+  max-width: 340px;
+}
+
 .pdf-report-approval .approval-column {
   text-align: center;
 }

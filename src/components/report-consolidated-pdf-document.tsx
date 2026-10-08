@@ -1,7 +1,10 @@
 import type { Report } from "../types/report";
 import { supabase } from "../lib/supabase";
 import { getCachedSignatureDataUrl } from "../lib/storage";
-import { groupReportsToConsolidatedDateEntries } from "../lib/calendar-week-utils";
+import {
+  groupReportsToConsolidatedDateEntries,
+  getWeekAndMonthFromReports,
+} from "../lib/calendar-week-utils";
 import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
@@ -11,6 +14,8 @@ import {
 export interface ReportConsolidatedPdfDocumentProps {
   titlePeriod?: string;
   reporterName: string;
+  monthLabel?: string;
+  weekLabel?: string;
   teamName?: string;
   headerLines?: string[];
   reports: Report[];
@@ -23,6 +28,7 @@ export interface ReportConsolidatedPdfDocumentProps {
   approverDivisionHeadNip?: string;
   approverDivisionHeadSignatureUrl?: string;
   notes?: string[];
+  showDivisionHead?: boolean;
 }
 
 export function ReportConsolidatedPdfDocument(
@@ -41,6 +47,7 @@ export function ReportConsolidatedPdfDocument(
     approverDivisionHeadTitle,
     approverDivisionHeadNip,
     approverDivisionHeadSignatureUrl,
+    showDivisionHead = true,
   } = props;
 
   const isPusdalops = isPusdalopsTeam(teamName || (reports[0]?.tim));
@@ -76,6 +83,26 @@ export function ReportConsolidatedPdfDocument(
 
   const dateEntries = groupReportsToConsolidatedDateEntries(reports);
 
+  const computedWeekInfo = getWeekAndMonthFromReports(reports);
+  const effectiveMonth = props.monthLabel || computedWeekInfo.monthUpperLabel || "";
+  const effectiveWeek = props.weekLabel || computedWeekInfo.weekNumberStr || "";
+
+  const effectivePeriodLabel = (() => {
+    if (effectiveWeek && effectiveWeek !== "-" && effectiveMonth && effectiveMonth !== "-") {
+      const weekPart = effectiveWeek.toLowerCase().startsWith("minggu")
+        ? effectiveWeek.toUpperCase()
+        : `MINGGU KE-${effectiveWeek}`;
+      return `${weekPart} ${effectiveMonth}`;
+    }
+    if (effectiveMonth && effectiveMonth !== "-") {
+      return effectiveMonth;
+    }
+    if (props.titlePeriod && props.titlePeriod.trim()) {
+      return props.titlePeriod.trim();
+    }
+    return "-";
+  })();
+
   return (
     <article className="pdf-report-page">
       <header className="pdf-report-header">
@@ -91,6 +118,11 @@ export function ReportConsolidatedPdfDocument(
               <td>NAMA</td>
               <td>:</td>
               <td>{reporterName || "-"}</td>
+            </tr>
+            <tr>
+              <td>PERIODE</td>
+              <td>:</td>
+              <td>{effectivePeriodLabel}</td>
             </tr>
           </tbody>
         </table>
@@ -218,9 +250,14 @@ export function ReportConsolidatedPdfDocument(
 
       {/* Tanda Tangan di bagian paling bawah tabel */}
       <section className="pdf-report-approval">
-        <p className="approval-title">PERSETUJUAN</p>
-        <div className="approval-grid">
+        {showDivisionHead && (
+          <p className="approval-title">PERSETUJUAN</p>
+        )}
+        <div className={`approval-grid ${showDivisionHead ? "" : "single-approval"}`}>
           <section className="approval-column">
+            {!showDivisionHead && (
+              <p className="approval-title" style={{ marginBottom: "6px" }}>PERSETUJUAN</p>
+            )}
             <p className="approval-role">
               {effectiveCoordinatorLabel}
             </p>
@@ -240,30 +277,32 @@ export function ReportConsolidatedPdfDocument(
             </p>
           </section>
 
-          <section className="approval-column">
-            <p className="approval-role">
-              KEPALA BIDANG KEDARURATAN &amp; LOGISTIK
-            </p>
-            <div className="signature-space">
-              {divisionHeadSignature ? (
-                <img
-                  src={divisionHeadSignature}
-                  alt={`TTD ${approverDivisionHead || "Kabid"}`}
-                  className="approval-signature-img"
-                  loading="eager"
-                />
-              ) : null}
-            </div>
-            <p className="approval-name">
-              {approverDivisionHead || "-"}
-            </p>
-            <p className="approval-meta">
-              Pangkat: {approverDivisionHeadTitle || "-"}
-            </p>
-            <p className="approval-meta">
-              NIP: {approverDivisionHeadNip || "-"}
-            </p>
-          </section>
+          {showDivisionHead && (
+            <section className="approval-column">
+              <p className="approval-role">
+                KEPALA BIDANG KEDARURATAN &amp; LOGISTIK
+              </p>
+              <div className="signature-space">
+                {divisionHeadSignature ? (
+                  <img
+                    src={divisionHeadSignature}
+                    alt={`TTD ${approverDivisionHead || "Kabid"}`}
+                    className="approval-signature-img"
+                    loading="eager"
+                  />
+                ) : null}
+              </div>
+              <p className="approval-name">
+                {approverDivisionHead || "-"}
+              </p>
+              <p className="approval-meta">
+                Pangkat: {approverDivisionHeadTitle || "-"}
+              </p>
+              <p className="approval-meta">
+                NIP: {approverDivisionHeadNip || "-"}
+              </p>
+            </section>
+          )}
         </div>
       </section>
     </article>
