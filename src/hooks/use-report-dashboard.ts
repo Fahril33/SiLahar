@@ -4,6 +4,7 @@ import {
   askConfirmation,
   askDraftUploadConfirmation,
   askSlowSaveFallback,
+  closeSlowSaveFallback,
   openProgressToast,
   resolveSaveErrorContext,
   showError,
@@ -1986,13 +1987,9 @@ export function useReportDashboard() {
         void askSlowSaveFallback().then(async (choice) => {
           if (choice === "save-local") {
             await persistCurrentAsLocalDraft({ showToast: true });
-            return;
-          }
-          if (choice === "background") {
-            await showInfo(
-              "Upload tetap berjalan",
-              "Anda bisa pindah ke halaman lain. Notifikasi akan muncul saat proses selesai.",
-            );
+          } else {
+            // Pengguna memilih tetap menunggu: pastikan spin loading progress toast tetap tampil
+            toast.resume();
           }
         });
       }, SLOW_SAVE_PROMPT_DELAY_MS);
@@ -2005,6 +2002,9 @@ export function useReportDashboard() {
           reportRules,
           (s, d) => toast.update(s, d),
         );
+        window.clearTimeout(slowSaveTimer);
+        slowPromptResolved = true;
+        closeSlowSaveFallback();
         toast.close();
         await loadDashboardData();
         setDeviceSubmittedNames(pushDeviceSubmittedName(draft.nama));
@@ -2028,6 +2028,9 @@ export function useReportDashboard() {
             : "terimakasih atas kerja keras anda. sampai jumpa besok",
         );
       } catch (err) {
+        window.clearTimeout(slowSaveTimer);
+        slowPromptResolved = true;
+        closeSlowSaveFallback();
         logSafeError(err, "Dashboard/SaveReport");
         toast.close();
         const errContext = resolveSaveErrorContext(err);

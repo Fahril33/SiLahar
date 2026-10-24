@@ -591,6 +591,7 @@ export default function App() {
             }
             deviceBackupBulkUploading={dashboard.deviceBackupBulkUploading}
             isOnline={isOnline}
+            onReloadReports={dashboard.handleReloadDashboardData}
           />
         ) : null}
 

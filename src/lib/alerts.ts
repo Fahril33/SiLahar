@@ -131,38 +131,53 @@ export async function askAcknowledge(
   });
 }
 
-export async function askSlowSaveFallback() {
+export function isSlowSaveFallbackOpen(): boolean {
+  const popup = Swal.getPopup();
+  return Boolean(popup && popup.classList.contains("swal-slow-save-popup") && Swal.isVisible());
+}
+
+export function closeSlowSaveFallback(): void {
+  if (isSlowSaveFallbackOpen()) {
+    Swal.close();
+  }
+}
+
+export async function askSlowSaveFallback(): Promise<"save-local" | "wait"> {
   const result = await Swal.fire({
-    title: "Simpan masih berjalan",
-    text: "Anda bisa simpan snapshot ke draft lokal agar aman, atau biarkan proses upload tetap lanjut di background sementara Anda pindah halaman.",
+    title: "Pengunggahan Sedang Berjalan",
+    html: `
+      <div class="swal-slow-save-content">
+        <div class="swal-slow-save-status">
+          <span class="swal-slow-save-spinner"></span>
+          <span>Proses membutuhkan waktu lebih lama (koneksi lambat)</span>
+        </div>
+        <p class="swal-slow-save-desc">
+          Dokumen dan foto Anda sedang diunggah ke server. Anda dapat <strong>tetap menunggu</strong> proses selesai, atau <strong>menyimpan cadangan ke draft</strong> perangkat agar aman.
+        </p>
+      </div>
+    `,
     icon: "info",
     showCancelButton: true,
-    showDenyButton: true,
-    confirmButtonText: "Simpan draft lokal",
-    denyButtonText: "Lanjut di background",
-    cancelButtonText: "Tetap tunggu",
+    confirmButtonText: "Tetap Menunggu",
+    cancelButtonText: "Cadangkan ke Draft",
     reverseButtons: true,
+    allowOutsideClick: true,
     customClass: {
-      popup: confirmPopupClass,
+      popup: `${confirmPopupClass} swal-slow-save-popup`,
       title: "swal-dialog-title",
       htmlContainer: "swal-dialog-text",
       icon: "swal-dialog-icon",
-      confirmButton: "swal-confirm",
-      denyButton: "swal-cancel",
-      cancelButton: "swal-cancel",
+      confirmButton: "swal-confirm swal-btn-wait",
+      cancelButton: "swal-cancel swal-btn-draft",
     },
     buttonsStyling: false,
   });
 
-  if (result.isConfirmed) {
-    return "save-local" as const;
+  if (result.dismiss === Swal.DismissReason.cancel) {
+    return "save-local";
   }
 
-  if (result.isDenied) {
-    return "background" as const;
-  }
-
-  return "wait" as const;
+  return "wait";
 }
 
 export async function askDraftUploadConfirmation(options: {
@@ -275,32 +290,35 @@ export function openProgressToast(title: string, stages: ProgressToastStage[]) {
     stages.map((stage) => [stage.id, "pending" as ProgressToastStageState]),
   );
   const stageTexts = Object.fromEntries(stages.map((stage) => [stage.id, ""]));
+  let isClosed = false;
 
-  void Swal.fire({
-    toast: true,
-    position: "top",
-    icon: "info",
-    title,
-    html: renderProgressToastHtml(stages, stageStates, stageTexts),
-    showConfirmButton: false,
-    showCloseButton: false,
-    timer: undefined,
-    timerProgressBar: false,
-    customClass: {
-      popup: `${toastPopupClass} ${progressToastPopupClass}`,
-      title: "swal-toast-title",
-      htmlContainer: "swal-toast-text",
-      icon: "swal-toast-icon",
-    },
-    buttonsStyling: false,
-  });
+  function mountToast() {
+    if (isClosed) return;
+    void Swal.fire({
+      toast: true,
+      position: "top",
+      icon: "info",
+      title,
+      html: renderProgressToastHtml(stages, stageStates, stageTexts),
+      showConfirmButton: false,
+      showCloseButton: false,
+      timer: undefined,
+      timerProgressBar: false,
+      customClass: {
+        popup: `${toastPopupClass} ${progressToastPopupClass}`,
+        title: "swal-toast-title",
+        htmlContainer: "swal-toast-text",
+        icon: "swal-toast-icon",
+      },
+      buttonsStyling: false,
+    });
+  }
+
+  mountToast();
 
   return {
     update(stageId: string, detail?: string) {
-      const popup = Swal.getPopup();
-      if (!popup?.classList.contains("swal-progress-toast")) {
-        return;
-      }
+      if (isClosed) return;
 
       const activeIndex = stages.findIndex((stage) => stage.id === stageId);
       if (activeIndex === -1) {
@@ -316,21 +334,34 @@ export function openProgressToast(title: string, stages: ProgressToastStage[]) {
         stageTexts[stageId] = detail;
       }
 
-      const titleElement = popup.querySelector(".swal-toast-title");
-      if (titleElement) {
-        titleElement.textContent = title;
-      }
+      const popup = Swal.getPopup();
+      if (popup?.classList.contains("swal-progress-toast")) {
+        const titleElement = popup.querySelector(".swal-toast-title");
+        if (titleElement) {
+          titleElement.textContent = title;
+        }
 
-      const htmlContainer = popup.querySelector(".swal2-html-container");
-      if (htmlContainer) {
-        htmlContainer.innerHTML = renderProgressToastHtml(
-          stages,
-          stageStates,
-          stageTexts,
-        );
+        const htmlContainer = popup.querySelector(".swal2-html-container");
+        if (htmlContainer) {
+          htmlContainer.innerHTML = renderProgressToastHtml(
+            stages,
+            stageStates,
+            stageTexts,
+          );
+        }
+      } else {
+        // Jika tidak ada dialog slow save yang sedang aktif, re-mount toast dengan spinner aktif
+        if (!Swal.isVisible() || !popup?.classList.contains("swal-slow-save-popup")) {
+          mountToast();
+        }
       }
     },
+    resume() {
+      if (isClosed) return;
+      mountToast();
+    },
     close() {
+      isClosed = true;
       const popup = Swal.getPopup();
       if (popup?.classList.contains("swal-progress-toast")) {
         Swal.close();

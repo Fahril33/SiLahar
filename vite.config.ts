@@ -14,17 +14,29 @@ function pdfApiDevPlugin(): Plugin {
           req.on("end", async () => {
             try {
               const body = JSON.parse(rawBody || "{}");
-              const { generatePdfBuffer } = await server.ssrLoadModule(
-                "./src/lib/server-pdf-generator.ts"
-              );
-              const pdfBuffer = await generatePdfBuffer(
-                body.report,
-                body.paperFormat
-              );
+              const { generatePdfBuffer, generatePdfBufferFromHtml } =
+                await server.ssrLoadModule("./src/lib/server-pdf-generator.ts");
 
-              const safeFilename = `${(body.report?.nama || "Laporan")
+              let pdfBuffer: Buffer;
+              if (body.html) {
+                pdfBuffer = await generatePdfBufferFromHtml(
+                  body.html,
+                  body.paperFormat,
+                  body.filename || body.title
+                );
+              } else {
+                pdfBuffer = await generatePdfBuffer(
+                  body.report,
+                  body.paperFormat
+                );
+              }
+
+              const rawName = (body.filename || body.report?.nama || "Laporan")
                 .trim()
-                .replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`;
+                .replace(/[^a-zA-Z0-9._-]/g, "_");
+              const safeFilename = rawName.endsWith(".pdf")
+                ? rawName
+                : `${rawName}.pdf`;
 
               res.setHeader("Content-Type", "application/pdf");
               res.setHeader(

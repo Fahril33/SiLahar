@@ -430,6 +430,73 @@ select:focus {
   color: var(--secondary-text);
 }
 
+/* Slow Save Fallback Modal */
+.swal-slow-save-popup {
+  padding: 1.35rem 1.35rem 1.2rem !important;
+}
+
+.swal-slow-save-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 0.25rem;
+  text-align: left;
+}
+
+.swal-slow-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.swal-slow-save-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  min-width: 0.95rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  border-top-color: var(--primary);
+  animation: swal-progress-spin 0.75s linear infinite;
+}
+
+.swal-slow-save-desc {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.swal-slow-save-desc strong {
+  color: var(--text-primary);
+}
+
+.swal-btn-wait {
+  background: linear-gradient(
+    135deg,
+    var(--primary) 0%,
+    var(--primary-strong) 100%
+  ) !important;
+  color: var(--primary-contrast) !important;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--primary) 25%, transparent) !important;
+}
+
+.swal-btn-draft {
+  background: var(--surface-muted) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-soft) !important;
+}
+
+.swal-btn-draft:hover {
+  background: color-mix(in srgb, var(--surface-muted) 80%, var(--primary) 20%) !important;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--primary) 24%, transparent);
 }

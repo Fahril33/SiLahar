@@ -255,7 +255,7 @@ async function preloadReportImages(report: Report) {
   );
 }
 
-async function materializeReportImages(
+export async function materializeReportImages(
   report: Report,
   pendingPhotos?: PendingPhotoMap,
 ): Promise<Report> {
@@ -526,52 +526,58 @@ export async function exportReportAsPdf(
   paperFormat: "a4" | "f4" | "legal" | "letter",
   pendingPhotos?: PendingPhotoMap,
   onStage?: (stageId: string, detail?: string) => void,
+  preferredEngine: "puppeteer" | "html2pdf" = "puppeteer",
 ) {
   onStage?.("images", "Mengompresi dan memproses foto dokumentasi...");
   const pdfReadyReport = await materializeReportImages(report, pendingPhotos);
 
-  onStage?.("render", "Merender dokumen PDF kualitas tinggi...");
-  try {
-    const response = await fetch("/api/generate-pdf", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        report: pdfReadyReport,
-        paperFormat,
-      }),
-    });
+  if (preferredEngine === "puppeteer") {
+    onStage?.("render", "Merender dokumen PDF kualitas tinggi (Puppeteer)...");
+    try {
+      const response = await fetch("/api/generate-pdf", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          report: pdfReadyReport,
+          paperFormat,
+        }),
+      });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      throw new Error(`Server returned status ${response.status}: ${errText}`);
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`Server returned status ${response.status}: ${errText}`);
+      }
+
+      onStage?.("download", "Menyiapkan file unduhan...");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = buildPdfFileName(report);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return;
+    } catch (error) {
+      console.warn("Puppeteer PDF generation error, trying client-side fallback:", error);
     }
-
-    onStage?.("download", "Menyiapkan file unduhan...");
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = buildPdfFileName(report);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-  } catch (error) {
-    console.warn("Puppeteer PDF generation error, trying client-side fallback:", error);
-    onStage?.("render", "Membuat PDF via browser...");
-    const blob = await buildPdfBlob(pdfReadyReport, paperFormat);
-    onStage?.("download", "Menyiapkan file unduhan...");
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = buildPdfFileName(report);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
+
+  // Fallback atau browser mode
+  onStage?.("render", "Membuat PDF via browser...");
+  const blob = await buildPdfBlob(pdfReadyReport, paperFormat);
+  onStage?.("download", "Menyiapkan file unduhan...");
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = buildPdfFileName(report);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 export const PAPER_DIMENSIONS: Record<

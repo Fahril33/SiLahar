@@ -2012,7 +2012,10 @@ export function EntryView(props: EntryViewProps) {
                       className={`btn-primary rounded-r-none px-3 py-2 text-xs sm:px-4 sm:text-sm 2xl:py-2.5 ${isFormBlockedByHoliday ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
                       {props.submitting ? (
-                        <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                        <span className="inline-flex items-center gap-1.5">
+                          <SpinnerIcon className="h-3.5 w-3.5 animate-spin sm:h-4 sm:w-4" />
+                          <span className="whitespace-nowrap inline">Menyimpan...</span>
+                        </span>
                       ) : (
                         <>
                           <SaveIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />

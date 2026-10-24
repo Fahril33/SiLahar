@@ -63,6 +63,19 @@ import {
   showError,
 } from "../lib/alerts";
 import { saveAs } from "file-saver";
+import { PhotoBackupDialog } from "./photo-backup-dialog";
+import {
+  groupReportsForBulkWeeklyPdf,
+  executeBulkWeeklyPdfDownload,
+  buildInitialBulkWeeklyPdfProgressState,
+  type BulkWeeklyPdfProgressState,
+} from "../lib/bulk-weekly-pdf-service";
+import {
+  groupReportsForBulkMonthlyPdf,
+  executeBulkMonthlyPdfDownload,
+  buildInitialBulkMonthlyPdfProgressState,
+  type BulkMonthlyPdfProgressState,
+} from "../lib/bulk-monthly-pdf-service";
 
 const inputClassName = "field-input";
 
@@ -189,6 +202,7 @@ type AdminDashboardViewProps = {
   ) => Promise<BulkUploadResult>;
   deviceBackupBulkUploading?: boolean;
   isOnline: boolean;
+  onReloadReports?: () => Promise<void>;
 };
 
 function AdminSectionTabs({
@@ -2737,6 +2751,7 @@ function BulkExportPanel(props: {
     userFilter?: string,
   ) => Promise<void>;
   deviceBackupExporting?: boolean;
+  onRefreshReports?: () => Promise<void> | void;
 }) {
   const [viewMode, setViewMode] = useState<"selection" | "pdf-progress">(
     "selection",
@@ -2768,6 +2783,12 @@ function BulkExportPanel(props: {
   >({});
   const [livePdfProgressState, setLivePdfProgressState] =
     useState<BulkPdfProgressState | null>(null);
+  const [pdfMode, setPdfMode] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [pdfEngine, setPdfEngine] = useState<"puppeteer" | "html2pdf">("puppeteer");
+  const [liveWeeklyPdfProgressState, setLiveWeeklyPdfProgressState] =
+    useState<BulkWeeklyPdfProgressState | null>(null);
+  const [liveMonthlyPdfProgressState, setLiveMonthlyPdfProgressState] =
+    useState<BulkMonthlyPdfProgressState | null>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfResult, setPdfResult] = useState<{
     success: boolean;
@@ -2782,6 +2803,7 @@ function BulkExportPanel(props: {
     count: number;
     errorMessage?: string;
   } | null>(null);
+  const [showPhotoBackupModal, setShowPhotoBackupModal] = useState(false);
 
   // Load both DB and Local draft reports so all reports are combined
   useEffect(() => {
@@ -2915,6 +2937,24 @@ function BulkExportPanel(props: {
     return deduplicateReporterNames(selectedUserNames).length;
   }, [selectedReports]);
 
+  // Weekly PDF grouping metrics
+  const weeklyUserGroups = useMemo(() => {
+    return groupReportsForBulkWeeklyPdf(visibleReports, selectedActivities);
+  }, [visibleReports, selectedActivities]);
+
+  const totalWeeklyDocsCount = useMemo(() => {
+    return weeklyUserGroups.reduce((sum, u) => sum + u.weeks.length, 0);
+  }, [weeklyUserGroups]);
+
+  // Monthly PDF grouping metrics
+  const monthlyUserGroups = useMemo(() => {
+    return groupReportsForBulkMonthlyPdf(visibleReports, selectedActivities);
+  }, [visibleReports, selectedActivities]);
+
+  const totalMonthlyDocsCount = useMemo(() => {
+    return monthlyUserGroups.reduce((sum, u) => sum + u.months.length, 0);
+  }, [monthlyUserGroups]);
+
   // Selection handlers
   const toggleActivity = (reportId: string, activityNo: number) => {
     setSelectedActivities((prev) => {
@@ -2993,9 +3033,206 @@ function BulkExportPanel(props: {
       return;
     }
 
+    if (pdfMode === "weekly") {
+      if (totalWeeklyDocsCount === 0) {
+        await showInfo(
+          "Pilih Data",
+          "Tidak ada laporan yang dapat dikelompokkan ke dalam dokumen PDF mingguan.",
+        );
+        return;
+      }
+
+      const engineLabel =
+        pdfEngine === "puppeteer"
+          ? "Puppeteer (Kualitas Tinggi)"
+          : "Browser (html2pdf)";
+
+      const confirmed = await askConfirmation(
+        "Export PDF Massal Mingguan (Per Bulan)",
+        `Apakah Anda yakin ingin memulai export PDF massal mingguan untuk ${weeklyUserGroups.length} petugas (${totalWeeklyDocsCount} file bulanan yang memuat rekap per minggu) dari ${selectedReportsCount} laporan terpilih dengan format kertas ${paperFormat.toUpperCase()} menggunakan Engine ${engineLabel}?`,
+        "Ya, Unduh PDF Mingguan",
+      );
+      if (!confirmed) return;
+
+      const initialWeeklyPdfProgress = buildInitialBulkWeeklyPdfProgressState(
+        weeklyUserGroups,
+        selectedReportsCount,
+      );
+      setLiveWeeklyPdfProgressState(initialWeeklyPdfProgress);
+      setLivePdfProgressState(null);
+      setLiveMonthlyPdfProgressState(null);
+      setExportProgressState({
+        type: "pdf",
+        title: "Export PDF Massal Mingguan",
+        status: "running",
+        message: "Memulai proses rendering dokumen PDF massal mingguan...",
+        count: totalWeeklyDocsCount,
+      });
+      setViewMode("pdf-progress");
+      setPdfResult(null);
+      setPdfExporting(true);
+
+      try {
+        const result = await executeBulkWeeklyPdfDownload(
+          visibleReports,
+          selectedActivities,
+          paperFormat,
+          (state) => {
+            setLiveWeeklyPdfProgressState({ ...state });
+          },
+          pdfEngine,
+        );
+        setPdfResult(result);
+        if (result.success) {
+          setExportProgressState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "completed",
+                  message: `Selesai! ${result.downloadedCount} file PDF mingguan berhasil diunduh.`,
+                }
+              : null,
+          );
+        } else {
+          setExportProgressState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "error",
+                  message: "Gagal membuat sebagian file PDF mingguan",
+                  errorMessage: result.errors.join(", "),
+                }
+              : null,
+          );
+        }
+      } catch (err: any) {
+        setPdfResult({
+          success: false,
+          downloadedCount: 0,
+          errors: [
+            err?.message || "Kesalahan tak terduga saat membuat dokumen PDF mingguan",
+          ],
+        });
+        setExportProgressState((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "error",
+                message: "Gagal membuat dokumen PDF mingguan",
+                errorMessage: err?.message,
+              }
+            : null,
+        );
+      } finally {
+        setPdfExporting(false);
+      }
+      return;
+    }
+
+    if (pdfMode === "monthly") {
+      if (totalMonthlyDocsCount === 0) {
+        await showInfo(
+          "Pilih Data",
+          "Tidak ada laporan yang dapat dikelompokkan ke dalam dokumen PDF bulanan.",
+        );
+        return;
+      }
+
+      const engineLabel =
+        pdfEngine === "puppeteer"
+          ? "Puppeteer (Kualitas Tinggi)"
+          : "Browser (html2pdf)";
+
+      const confirmed = await askConfirmation(
+        "Export PDF Massal Bulanan",
+        `Apakah Anda yakin ingin memulai export PDF massal bulanan untuk ${monthlyUserGroups.length} petugas (${totalMonthlyDocsCount} dokumen bulanan) dari ${selectedReportsCount} laporan terpilih dengan format kertas ${paperFormat.toUpperCase()} menggunakan Engine ${engineLabel}?`,
+        "Ya, Unduh PDF Bulanan",
+      );
+      if (!confirmed) return;
+
+      const initialMonthlyPdfProgress = buildInitialBulkMonthlyPdfProgressState(
+        monthlyUserGroups,
+        selectedReportsCount,
+      );
+      setLiveMonthlyPdfProgressState(initialMonthlyPdfProgress);
+      setLivePdfProgressState(null);
+      setLiveWeeklyPdfProgressState(null);
+      setExportProgressState({
+        type: "pdf",
+        title: "Export PDF Massal Bulanan",
+        status: "running",
+        message: "Memulai proses rendering dokumen PDF massal bulanan...",
+        count: totalMonthlyDocsCount,
+      });
+      setViewMode("pdf-progress");
+      setPdfResult(null);
+      setPdfExporting(true);
+
+      try {
+        const result = await executeBulkMonthlyPdfDownload(
+          visibleReports,
+          selectedActivities,
+          paperFormat,
+          (state) => {
+            setLiveMonthlyPdfProgressState({ ...state });
+          },
+          pdfEngine,
+        );
+        setPdfResult(result);
+        if (result.success) {
+          setExportProgressState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "completed",
+                  message: `Selesai! ${result.downloadedCount} file PDF bulanan berhasil diunduh.`,
+                }
+              : null,
+          );
+        } else {
+          setExportProgressState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: "error",
+                  message: "Gagal membuat sebagian file PDF bulanan",
+                  errorMessage: result.errors.join(", "),
+                }
+              : null,
+          );
+        }
+      } catch (err: any) {
+        setPdfResult({
+          success: false,
+          downloadedCount: 0,
+          errors: [
+            err?.message || "Kesalahan tak terduga saat membuat dokumen PDF bulanan",
+          ],
+        });
+        setExportProgressState((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "error",
+                message: "Gagal membuat dokumen PDF bulanan",
+                errorMessage: err?.message,
+              }
+            : null,
+        );
+      } finally {
+        setPdfExporting(false);
+      }
+      return;
+    }
+
+    const engineLabel =
+      pdfEngine === "puppeteer"
+        ? "Puppeteer (Kualitas Tinggi)"
+        : "Browser (html2pdf)";
+
     const confirmed = await askConfirmation(
       "Export PDF Massal",
-      `Apakah Anda yakin ingin memulai export PDF massal untuk ${selectedReportsCount} laporan terpilih dengan format kertas ${paperFormat.toUpperCase()}?`,
+      `Apakah Anda yakin ingin memulai export PDF massal untuk ${selectedReportsCount} laporan terpilih dengan format kertas ${paperFormat.toUpperCase()} menggunakan Engine ${engineLabel}?`,
       "Ya, Unduh PDF",
     );
     if (!confirmed) return;
@@ -3005,6 +3242,8 @@ function BulkExportPanel(props: {
       selectedActivities,
     );
     setLivePdfProgressState(initialPdfProgress);
+    setLiveWeeklyPdfProgressState(null);
+    setLiveMonthlyPdfProgressState(null);
     setExportProgressState({
       type: "pdf",
       title: "Export PDF Massal Harian",
@@ -3024,6 +3263,7 @@ function BulkExportPanel(props: {
         (state) => {
           setLivePdfProgressState({ ...state });
         },
+        pdfEngine,
       );
       setPdfResult(result);
       if (result.success) {
@@ -3438,8 +3678,23 @@ function BulkExportPanel(props: {
             </span>
 
             <div className="flex flex-wrap items-center gap-2.5">
-              {/* Group 1: PDF Export with Paper Size Selector */}
+              {/* Group 1: PDF Export with Mode Selector and Paper Size Selector */}
               <div className="flex items-center gap-0 rounded-xl overflow-hidden border border-rose-500/30 bg-rose-500/5 shadow-2xs">
+                {/* Mode Selector: Harian vs Mingguan vs Bulanan */}
+                <select
+                  value={pdfMode}
+                  onChange={(e) =>
+                    setPdfMode(e.target.value as "daily" | "weekly" | "monthly")
+                  }
+                  className="h-[40px] py-0 px-2.5 text-xs font-extrabold bg-transparent text-rose-600 dark:text-rose-400 border-r border-rose-500/20 cursor-pointer outline-none appearance-auto"
+                  title="Pilihan Mode PDF: Harian, Mingguan, atau Bulanan"
+                >
+                  <option value="daily">📅 Mode Harian</option>
+                  <option value="weekly">🗓️ Mode Mingguan</option>
+                  <option value="monthly">📆 Mode Bulanan</option>
+                </select>
+
+                {/* Paper Size Selector */}
                 <select
                   value={paperFormat}
                   onChange={(e) => setPaperFormat(e.target.value as any)}
@@ -3451,12 +3706,37 @@ function BulkExportPanel(props: {
                   <option value="legal">Kertas Legal</option>
                   <option value="letter">Kertas Letter</option>
                 </select>
+
+                {/* Engine Selector: Puppeteer (Prioritas Kualitas Tinggi) vs Browser (html2pdf) */}
+                <select
+                  value={pdfEngine}
+                  onChange={(e) =>
+                    setPdfEngine(e.target.value as "puppeteer" | "html2pdf")
+                  }
+                  className="h-[40px] py-0 px-2.5 text-xs font-extrabold bg-transparent text-rose-600 dark:text-rose-400 border-l border-rose-500/20 cursor-pointer outline-none appearance-auto"
+                  title="Engine Pembuatan PDF (Puppeteer kualitas tinggi secara default sebagai prioritas)"
+                >
+                  <option value="puppeteer">🚀 Engine: Puppeteer (Prioritas)</option>
+                  <option value="html2pdf">🌐 Engine: Browser (html2pdf)</option>
+                </select>
+
                 <button
                   type="button"
                   onClick={handleStartBulkPdfExport}
-                  disabled={pdfExporting || selectedReportsCount === 0}
+                  disabled={
+                    pdfExporting ||
+                    selectedReportsCount === 0 ||
+                    (pdfMode === "weekly" && totalWeeklyDocsCount === 0) ||
+                    (pdfMode === "monthly" && totalMonthlyDocsCount === 0)
+                  }
                   className="h-[40px] px-4 text-xs font-extrabold bg-rose-500 text-white hover:bg-rose-600 flex items-center gap-2 transition disabled:opacity-40 cursor-pointer shadow-xs border-l border-rose-500/30"
-                  title="Unduh dokumen PDF massal harian per petugas"
+                  title={
+                    pdfMode === "weekly"
+                      ? "Unduh dokumen PDF massal mingguan konsolidasi (Senin-Minggu) per petugas"
+                      : pdfMode === "monthly"
+                        ? "Unduh dokumen PDF massal bulanan konsolidasi per petugas"
+                        : "Unduh dokumen PDF massal harian per petugas"
+                  }
                 >
                   {pdfExporting ? (
                     <SpinnerIcon className="h-4 w-4 animate-spin" />
@@ -3474,7 +3754,13 @@ function BulkExportPanel(props: {
                       <polyline points="14 2 14 8 20 8" />
                     </svg>
                   )}
-                  <span>Export PDF ({selectedReportsCount})</span>
+                  <span>
+                    {pdfMode === "weekly"
+                      ? `Export PDF Mingguan (${totalWeeklyDocsCount} Dokumen)`
+                      : pdfMode === "monthly"
+                        ? `Export PDF Bulanan (${totalMonthlyDocsCount} Dokumen)`
+                        : `Export PDF Harian (${selectedReportsCount})`}
+                  </span>
                 </button>
               </div>
 
@@ -3552,6 +3838,29 @@ function BulkExportPanel(props: {
                   <SpinnerIcon className="h-4 w-4 animate-spin" />
                 ) : null}
                 <span>ZIP Excel ({selectedReportsCount})</span>
+              </button>
+
+              {/* Group 5: Backup Foto ZIP & Storage Management */}
+              <button
+                type="button"
+                onClick={() => setShowPhotoBackupModal(true)}
+                className="btn-secondary h-[40px] px-3.5 text-xs font-bold border-sky-500/40 text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 flex items-center gap-2 shadow-2xs cursor-pointer"
+                title="Backup foto bukti kegiatan dalam arsip ZIP & hemat storage Supabase"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4 text-sky-500"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Backup Foto ZIP</span>
               </button>
             </div>
           </div>
@@ -3899,8 +4208,729 @@ function BulkExportPanel(props: {
             </div>
           )}
 
-          {/* B. Progress Page for PDF Massal Export */}
-          {livePdfProgressState &&
+          {/* B1. Progress Page for Weekly PDF Massal Export */}
+          {pdfMode === "weekly" &&
+            liveWeeklyPdfProgressState &&
+            (!exportProgressState || exportProgressState.type === "pdf") && (
+              <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
+                {/* Header Progress PDF Page */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+                  <div className="flex items-center gap-3.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      disabled={pdfExporting}
+                      className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-4 w-4"
+                      >
+                        <polyline points="15 18 9 12 15 6" />
+                      </svg>
+                      <span>Kembali ke Seleksi Data</span>
+                    </button>
+                    <div>
+                      <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                        <span>Progres Export PDF Massal Mingguan</span>
+                        {pdfExporting ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
+                            Sedang Merender...
+                          </span>
+                        ) : liveWeeklyPdfProgressState.overallStatus ===
+                          "completed" ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            Selesai
+                          </span>
+                        ) : null}
+                      </h4>
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                        Mengunduh dokumen PDF rekap mingguan konsolidasi per petugas secara otomatis ke perangkat Anda.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                      Total: {liveWeeklyPdfProgressState.totalUsers} Petugas •{" "}
+                      {liveWeeklyPdfProgressState.totalWeeklyDocs} Dokumen Mingguan •{" "}
+                      {liveWeeklyPdfProgressState.totalReports} Laporan
+                    </span>
+                  </div>
+                </div>
+
+                {/* Metric Status Cards & Progress Bar */}
+                <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+                    <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                      {pdfExporting ? (
+                        <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
+                      ) : (
+                        <span className="text-emerald-500">✓</span>
+                      )}
+                      <span className="font-extrabold">
+                        {liveWeeklyPdfProgressState.currentMessage}
+                      </span>
+                    </div>
+                    <div className="text-[var(--text-muted)]">
+                      {liveWeeklyPdfProgressState.totalWeeklyDocs > 0
+                        ? Math.round(
+                            (liveWeeklyPdfProgressState.completedDocsCount /
+                              liveWeeklyPdfProgressState.totalWeeklyDocs) *
+                              100,
+                          )
+                        : 0}
+                      % Selesai ({liveWeeklyPdfProgressState.completedDocsCount}/
+                      {liveWeeklyPdfProgressState.totalWeeklyDocs} Dokumen)
+                    </div>
+                  </div>
+
+                  {/* Main Animated Progress Bar */}
+                  <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+                    <div
+                      className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          liveWeeklyPdfProgressState.totalWeeklyDocs > 0
+                            ? Math.min(
+                                100,
+                                (liveWeeklyPdfProgressState.completedDocsCount /
+                                  liveWeeklyPdfProgressState.totalWeeklyDocs) *
+                                  100,
+                              )
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Quick Metrics Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Petugas Aktif
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                        {liveWeeklyPdfProgressState.currentUserName || "-"}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Dokumen Terunduh
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {liveWeeklyPdfProgressState.completedDocsCount} /{" "}
+                        {liveWeeklyPdfProgressState.totalWeeklyDocs}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Laporan Tercover
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {liveWeeklyPdfProgressState.totalReports} Laporan
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Ukuran Kertas
+                      </span>
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
+                        {paperFormat}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hierarchical Progress Tree View */}
+                <div className="space-y-3">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+                    <span>Struktur Antrean &amp; Status Dokumen PDF Mingguan</span>
+                  </h5>
+
+                  <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+                    {liveWeeklyPdfProgressState.users.map((userGroup, uIdx) => {
+                      const isUserRendering = userGroup.status === "rendering";
+                      const isUserSuccess = userGroup.status === "success";
+                      const isUserError = userGroup.status === "error";
+
+                      return (
+                        <div
+                          key={userGroup.userName}
+                          className={`p-3.5 sm:p-4 space-y-2.5 transition ${
+                            isUserRendering
+                              ? "bg-rose-500/5"
+                              : isUserError
+                                ? "bg-red-500/5"
+                                : ""
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="shrink-0 flex items-center justify-center">
+                                {isUserRendering ? (
+                                  <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
+                                    <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                                  </span>
+                                ) : isUserSuccess ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
+                                    ✓
+                                  </span>
+                                ) : isUserError ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
+                                    ✕
+                                  </span>
+                                ) : (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
+                                    ○
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                                  {userGroup.userName}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                  Tim {userGroup.teamName}
+                                </span>
+                                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                                  (Petugas #{uIdx + 1} •{" "}
+                                  {userGroup.completedWeeks}/
+                                  {userGroup.totalWeeks} Dokumen Mingguan selesai)
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {isUserRendering && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                                  <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                  <span>Memproses Rekap...</span>
+                                </span>
+                              )}
+                              {isUserSuccess && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                  Dokumen Selesai ✓
+                                </span>
+                              )}
+                              {isUserError && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                                  Error ✕
+                                </span>
+                              )}
+                              {userGroup.status === "pending" && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                                  Menunggu Antrean
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
+                            {userGroup.weeks.map((weekItem) => {
+                              const isWeekRendering =
+                                weekItem.status === "rendering";
+                              const isWeekSuccess =
+                                weekItem.status === "success";
+                              const isWeekError = weekItem.status === "error";
+
+                              return (
+                                <div
+                                  key={weekItem.id}
+                                  className={`flex flex-wrap items-center justify-between gap-2.5 py-2 px-3 rounded-xl border transition-all text-xs ${
+                                    isWeekRendering
+                                      ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
+                                      : isWeekSuccess
+                                        ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
+                                        : isWeekError
+                                          ? "bg-red-500/10 border-red-500/30"
+                                          : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
+                                      └─
+                                    </span>
+
+                                    <div className="shrink-0 flex items-center justify-center">
+                                      {isWeekRendering ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
+                                          <SpinnerIcon className="h-3 w-3" />
+                                        </span>
+                                      ) : isWeekSuccess ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                          ✓
+                                        </span>
+                                      ) : isWeekError ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
+                                          ✕
+                                        </span>
+                                      ) : (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
+                                          ○
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0 flex flex-col gap-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-bold text-[var(--text-primary)]">
+                                          Laporan Mingguan • {weekItem.periodLabel} ({weekItem.totalWeeksCount || weekItem.weeks?.length || 0} Minggu)
+                                        </span>
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30">
+                                          1 File Bulanan (TTD Kabid di Akhir Bulan)
+                                        </span>
+                                        <span className="text-[var(--text-muted)] text-[11px]">
+                                          • {weekItem.totalActivitiesCount} Total Aktivitas
+                                        </span>
+                                        <span className="text-[10.5px] font-mono text-[var(--text-muted)] opacity-80 truncate max-w-xs sm:max-w-md">
+                                          ({weekItem.pdfFileName})
+                                        </span>
+                                        {weekItem.errorMessage && (
+                                          <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                                            ({weekItem.errorMessage})
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Rincian minggu dalam file bulanan ini */}
+                                      {weekItem.weeks && weekItem.weeks.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                          {weekItem.weeks.map((subWeek) => (
+                                            <span
+                                              key={subWeek.weekKey}
+                                              className="px-1.5 py-0.5 rounded text-[10px] bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/20"
+                                            >
+                                              {subWeek.weekLabel} ({subWeek.periodLabel}):{" "}
+                                              <strong
+                                                className={
+                                                  subWeek.showDivisionHead
+                                                    ? "text-purple-600 dark:text-purple-400"
+                                                    : ""
+                                                }
+                                              >
+                                                {subWeek.showDivisionHead
+                                                  ? "TTD Koord + Kabid"
+                                                  : "TTD Koord"}
+                                              </strong>
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isWeekRendering && (
+                                      <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
+                                        <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                        <span>Merender PDF...</span>
+                                      </span>
+                                    )}
+                                    {isWeekSuccess && (
+                                      <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                        Dokumen Terunduh ✓
+                                      </span>
+                                    )}
+                                    {isWeekError && (
+                                      <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
+                                        Gagal ✕
+                                      </span>
+                                    )}
+                                    {weekItem.status === "pending" && (
+                                      <span className="text-[11px] text-[var(--text-muted)] italic">
+                                        Menunggu...
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Action Footer on Progress Page */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    disabled={pdfExporting}
+                    className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
+                  >
+                    ← Kembali ke Seleksi Data
+                  </button>
+
+                  {pdfResult && (
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+                    >
+                      Selesai &amp; Kembali
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* B2. Progress Page for Monthly PDF Massal Export */}
+          {pdfMode === "monthly" &&
+            liveMonthlyPdfProgressState &&
+            (!exportProgressState || exportProgressState.type === "pdf") && (
+              <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
+                {/* Header Progress PDF Page */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+                  <div className="flex items-center gap-3.5">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      disabled={pdfExporting}
+                      className="btn-secondary h-[40px] px-3 text-xs flex items-center gap-2 rounded-xl disabled:opacity-40 cursor-pointer"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-4 w-4"
+                      >
+                        <polyline points="15 18 9 12 15 6" />
+                      </svg>
+                      <span>Kembali ke Seleksi Data</span>
+                    </button>
+                    <div>
+                      <h4 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+                        <span>Progres Export PDF Massal Bulanan</span>
+                        {pdfExporting ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-rose-500/20 text-rose-600 dark:text-rose-400 animate-pulse border border-rose-500/30">
+                            Sedang Merender...
+                          </span>
+                        ) : liveMonthlyPdfProgressState.overallStatus ===
+                          "completed" ? (
+                          <span className="px-2.5 py-0.5 rounded-full text-[10.5px] font-extrabold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            Selesai
+                          </span>
+                        ) : null}
+                      </h4>
+                      <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                        Mengunduh dokumen PDF rekap bulanan konsolidasi per petugas secara otomatis ke perangkat Anda.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold px-3 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                      Total: {liveMonthlyPdfProgressState.totalUsers} Petugas •{" "}
+                      {liveMonthlyPdfProgressState.totalMonthlyDocs} Dokumen Bulanan •{" "}
+                      {liveMonthlyPdfProgressState.totalReports} Laporan
+                    </span>
+                  </div>
+                </div>
+
+                {/* Metric Status Cards & Progress Bar */}
+                <div className="bg-[var(--surface-panel-strong)] rounded-2xl p-4 sm:p-5 border border-[var(--border-soft)] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-bold text-[var(--text-primary)]">
+                    <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                      {pdfExporting ? (
+                        <SpinnerIcon className="h-4 w-4 animate-spin text-rose-600" />
+                      ) : (
+                        <span className="text-emerald-500">✓</span>
+                      )}
+                      <span className="font-extrabold">
+                        {liveMonthlyPdfProgressState.currentMessage}
+                      </span>
+                    </div>
+                    <div className="text-[var(--text-muted)]">
+                      {liveMonthlyPdfProgressState.totalMonthlyDocs > 0
+                        ? Math.round(
+                            (liveMonthlyPdfProgressState.completedDocsCount /
+                              liveMonthlyPdfProgressState.totalMonthlyDocs) *
+                              100,
+                          )
+                        : 0}
+                      % Selesai ({liveMonthlyPdfProgressState.completedDocsCount}/
+                      {liveMonthlyPdfProgressState.totalMonthlyDocs} Dokumen)
+                    </div>
+                  </div>
+
+                  {/* Main Animated Progress Bar */}
+                  <div className="w-full bg-[var(--surface-muted)] h-3 rounded-full overflow-hidden border border-[var(--border-soft)]">
+                    <div
+                      className="h-full bg-gradient-to-r from-rose-600 via-purple-600 to-emerald-500 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          liveMonthlyPdfProgressState.totalMonthlyDocs > 0
+                            ? Math.min(
+                                100,
+                                (liveMonthlyPdfProgressState.completedDocsCount /
+                                  liveMonthlyPdfProgressState.totalMonthlyDocs) *
+                                  100,
+                              )
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  {/* Quick Metrics Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Petugas Aktif
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] truncate mt-0.5">
+                        {liveMonthlyPdfProgressState.currentUserName || "-"}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Dokumen Terunduh
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {liveMonthlyPdfProgressState.completedDocsCount} /{" "}
+                        {liveMonthlyPdfProgressState.totalMonthlyDocs}
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Laporan Tercover
+                      </span>
+                      <p className="text-sm font-bold text-[var(--text-primary)] mt-0.5">
+                        {liveMonthlyPdfProgressState.totalReports} Laporan
+                      </p>
+                    </div>
+                    <div className="p-3 rounded-xl bg-[var(--surface-muted)]/40 border border-[var(--border-soft)]/60">
+                      <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                        Ukuran Kertas
+                      </span>
+                      <p className="text-sm font-bold text-rose-600 dark:text-rose-400 mt-0.5 uppercase">
+                        {paperFormat}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hierarchical Progress Tree View */}
+                <div className="space-y-3">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-2">
+                    <span>Struktur Antrean &amp; Status Dokumen PDF Bulanan</span>
+                  </h5>
+
+                  <div className="rounded-2xl border border-[var(--border-soft)] divide-y divide-[var(--border-soft)] bg-[var(--surface-panel-strong)] overflow-hidden shadow-2xs">
+                    {liveMonthlyPdfProgressState.users.map((userGroup, uIdx) => {
+                      const isUserRendering = userGroup.status === "rendering";
+                      const isUserSuccess = userGroup.status === "success";
+                      const isUserError = userGroup.status === "error";
+
+                      return (
+                        <div
+                          key={userGroup.userName}
+                          className={`p-3.5 sm:p-4 space-y-2.5 transition ${
+                            isUserRendering
+                              ? "bg-rose-500/5"
+                              : isUserError
+                                ? "bg-red-500/5"
+                                : ""
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="shrink-0 flex items-center justify-center">
+                                {isUserRendering ? (
+                                  <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold border border-rose-500/50 shadow-xs animate-pulse">
+                                    <SpinnerIcon className="h-3.5 w-3.5 animate-spin" />
+                                  </span>
+                                ) : isUserSuccess ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-xs border border-emerald-500/40 shadow-2xs">
+                                    ✓
+                                  </span>
+                                ) : isUserError ? (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-xs border border-red-500/40 shadow-2xs">
+                                    ✕
+                                  </span>
+                                ) : (
+                                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-xs">
+                                    ○
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-[var(--text-primary)] truncate">
+                                  {userGroup.userName}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                  Tim {userGroup.teamName}
+                                </span>
+                                <span className="text-[11px] text-[var(--text-muted)] font-medium">
+                                  (Petugas #{uIdx + 1} •{" "}
+                                  {userGroup.completedMonths}/
+                                  {userGroup.totalMonths} Dokumen Bulanan selesai)
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {isUserRendering && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                                  <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                  <span>Memproses Rekap...</span>
+                                </span>
+                              )}
+                              {isUserSuccess && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                  Dokumen Selesai ✓
+                                </span>
+                              )}
+                              {isUserError && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
+                                  Error ✕
+                                </span>
+                              )}
+                              {userGroup.status === "pending" && (
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                                  Menunggu Antrean
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="ml-3 pl-3.5 sm:pl-4 border-l-2 border-dashed border-rose-500/30 dark:border-rose-800/40 space-y-1.5 py-0.5">
+                            {userGroup.months.map((monthItem) => {
+                              const isMonthRendering =
+                                monthItem.status === "rendering";
+                              const isMonthSuccess =
+                                monthItem.status === "success";
+                              const isMonthError = monthItem.status === "error";
+
+                              return (
+                                <div
+                                  key={monthItem.id}
+                                  className={`flex flex-wrap items-center justify-between gap-2.5 py-2 px-3 rounded-xl border transition-all text-xs ${
+                                    isMonthRendering
+                                      ? "bg-rose-500/10 border-rose-500/40 ring-1 ring-rose-500/20"
+                                      : isMonthSuccess
+                                        ? "bg-[var(--surface-muted)]/30 border-emerald-500/20"
+                                        : isMonthError
+                                          ? "bg-red-500/10 border-red-500/30"
+                                          : "bg-[var(--surface-muted)]/15 border-transparent opacity-75"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <span className="text-[var(--text-muted)] font-mono font-bold text-xs select-none">
+                                      └─
+                                    </span>
+
+                                    <div className="shrink-0 flex items-center justify-center">
+                                      {isMonthRendering ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/25 text-rose-600 dark:text-rose-300 font-bold border border-rose-500/50 animate-spin">
+                                          <SpinnerIcon className="h-3 w-3" />
+                                        </span>
+                                      ) : isMonthSuccess ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                          ✓
+                                        </span>
+                                      ) : isMonthError ? (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/20 text-red-600 dark:text-red-400 font-bold text-[10px] border border-red-500/30">
+                                          ✕
+                                        </span>
+                                      ) : (
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-500/10 text-slate-400 border border-slate-300 dark:border-slate-700 font-bold text-[9px]">
+                                          ○
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-[var(--text-primary)]">
+                                        {monthItem.periodLabel}
+                                      </span>
+                                      <span className="text-[var(--text-muted)] text-[11px]">
+                                        • {monthItem.reports.length} Hari Laporan • {monthItem.totalActivitiesCount} Aktivitas
+                                      </span>
+                                      <span className="text-[10.5px] font-mono text-[var(--text-muted)] opacity-80 truncate max-w-xs sm:max-w-md">
+                                        ({monthItem.pdfFileName})
+                                      </span>
+                                      {monthItem.errorMessage && (
+                                        <span className="text-[11px] text-red-600 dark:text-red-400 font-medium">
+                                          ({monthItem.errorMessage})
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isMonthRendering && (
+                                      <span className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1 animate-pulse text-[11px]">
+                                        <SpinnerIcon className="h-3 w-3 animate-spin" />
+                                        <span>Merender PDF...</span>
+                                      </span>
+                                    )}
+                                    {isMonthSuccess && (
+                                      <span className="font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                                        Dokumen Terunduh ✓
+                                      </span>
+                                    )}
+                                    {isMonthError && (
+                                      <span className="font-bold text-red-600 dark:text-red-400 text-[11px]">
+                                        Gagal ✕
+                                      </span>
+                                    )}
+                                    {monthItem.status === "pending" && (
+                                      <span className="text-[11px] text-[var(--text-muted)] italic">
+                                        Menunggu...
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Action Footer on Progress Page */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-soft)] pt-5">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("selection")}
+                    disabled={pdfExporting}
+                    className="btn-secondary h-[44px] px-5 text-xs font-bold rounded-xl disabled:opacity-40 cursor-pointer"
+                  >
+                    ← Kembali ke Seleksi Data
+                  </button>
+
+                  {pdfResult && (
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("selection")}
+                      className="btn-primary h-[44px] px-6 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+                    >
+                      Selesai &amp; Kembali
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+          {/* B3. Progress Page for Daily PDF Massal Export */}
+          {pdfMode === "daily" &&
+            livePdfProgressState &&
             (!exportProgressState || exportProgressState.type === "pdf") && (
               <div className="surface-card rounded-[28px] p-5 sm:p-6 space-y-6 border border-rose-500/20 shadow-sm animate-fadeIn">
                 {/* Header Progress PDF Page */}
@@ -4244,6 +5274,14 @@ function BulkExportPanel(props: {
             )}
         </>
       )}
+
+      {/* Dialog Backup Foto Bukti */}
+      <PhotoBackupDialog
+        isOpen={showPhotoBackupModal}
+        onClose={() => setShowPhotoBackupModal(false)}
+        reports={props.reports}
+        onRefreshReports={props.onRefreshReports}
+      />
     </div>
   );
 }
@@ -4258,11 +5296,13 @@ function BulkUploadPanel(props: {
     onProgressStateChange?: (state: BulkUploadProgressState) => void,
   ) => Promise<BulkUploadResult>;
   deviceBackupBulkUploading?: boolean;
+  onRefreshReports?: () => Promise<void> | void;
 }) {
   const [viewMode, setViewMode] = useState<"selection" | "progress">(
     "selection",
   );
   const [sourceType, setSourceType] = useState<"device" | "json">("device");
+  const [showPhotoBackupModal, setShowPhotoBackupModal] = useState(false);
   const [deviceReports, setDeviceReports] = useState<Report[]>([]);
   const [importedReports, setImportedReports] = useState<Report[]>([]);
   const [importedFileName, setImportedFileName] = useState("");
@@ -4893,6 +5933,28 @@ function BulkUploadPanel(props: {
                   : "Import File JSON Cadangan"}
               </span>
             </label>
+
+            <button
+              type="button"
+              onClick={() => setShowPhotoBackupModal(true)}
+              className="h-[42px] px-4 text-xs font-bold rounded-xl transition flex items-center gap-2 border bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/25 hover:bg-sky-500/20 cursor-pointer shadow-sm"
+              title="Unduh backup foto bukti kegiatan (ZIP) & bebaskan kuota storage Supabase"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4 text-sky-500"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Backup Foto (ZIP)</span>
+            </button>
           </div>
         </div>
 
@@ -5728,6 +6790,29 @@ function BulkUploadPanel(props: {
                   </svg>
                   JSON
                 </button>
+
+                {/* Backup Foto ZIP */}
+                <button
+                  type="button"
+                  onClick={() => setShowPhotoBackupModal(true)}
+                  className="h-[38px] px-3 text-[11px] font-bold rounded-xl border border-sky-500/25 bg-sky-500/8 hover:bg-sky-500/15 text-sky-600 dark:text-sky-400 flex items-center gap-1.5 transition cursor-pointer"
+                  title="Unduh cadangan foto bukti kegiatan sebagai file ZIP"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="h-3.5 w-3.5 text-sky-500"
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Foto (ZIP)
+                </button>
               </div>
 
               {/* ── Spacer ── */}
@@ -6350,6 +7435,14 @@ function BulkUploadPanel(props: {
           </div>,
           document.body,
         )}
+
+      {/* Dialog Backup Foto Bukti */}
+      <PhotoBackupDialog
+        isOpen={showPhotoBackupModal}
+        onClose={() => setShowPhotoBackupModal(false)}
+        reports={props.reports}
+        onRefreshReports={props.onRefreshReports}
+      />
     </div>
   );
 }
@@ -7391,6 +8484,7 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                     props.onHandleDownloadDeviceBackupJson
                   }
                   deviceBackupExporting={props.deviceBackupExporting}
+                  onRefreshReports={props.onReloadReports}
                 />
               ) : null}
               {activeSection === "bulk-upload" ? (
@@ -7400,6 +8494,7 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                     props.onHandleBulkUploadDeviceBackup
                   }
                   deviceBackupBulkUploading={props.deviceBackupBulkUploading}
+                  onRefreshReports={props.onReloadReports}
                 />
               ) : null}
               {activeSection === "sounds" ? (

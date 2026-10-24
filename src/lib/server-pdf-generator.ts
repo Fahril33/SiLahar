@@ -186,3 +186,98 @@ export async function generatePdfBuffer(
     await browser.close();
   }
 }
+
+export function wrapHtmlForPdf(
+  htmlBody: string,
+  title: string = "Laporan"
+): string {
+  if (htmlBody.includes("<!DOCTYPE html") || htmlBody.includes("<html")) {
+    return htmlBody;
+  }
+
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <style>
+    ${PDF_REPORT_CSS}
+    
+    /* Strict print & page layout optimizations for Chromium */
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #ffffff !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    
+    .pdf-report-shell, .pdf-report-page {
+      width: 100% !important;
+      min-height: auto !important;
+      padding: 0 !important;
+    }
+
+    .pdf-report-main-table tbody.date-group-tbody,
+    .pdf-report-main-table tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .pdf-report-approval {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .pdf-report-notes {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+  </style>
+</head>
+<body>
+  ${htmlBody}
+</body>
+</html>`;
+}
+
+export async function generatePdfBufferFromHtml(
+  htmlBody: string,
+  paperFormat?: string,
+  title: string = "Laporan"
+): Promise<Buffer> {
+  const fullHtml = wrapHtmlForPdf(htmlBody, title);
+  const browser = await getBrowserInstance();
+
+  try {
+    const page = await browser.newPage();
+
+    // Set content and wait for images to load
+    await page.setContent(fullHtml, {
+      waitUntil: ["load", "domcontentloaded"],
+      timeout: 35000,
+    });
+
+    try {
+      await page.evaluateHandle("document.fonts.ready");
+    } catch {}
+
+    const dimensions = getPdfPaperDimensions(paperFormat);
+
+    const pdfUint8Array = await page.pdf({
+      ...dimensions,
+      printBackground: true,
+      margin: {
+        top: "20mm",
+        right: "18mm",
+        bottom: "20mm",
+        left: "20mm",
+      },
+    });
+
+    return Buffer.from(pdfUint8Array);
+  } finally {
+    await browser.close();
+  }
+}
+

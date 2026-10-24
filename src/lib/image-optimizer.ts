@@ -1,11 +1,6 @@
-const MAX_IMAGE_EDGE_PX = 1600;
-const TARGET_MIME_TYPE = "image/webp";
-const TARGET_QUALITY = 0.82;
-const MIN_SIZE_TO_OPTIMIZE_BYTES = 180 * 1024;
-
-function toOptimizedFileName(fileName: string) {
-  return fileName.replace(/\.[^.]+$/, "") + ".webp";
-}
+const MAX_IMAGE_EDGE_PX = 1280;
+const TARGET_QUALITY = 0.75;
+const MAX_FILE_SIZE_BYTES = 350 * 1024; // Target maksimal ~350 KB per gambar
 
 function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -26,9 +21,17 @@ function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   });
 }
 
-async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+async function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  mimeType: string,
+  quality: number,
+): Promise<Blob | null> {
   return new Promise<Blob | null>((resolve) => {
-    canvas.toBlob(resolve, TARGET_MIME_TYPE, TARGET_QUALITY);
+    try {
+      canvas.toBlob(resolve, mimeType, quality);
+    } catch {
+      resolve(null);
+    }
   });
 }
 
@@ -171,12 +174,14 @@ async function convertHeicToJpeg(file: File): Promise<File> {
 /**
  * Optimasi gambar laporan:
  * 1. Otomatis deteksi & konversi HEIC/HEIF ke JPEG
- * 2. Downscale jika resolusi di atas batas piksel maksimal
- * 3. Konversi format output ke WebP berkualitas tinggi dengan kompresi optimal
+ * 2. Downscale jika resolusi di atas 1280px
+ * 3. Kompresi ke WebP atau JPEG berkualitas optimal dengan target ukuran < 350 KB
+ * 4. Mencegah bug fallback canvas browser yang diam-diam menghasilkan PNG 2MB+
  */
 export async function optimizeReportImage(file: File): Promise<File> {
   let workingFile = file;
 
+  // 1. Konversi HEIC / HEIF jika dari iPhone
   const isHeic = await isHeicImage(file);
   if (isHeic) {
     try {
@@ -194,48 +199,89 @@ export async function optimizeReportImage(file: File): Promise<File> {
     return workingFile;
   }
 
-  if (workingFile.size < MIN_SIZE_TO_OPTIMIZE_BYTES && workingFile.type === TARGET_MIME_TYPE) {
+  // Jika file sudah WebP/JPEG dan ukurannya sudah sangat ringan (< 150 KB), tidak perlu kompresi ulang
+  if (
+    workingFile.size < 150 * 1024 &&
+    (workingFile.type === "image/webp" || workingFile.type === "image/jpeg")
+  ) {
     return workingFile;
   }
 
   try {
     const image = await loadImageFromFile(workingFile);
-    const scale = Math.min(
-      1,
-      MAX_IMAGE_EDGE_PX / Math.max(image.naturalWidth, image.naturalHeight, 1),
-    );
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
+    const renderCanvas = (maxEdge: number): { canvas: HTMLCanvasElement; width: number; height: number } => {
+      const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight, 1));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
 
-    const context = canvas.getContext("2d", {
-      alpha: false,
-      desynchronized: true,
-    });
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
 
-    if (!context) {
+      const context = canvas.getContext("2d", {
+        alpha: false,
+        desynchronized: true,
+      });
+
+      if (context) {
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+      }
+
+      return { canvas, width, height };
+    };
+
+    // Pass 1: Maksimal 1280px pada sisi terpanjang dengan quality 0.75
+    let { canvas } = renderCanvas(MAX_IMAGE_EDGE_PX);
+    let quality = TARGET_QUALITY;
+
+    // Coba WebP terlebih dahulu
+    let bestBlob = await canvasToBlob(canvas, "image/webp", quality);
+
+    // KRITIKAL: Banyak browser (Safari/iOS/Webview) jika tidak mendukung encoding WebP pada canvas
+    // akan secara diam-diam menghasilkan "image/png" tanpa kompresi yang ukurannya 2MB - 3MB!
+    // Deteksi jika tipe yang dihasilkan adalah PNG atau bukan WebP, lalu fallback ke JPEG:
+    if (!bestBlob || bestBlob.type === "image/png" || bestBlob.type !== "image/webp") {
+      bestBlob = await canvasToBlob(canvas, "image/jpeg", quality);
+    } else {
+      // Jika WebP berhasil, bandingkan dengan JPEG untuk memilih ukuran paling efisien
+      const jpegBlob = await canvasToBlob(canvas, "image/jpeg", quality);
+      if (jpegBlob && jpegBlob.size < bestBlob.size) {
+        bestBlob = jpegBlob;
+      }
+    }
+
+    // Pass 2: Jika ukuran file masih lebih besar dari 350 KB, lakukan kompresi adaptif lanjutan (1024px, 0.70)
+    if (bestBlob && bestBlob.size > MAX_FILE_SIZE_BYTES) {
+      const secondPass = renderCanvas(1024);
+      const secondWebp = await canvasToBlob(secondPass.canvas, "image/webp", 0.70);
+      const secondJpeg = await canvasToBlob(secondPass.canvas, "image/jpeg", 0.70);
+
+      if (secondWebp && secondWebp.type === "image/webp" && secondWebp.size <= (secondJpeg?.size || Infinity)) {
+        bestBlob = secondWebp;
+      } else if (secondJpeg && secondJpeg.type !== "image/png") {
+        bestBlob = secondJpeg;
+      }
+    }
+
+    if (!bestBlob) {
       return workingFile;
     }
 
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
+    // Tentukan ekstensi yang benar sesuai format riil blob
+    const isWebp = bestBlob.type === "image/webp";
+    const extension = isWebp ? ".webp" : ".jpg";
+    const baseName = workingFile.name.replace(/\.[^.]+$/, "");
+    const finalFileName = `${baseName}${extension}`;
 
-    const optimizedBlob = await canvasToBlob(canvas);
-
-    if (!optimizedBlob || (optimizedBlob.size >= workingFile.size && workingFile.type === TARGET_MIME_TYPE)) {
-      return workingFile;
-    }
-
-    return new File([optimizedBlob], toOptimizedFileName(workingFile.name), {
-      type: optimizedBlob.type || TARGET_MIME_TYPE,
+    return new File([bestBlob], finalFileName, {
+      type: bestBlob.type,
       lastModified: workingFile.lastModified || Date.now(),
     });
   } catch (error) {
-    console.error("Gagal melakukan kompresi canvas gambar:", error);
+    console.error("Gagal melakukan kompresi gambar:", error);
     return workingFile;
   }
 }
@@ -243,4 +289,5 @@ export async function optimizeReportImage(file: File): Promise<File> {
 export async function optimizeReportImages(files: File[]): Promise<File[]> {
   return Promise.all(files.map((file) => optimizeReportImage(file)));
 }
+
 

@@ -1494,6 +1494,7 @@ export async function executeBulkPdfDownload(
   selectedActivitiesByReportId: Record<string, number[]>,
   paperFormat: "a4" | "f4" | "legal" | "letter" = "a4",
   onProgressStateChange?: (state: BulkPdfProgressState) => void,
+  preferredEngine: "puppeteer" | "html2pdf" = "puppeteer",
 ): Promise<{ success: boolean; downloadedCount: number; errors: string[] }> {
   const initialProgress = buildInitialBulkPdfProgressState(
     reports,
@@ -1538,7 +1539,13 @@ export async function executeBulkPdfDownload(
           ),
         };
 
-        await exportReportAsPdf(filteredReport, paperFormat);
+        await exportReportAsPdf(
+          filteredReport,
+          paperFormat,
+          undefined,
+          undefined,
+          preferredEngine,
+        );
         await new Promise((res) => setTimeout(res, 350));
 
         reportItem.status = "success";

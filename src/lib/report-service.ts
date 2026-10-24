@@ -15,6 +15,7 @@ import type {
   Report,
   ReporterDirectoryProfile,
 } from "../types/report";
+import { optimizeReportImage } from "./image-optimizer";
 
 const PROOF_BUCKET = "daily-report-proofs";
 
@@ -933,11 +934,16 @@ export async function saveReportToDatabase(
         const activityId = activityIds[index];
         const uploadedList = [];
 
-        for (const [fileIndex, file] of files.entries()) {
+        for (const [fileIndex, rawFile] of files.entries()) {
+          // Kompresi ketat sebelum upload: downscale & kompresi ke WebP/JPEG (< 350 KB)
+          const file = await optimizeReportImage(rawFile);
           const storagePath = `${reportId}/${activityId}/${Date.now()}-${fileIndex}-${sanitizeFileName(file.name)}`;
           const { error: uploadError } = await supabase.storage
             .from(PROOF_BUCKET)
-            .upload(storagePath, file, { upsert: false });
+            .upload(storagePath, file, {
+              upsert: false,
+              contentType: file.type || "image/jpeg",
+            });
 
           if (uploadError) {
             throw uploadError;
