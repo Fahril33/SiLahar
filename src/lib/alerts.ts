@@ -110,6 +110,93 @@ export async function askConfirmation(title: string, text: string, confirmText: 
   return result.isConfirmed;
 }
 
+export interface AskPasswordConfirmationOptions {
+  title: string;
+  text: string;
+  confirmButtonText?: string;
+  cancelButtonText?: string;
+  placeholder?: string;
+  onValidate?: (password: string) => Promise<string | null | undefined> | (string | null | undefined);
+}
+
+export async function askPasswordConfirmation(
+  options: AskPasswordConfirmationOptions,
+): Promise<{ confirmed: boolean; password?: string }> {
+  const result = await Swal.fire({
+    title: options.title,
+    text: options.text,
+    icon: "warning",
+    input: "password",
+    inputPlaceholder: options.placeholder || "Masukkan password administrator...",
+    inputAttributes: {
+      autocapitalize: "off",
+      autocorrect: "off",
+      autocomplete: "off",
+      name: "silahar_verify_pwd_challenge",
+      id: "silahar_verify_pwd_challenge",
+      "data-lpignore": "true",
+      "data-1p-ignore": "true",
+      "data-form-type": "other",
+      spellcheck: "false",
+    },
+    didOpen: () => {
+      const input = Swal.getInput();
+      if (input) {
+        input.setAttribute("autocomplete", "off");
+        input.setAttribute("data-lpignore", "true");
+        input.setAttribute("data-1p-ignore", "true");
+        input.setAttribute("data-form-type", "other");
+        input.readOnly = true;
+        setTimeout(() => {
+          input.readOnly = false;
+          input.focus();
+        }, 120);
+      }
+    },
+    showCancelButton: true,
+    confirmButtonText: options.confirmButtonText || "Konfirmasi & Lanjutkan",
+    cancelButtonText: options.cancelButtonText || "Batal",
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    customClass: {
+      popup: confirmPopupClass,
+      title: "swal-dialog-title",
+      htmlContainer: "swal-dialog-text",
+      icon: "swal-dialog-icon",
+      input: "swal-password-input",
+      confirmButton: "swal-confirm swal-btn-danger",
+      cancelButton: "swal-cancel",
+    },
+    buttonsStyling: false,
+    preConfirm: async (password: string) => {
+      const trimmed = (password || "").trim();
+      if (!trimmed) {
+        Swal.showValidationMessage("Password tidak boleh kosong!");
+        return false;
+      }
+      if (options.onValidate) {
+        try {
+          const err = await options.onValidate(trimmed);
+          if (err) {
+            Swal.showValidationMessage(err);
+            return false;
+          }
+        } catch (validationErr: any) {
+          Swal.showValidationMessage(validationErr?.message || "Validasi password gagal.");
+          return false;
+        }
+      }
+      return trimmed;
+    },
+    allowOutsideClick: () => !Swal.isLoading(),
+  });
+
+  if (result.isConfirmed && typeof result.value === "string") {
+    return { confirmed: true, password: result.value };
+  }
+  return { confirmed: false };
+}
+
 export async function askAcknowledge(
   title: string,
   text: string,

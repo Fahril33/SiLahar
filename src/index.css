@@ -430,6 +430,37 @@ select:focus {
   color: var(--secondary-text);
 }
 
+.swal-confirm.swal-btn-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4) !important;
+}
+
+.swal-confirm.swal-btn-danger:hover {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+}
+
+.swal2-popup .swal-password-input {
+  box-sizing: border-box !important;
+  width: 90% !important;
+  max-width: 320px !important;
+  margin: 1.1rem auto 0.4rem !important;
+  padding: 0.75rem 1.1rem !important;
+  font-size: 0.95rem !important;
+  letter-spacing: 0.12em !important;
+  border-radius: 14px !important;
+  border: 1px solid var(--field-border, rgba(255, 255, 255, 0.2)) !important;
+  background: var(--field-bg, rgba(0, 0, 0, 0.35)) !important;
+  color: var(--text-primary, #ffffff) !important;
+  text-align: center !important;
+  transition: all 0.2s ease !important;
+}
+
+.swal2-popup .swal-password-input:focus {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25) !important;
+}
+
 /* Slow Save Fallback Modal */
 .swal-slow-save-popup {
   padding: 1.35rem 1.35rem 1.2rem !important;

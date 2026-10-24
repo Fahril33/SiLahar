@@ -12,7 +12,8 @@ import {
   type PhotoBackupProgress,
   type PhotoBackupResult,
 } from "../lib/photo-backup-service";
-import { askConfirmation } from "../lib/alerts";
+import { askConfirmation, askPasswordConfirmation } from "../lib/alerts";
+import { supabase } from "../lib/supabase";
 
 const PRUNED_PATHS_STORAGE_KEY = "silahar:pruned_storage_paths";
 
@@ -236,6 +237,58 @@ export function PhotoBackupDialog({
     }
   };
 
+  const verifyAdminDeletionPassword = async (password: string): Promise<string | null> => {
+    const trimmed = (password || "").trim();
+    if (!trimmed) {
+      return "Password administrator tidak boleh kosong.";
+    }
+
+    // 1. Password Master Administrator
+    const masterPasswords = [
+      "silahar2026",
+      "admin123",
+      "123123123",
+      "admin",
+      "silaharadmin",
+      "lahar2026",
+    ];
+    if (masterPasswords.includes(trimmed.toLowerCase()) || masterPasswords.includes(trimmed)) {
+      return null;
+    }
+
+    // 2. Verifikasi akun autentikasi Supabase jika sedang ada sesi login aktif
+    if (supabase) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const currentEmail = sessionData?.session?.user?.email;
+        if (currentEmail) {
+          const { error } = await supabase.auth.signInWithPassword({
+            email: currentEmail,
+            password: trimmed,
+          });
+          if (!error) {
+            return null;
+          }
+        }
+      } catch {
+        // Fallback jika network error
+      }
+
+      // 3. Verifikasi dengan sesi reporter/petugas aktif di browser
+      try {
+        const rawUserSession = localStorage.getItem("silahar:user-session");
+        if (rawUserSession) {
+          const parsed = JSON.parse(rawUserSession);
+          if (parsed?.password && parsed.password === trimmed) {
+            return null;
+          }
+        }
+      } catch {}
+    }
+
+    return "Password salah! Otorisasi penghapusan foto Supabase ditolak.";
+  };
+
   // Bersihkan dari storage Supabase setelah berhasil backup
   const handlePruneStorage = async (targetsToPrune?: string[]) => {
     const pathsToClean = targetsToPrune && targetsToPrune.length > 0
@@ -247,13 +300,18 @@ export function PhotoBackupDialog({
       return;
     }
 
-    const confirmed = await askConfirmation(
-      "Keluarkan Foto dari Supabase Storage?",
-      `PERHATIAN: Tindakan ini akan menghapus ${pathsToClean.length} file gambar fisik dari Supabase Storage untuk mengosongkan kuota penyimpanan gratis Anda.\n\n` +
-        `Data teks, tanggal, nama reporter, dan relasi laporan di database TETAP UTUH.\n` +
-        `Pastikan file cadangan ZIP telah Anda simpan di komputer sebelum melanjutkan!`,
-      "Ya, Bersihkan Storage"
-    );
+    const { confirmed } = await askPasswordConfirmation({
+      title: "Proteksi Otorisasi: Hapus Foto Supabase",
+      text:
+        `PERINGATAN KRUSIAL: Anda akan menghapus ${pathsToClean.length} file gambar fisik dari Supabase Storage (bucket daily-report-proofs).\n\n` +
+        `Data teks, tanggal, nama petugas, dan relasi laporan di database TETAP UTUH & AMAN.\n` +
+        `Pastikan Anda telah mengunduh arsip ZIP ke komputer sebelum membersihkan storage!\n\n` +
+        `Masukkan password administrator untuk memproses penghapusan:`,
+      confirmButtonText: "Verifikasi & Hapus File",
+      cancelButtonText: "Batal",
+      placeholder: "Masukkan password administrator...",
+      onValidate: verifyAdminDeletionPassword,
+    });
     if (!confirmed) return;
 
     setIsPruning(true);
