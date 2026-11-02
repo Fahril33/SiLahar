@@ -2,7 +2,11 @@ import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
-import { supabase } from "./supabase";
+import {
+  supabase,
+  getReadSupabaseClients,
+  getClientForUrl,
+} from "./supabase";
 import { logSafeError, logSafeWarn } from "./logger";
 import { mapReportRow } from "./report-mappers";
 import {
@@ -116,7 +120,8 @@ async function removeExistingAssets(report: Report) {
 }
 
 export async function fetchReports() {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return [];
   }
 
@@ -173,124 +178,217 @@ export async function fetchReports() {
       )
     `;
 
-  // Fetch in batches of 1000 to prevent PostgREST default row-count cut-offs
-  // and guarantee users can always read all historical reports regardless of size.
-  const allRows: any[] = [];
-  const pageSize = 1000;
-  let from = 0;
+  const fetchClientReports = async (client: (typeof clients)[0]) => {
+    const allRows: any[] = [];
+    const pageSize = 1000;
+    let from = 0;
 
-  while (true) {
-    const { data, error } = await supabase
-      .from("daily_reports")
-      .select(selectQuery)
-      .order("report_date", { ascending: false })
-      .order("updated_at", { ascending: false })
-      .range(from, from + pageSize - 1);
+    while (true) {
+      const { data, error } = await client
+        .from("daily_reports")
+        .select(selectQuery)
+        .order("report_date", { ascending: false })
+        .order("updated_at", { ascending: false })
+        .range(from, from + pageSize - 1);
 
-    if (error) {
-      throw error;
+      if (error) {
+        logSafeWarn("Gagal fetch daily_reports dari client Supabase:", error);
+        break;
+      }
+
+      if (!data || data.length === 0) {
+        break;
+      }
+
+      allRows.push(...data);
+      if (data.length < pageSize) {
+        break;
+      }
+      from += pageSize;
     }
 
-    if (!data || data.length === 0) {
-      break;
-    }
+    return allRows.map((row) =>
+      mapReportRow(
+        {
+          ...row,
+          report_template_notes:
+            (row.report_template as ReportTemplateRow | null)?.report_template_notes?.length
+              ? (row.report_template as ReportTemplateRow).report_template_notes
+              : templateFallback.map((note, index) => ({
+                  note_order: index + 1,
+                  note_text: note,
+                })),
+        },
+        client,
+      ),
+    );
+  };
 
-    allRows.push(...data);
-    if (data.length < pageSize) {
-      break;
+  const results = await Promise.all(clients.map((c) => fetchClientReports(c)));
+
+  // Deduplikasi by ID: primary client (new database) takes precedence
+  const reportMap = new Map<string, Report>();
+  for (const list of results) {
+    for (const report of list) {
+      if (!reportMap.has(report.id)) {
+        reportMap.set(report.id, report);
+      }
     }
-    from += pageSize;
   }
 
-  return allRows.map((row) =>
-    mapReportRow({
-      ...row,
-      report_template_notes:
-        (row.report_template as ReportTemplateRow | null)?.report_template_notes?.length
-          ? (row.report_template as ReportTemplateRow).report_template_notes
-          : templateFallback.map((note, index) => ({
-              note_order: index + 1,
-              note_text: note,
-            })),
-    }),
-  );
+  const merged = Array.from(reportMap.values());
+  merged.sort((a, b) => {
+    const dateComp = b.reportDate.localeCompare(a.reportDate);
+    if (dateComp !== 0) return dateComp;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+
+  return merged;
 }
 
 export async function fetchReporterDirectoryNames() {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from("reporter_directory")
-    .select("full_name")
-    .eq("is_active", true)
-    .order("full_name", { ascending: true });
+  const nameSet = new Set<string>();
 
-  if (error) {
-    throw error;
-  }
+  await Promise.all(
+    clients.map(async (client) => {
+      try {
+        const { data, error } = await client
+          .from("reporter_directory")
+          .select("full_name")
+          .eq("is_active", true)
+          .order("full_name", { ascending: true });
 
-  return (data ?? [])
-    .map((row) => row.full_name)
-    .filter((name) => !isAdminName(name));
+        if (error) {
+          logSafeWarn("Gagal fetch reporter_directory dari salah satu client:", error);
+          return;
+        }
+
+        for (const row of data ?? []) {
+          if (row.full_name && !isAdminName(row.full_name)) {
+            nameSet.add(row.full_name.trim());
+          }
+        }
+      } catch (err) {
+        logSafeWarn("Error fetch reporter_directory:", err);
+      }
+    }),
+  );
+
+  return Array.from(nameSet).sort((a, b) => a.localeCompare(b));
 }
 
 export async function fetchReporterDirectoryProfiles() {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from("reporter_directory")
-    .select(
-      "id, full_name, first_reported_at, last_reported_at, total_reports, is_active",
-    )
-    .order("full_name", { ascending: true });
+  const profileMap = new Map<string, ReporterDirectoryProfile>();
 
-  if (error) {
-    throw error;
-  }
+  await Promise.all(
+    clients.map(async (client) => {
+      try {
+        const { data, error } = await client
+          .from("reporter_directory")
+          .select(
+            "id, full_name, first_reported_at, last_reported_at, total_reports, is_active",
+          )
+          .order("full_name", { ascending: true });
 
-  return (data ?? [])
-    .map((row) => mapReporterDirectoryRow(row as ReporterDirectoryRow))
-    .filter((profile) => !isAdminName(profile.fullName));
+        if (error) {
+          logSafeWarn("Gagal fetch reporter_directory profiles dari salah satu client:", error);
+          return;
+        }
+
+        for (const row of (data ?? [])) {
+          const profile = mapReporterDirectoryRow(row as ReporterDirectoryRow);
+          if (isAdminName(profile.fullName)) continue;
+
+          const key = profile.fullName.trim().toUpperCase();
+          const existing = profileMap.get(key);
+          if (!existing) {
+            profileMap.set(key, profile);
+          } else {
+            profileMap.set(key, {
+              ...existing,
+              totalReports: (existing.totalReports || 0) + (profile.totalReports || 0),
+              firstReportedAt:
+                existing.firstReportedAt && profile.firstReportedAt
+                  ? existing.firstReportedAt < profile.firstReportedAt
+                    ? existing.firstReportedAt
+                    : profile.firstReportedAt
+                  : existing.firstReportedAt || profile.firstReportedAt,
+              lastReportedAt:
+                existing.lastReportedAt && profile.lastReportedAt
+                  ? existing.lastReportedAt > profile.lastReportedAt
+                    ? existing.lastReportedAt
+                    : profile.lastReportedAt
+                  : existing.lastReportedAt || profile.lastReportedAt,
+              isActive: existing.isActive || profile.isActive,
+            });
+          }
+        }
+      } catch (err) {
+        logSafeWarn("Error fetch reporter_directory profiles:", err);
+      }
+    }),
+  );
+
+  return Array.from(profileMap.values()).sort((a, b) =>
+    a.fullName.localeCompare(b.fullName),
+  );
 }
 
 export async function fetchReportRules(): Promise<ReportRules> {
-  if (!supabase) {
-    throw new Error("Supabase client belum terkonfigurasi.");
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
+    return initialReportRules;
   }
 
-  const { data: settingData, error: settingError } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("key", "report_rules")
-    .maybeSingle();
+  for (const client of clients) {
+    try {
+      const { data: settingData, error: settingError } = await client
+        .from("app_settings")
+        .select("value")
+        .eq("key", "report_rules")
+        .maybeSingle();
 
-  if (!settingError && settingData?.value) {
-    const val = settingData.value as { allow_any_report_date?: boolean; max_photos_per_activity?: number; system_start_date?: string };
-    return {
-      allowAnyReportDate: Boolean(val.allow_any_report_date),
-      maxPhotosPerActivity: Math.max(1, Number(val.max_photos_per_activity) || 1),
-      systemStartDate: val.system_start_date || "",
-    };
+      if (!settingError && settingData?.value) {
+        const val = settingData.value as {
+          allow_any_report_date?: boolean;
+          max_photos_per_activity?: number;
+          system_start_date?: string;
+        };
+        return {
+          allowAnyReportDate: Boolean(val.allow_any_report_date),
+          maxPhotosPerActivity: Math.max(1, Number(val.max_photos_per_activity) || 1),
+          systemStartDate: val.system_start_date || "",
+        };
+      }
+
+      const { data, error } = await client.rpc("get_report_rules");
+      if (!error && data) {
+        const row = Array.isArray(data) ? data[0] : data;
+        const rules = row as ReportRulesRow | null;
+        if (rules) {
+          return {
+            allowAnyReportDate: Boolean(rules.allow_any_report_date),
+            maxPhotosPerActivity: Math.max(1, Number(rules.max_photos_per_activity) || 1),
+            systemStartDate: rules.system_start_date || "",
+          };
+        }
+      }
+    } catch {
+      // try next client
+    }
   }
 
-  const { data, error } = await supabase.rpc("get_report_rules");
-
-  if (error) {
-    throw error;
-  }
-
-  const row = Array.isArray(data) ? data[0] : data;
-  const rules = row as ReportRulesRow | null;
-
-  return {
-    allowAnyReportDate: Boolean(rules?.allow_any_report_date),
-    maxPhotosPerActivity: Math.max(1, Number(rules?.max_photos_per_activity) || 1),
-    systemStartDate: rules?.system_start_date || "",
-  };
+  return initialReportRules;
 }
 
 export async function fetchNotificationSettings() {
@@ -307,43 +405,50 @@ export async function fetchNotificationSettings() {
     },
   };
 
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return fallback;
   }
 
-  const { data, error } = await supabase.rpc("get_notification_settings");
-
-  if (error) {
-    logSafeWarn(
-      "Gagal memuat notification_settings dari database, memakai fallback lokal.",
-      error,
-    );
-    return fallback;
+  for (const client of clients) {
+    try {
+      const { data, error } = await client.rpc("get_notification_settings");
+      if (!error && data) {
+        const row = (Array.isArray(data) ? data[0] : data) as
+          | NotificationSettingsRow
+          | undefined;
+        if (row) {
+          return {
+            showAdminSoundSettings:
+              row.show_admin_sound_settings !== undefined
+                ? Boolean(row.show_admin_sound_settings)
+                : true,
+            disableSoundResponsesForAllUsers: Boolean(
+              row.disable_sound_responses_for_all_users,
+            ),
+            success: {
+              mode:
+                row.success?.mode === "specific"
+                  ? ("specific" as const)
+                  : ("random" as const),
+              specificFile: row.success?.specific_file ?? null,
+            },
+            fail: {
+              mode:
+                row.fail?.mode === "specific"
+                  ? ("specific" as const)
+                  : ("random" as const),
+              specificFile: row.fail?.specific_file ?? null,
+            },
+          };
+        }
+      }
+    } catch {
+      // try next client
+    }
   }
 
-  const row = (Array.isArray(data) ? data[0] : data) as
-    | NotificationSettingsRow
-    | undefined;
-  return {
-    showAdminSoundSettings: row?.show_admin_sound_settings !== undefined ? Boolean(row.show_admin_sound_settings) : true,
-    disableSoundResponsesForAllUsers: Boolean(
-      row?.disable_sound_responses_for_all_users,
-    ),
-    success: {
-      mode:
-        row?.success?.mode === "specific"
-          ? ("specific" as const)
-          : ("random" as const),
-      specificFile: row?.success?.specific_file ?? null,
-    },
-    fail: {
-      mode:
-        row?.fail?.mode === "specific"
-          ? ("specific" as const)
-          : ("random" as const),
-      specificFile: row?.fail?.specific_file ?? null,
-    },
-  };
+  return fallback;
 }
 
 export async function saveNotificationSettingsToDatabase(
@@ -453,66 +558,70 @@ export function subscribeAdminSession(
 }
 
 export function subscribeReportData(onChange: () => void) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return () => {};
   }
 
-  const client = supabase;
-  const channel = client
-    .channel("silahar-report-data")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "daily_reports" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "daily_report_activities" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "daily_report_activity_photos",
-      },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "reporter_directory" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "app_settings" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "excel_report_templates" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "report_templates" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "report_template_notes" },
-      () => onChange(),
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "report_template_approvers" },
-      () => onChange(),
-    )
-    .subscribe();
+  const channels = clients.map((client, idx) => {
+    return client
+      .channel(`silahar-report-data-${idx}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "daily_reports" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "daily_report_activities" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "daily_report_activity_photos",
+        },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "reporter_directory" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "app_settings" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "excel_report_templates" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "report_templates" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "report_template_notes" },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "report_template_approvers" },
+        () => onChange(),
+      )
+      .subscribe();
+  });
 
   return () => {
-    void client.removeChannel(channel);
+    channels.forEach((channel, idx) => {
+      void clients[idx]?.removeChannel(channel);
+    });
   };
 }
 
@@ -591,46 +700,76 @@ export async function saveReportRulesToDatabase(rules: ReportRules) {
 }
 
 export async function checkReporterNameExists(name: string) {
-  if (!supabase || !name.trim()) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0 || !name.trim()) {
     return false;
   }
 
-  const { data, error } = await supabase
-    .from("reporter_directory")
-    .select("id")
-    .eq("normalized_name", normalizeReporterName(name))
-    .maybeSingle();
+  const normalized = normalizeReporterName(name);
+  const checks = await Promise.all(
+    clients.map(async (client) => {
+      try {
+        const { data, error } = await client
+          .from("reporter_directory")
+          .select("id")
+          .eq("normalized_name", normalized)
+          .maybeSingle();
 
-  if (error) {
-    throw error;
-  }
+        return !error && Boolean(data);
+      } catch {
+        return false;
+      }
+    }),
+  );
 
-  return Boolean(data);
+  return checks.some(Boolean);
 }
 
 export async function deleteReportFromDatabase(report: Report) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const storagePaths = report.activities
-    .flatMap((activity) => activity.photos.map((photo) => photo.storagePath))
-    .filter(Boolean);
-
-  if (storagePaths.length > 0) {
-    const { error: removeStorageError } = await supabase.storage
-      .from(PROOF_BUCKET)
-      .remove(storagePaths);
-
-    if (removeStorageError) {
-      throw removeStorageError;
+  // Group photos by their respective client based on publicUrl
+  for (const activity of report.activities) {
+    for (const photo of activity.photos) {
+      if (photo.storagePath) {
+        const cleanPath = photo.storagePath
+          .replace(/^daily-report-proofs\//, "")
+          .replace(/^\/+/, "");
+        const targetClient = getClientForUrl(photo.publicUrl) || supabase;
+        try {
+          await targetClient?.storage.from(PROOF_BUCKET).remove([cleanPath]);
+        } catch (err) {
+          logSafeWarn("Gagal menghapus photo storage:", err);
+        }
+      }
     }
   }
 
-  const { error } = await supabase.from("daily_reports").delete().eq("id", report.id);
+  // Delete from all databases where this report ID might exist (primary and legacy)
+  let deletedAny = false;
+  let lastError: any = null;
 
-  if (error) {
-    throw error;
+  for (const client of clients) {
+    try {
+      const { error } = await client
+        .from("daily_reports")
+        .delete()
+        .eq("id", report.id);
+      if (!error) {
+        deletedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!deletedAny && lastError) {
+    throw lastError;
   }
 }
 
@@ -638,99 +777,145 @@ export async function renameReporterDirectoryProfile(
   reporterId: string,
   nextName: string,
 ) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const { error } = await supabase.rpc("rename_reporter_directory_profile", {
-    reporter_id_input: reporterId,
-    next_full_name_input: formatReporterNameForDatabase(nextName),
-  });
+  let updatedAny = false;
+  let lastError: any = null;
 
-  if (error) {
-    throw error;
+  for (const client of clients) {
+    try {
+      const { error } = await client.rpc("rename_reporter_directory_profile", {
+        reporter_id_input: reporterId,
+        next_full_name_input: formatReporterNameForDatabase(nextName),
+      });
+      if (!error) {
+        updatedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!updatedAny && lastError) {
+    throw lastError;
   }
 }
 
 export async function deleteReporterDirectoryTrace(reporterId: string) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const { data, error: reportFetchError } = await supabase
-    .from("daily_reports")
-    .select(
-      `
-      id,
-      daily_report_activities (
-        daily_report_activity_photos (
-          storage_path
+  let deletedAny = false;
+  let lastError: any = null;
+
+  for (const client of clients) {
+    try {
+      const { data, error: reportFetchError } = await client
+        .from("daily_reports")
+        .select(
+          `
+          id,
+          daily_report_activities (
+            daily_report_activity_photos (
+              storage_path
+            )
+          )
+        `,
         )
-      )
-    `,
-    )
-    .eq("reporter_directory_id", reporterId);
+        .eq("reporter_directory_id", reporterId);
 
-  if (reportFetchError) {
-    throw reportFetchError;
-  }
+      if (!reportFetchError && data) {
+        const storagePaths = ((data ?? []) as ReporterTraceReportRow[])
+          .flatMap((report) =>
+            (report.daily_report_activities ?? []).flatMap((activity) =>
+              (activity.daily_report_activity_photos ?? []).map(
+                (photo) => photo.storage_path,
+              ),
+            ),
+          )
+          .filter(Boolean);
 
-  const storagePaths = ((data ?? []) as ReporterTraceReportRow[])
-    .flatMap((report) =>
-      (report.daily_report_activities ?? []).flatMap((activity) =>
-        (activity.daily_report_activity_photos ?? []).map(
-          (photo) => photo.storage_path,
-        ),
-      ),
-    )
-    .filter(Boolean);
+        if (storagePaths.length > 0) {
+          await client.storage.from(PROOF_BUCKET).remove(storagePaths);
+        }
+      }
 
-  if (storagePaths.length > 0) {
-    const { error: removeStorageError } = await supabase.storage
-      .from(PROOF_BUCKET)
-      .remove(storagePaths);
+      const { error } = await client.rpc("delete_reporter_directory_trace", {
+        reporter_id_input: reporterId,
+      });
 
-    if (removeStorageError) {
-      throw removeStorageError;
+      if (!error) {
+        deletedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
     }
   }
 
-  const { error } = await supabase.rpc("delete_reporter_directory_trace", {
-    reporter_id_input: reporterId,
-  });
-
-  if (error) {
-    throw error;
+  if (!deletedAny && lastError) {
+    throw lastError;
   }
 }
 
-export async function authenticateReporter(name: string, pass: string): Promise<ReporterDirectoryProfile | null> {
+export async function authenticateReporter(
+  name: string,
+  pass: string,
+): Promise<ReporterDirectoryProfile | null> {
   if (isAdminName(name)) {
     return null;
   }
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
-  const { data, error } = await supabase.rpc("authenticate_reporter", {
-    reporter_name: name,
-    pass: pass
-  });
-  if (error) {
-    throw error;
+
+  for (const client of clients) {
+    try {
+      const { data, error } = await client.rpc("authenticate_reporter", {
+        reporter_name: name,
+        pass: pass,
+      });
+
+      if (!error && data && data.length > 0) {
+        const row = data[0];
+
+        // If authenticated from legacy client, automatically sync profile to new primary database
+        if (client !== supabase && supabase) {
+          try {
+            await supabase.rpc("register_reporter", {
+              reporter_name: row.full_name,
+              pass: pass,
+            });
+          } catch {
+            // ignore if already registered
+          }
+        }
+
+        return {
+          id: row.id,
+          fullName: row.full_name,
+          firstReportedAt: row.first_reported_at,
+          lastReportedAt: row.last_reported_at,
+          totalReports: row.total_reports,
+          isActive: row.is_active,
+          password: pass,
+        };
+      }
+    } catch {
+      // try next client
+    }
   }
-  if (!data || data.length === 0) {
-    return null;
-  }
-  const row = data[0];
-  return {
-    id: row.id,
-    fullName: row.full_name,
-    firstReportedAt: row.first_reported_at,
-    lastReportedAt: row.last_reported_at,
-    totalReports: row.total_reports,
-    isActive: row.is_active,
-    password: pass
-  };
+
+  return null;
 }
 
 export async function registerReporter(name: string, pass: string): Promise<ReporterDirectoryProfile> {

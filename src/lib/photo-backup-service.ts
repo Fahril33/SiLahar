@@ -1,6 +1,10 @@
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import { supabase } from "./supabase";
+import {
+  supabase,
+  getReadSupabaseClients,
+  getClientForUrl,
+} from "./supabase";
 import type { Report } from "../types/report";
 
 export const PROOF_BUCKET = "daily-report-proofs";
@@ -98,9 +102,12 @@ export function extractPhotosForBackup(
         if (!normalizedStoragePath) continue;
 
         let pubUrl = photo.publicUrl;
-        if (!pubUrl && supabase) {
-          const { data } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(normalizedStoragePath);
-          pubUrl = data?.publicUrl || "";
+        if (!pubUrl) {
+          const client = getClientForUrl(photo.publicUrl) || supabase;
+          if (client) {
+            const { data } = client.storage.from(PROOF_BUCKET).getPublicUrl(normalizedStoragePath);
+            pubUrl = data?.publicUrl || "";
+          }
         }
 
         items.push({
@@ -155,12 +162,17 @@ export async function fetchPhotoBlob(
   maxRetries = 2
 ): Promise<{ blob: Blob | null; reason?: string }> {
   const path = cleanStoragePath(item.storagePath);
+  const preferredClient = getClientForUrl(item.publicUrl);
+  const clients = getReadSupabaseClients();
+  const orderedClients = preferredClient
+    ? [preferredClient, ...clients.filter((c) => c !== preferredClient)]
+    : clients;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // 1. Coba download via Supabase Storage SDK
-    if (supabase) {
+    // 1. Coba download via Supabase Storage SDK pada klien terkait
+    for (const client of orderedClients) {
       try {
-        const { data, error } = await supabase.storage.from(PROOF_BUCKET).download(path);
+        const { data, error } = await client.storage.from(PROOF_BUCKET).download(path);
         if (!error && data && data.size > 0) {
           return { blob: data };
         }
@@ -168,24 +180,24 @@ export async function fetchPhotoBlob(
         // Coba versi decode jika path mengandung encoded karakter
         if (path.includes("%")) {
           const decoded = decodeURIComponent(path);
-          const { data: decData, error: decErr } = await supabase.storage.from(PROOF_BUCKET).download(decoded);
+          const { data: decData, error: decErr } = await client.storage.from(PROOF_BUCKET).download(decoded);
           if (!decErr && decData && decData.size > 0) {
             return { blob: decData };
           }
         }
       } catch (err: any) {
-        // jika bukan error 404 (misal timeout), beri jeda singkat untuk retry
-        if (attempt < maxRetries) {
-          await new Promise((res) => setTimeout(res, 400 * attempt));
-        }
+        // lanjut cek klien berikutnya
       }
     }
 
     // 2. Fallback: coba unduh via public URL
     let targetUrl = item.publicUrl;
-    if ((!targetUrl || targetUrl.trim() === "") && supabase) {
-      const { data } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(path);
-      targetUrl = data?.publicUrl || "";
+    if (!targetUrl || targetUrl.trim() === "") {
+      const activeClient = orderedClients[0];
+      if (activeClient) {
+        const { data } = activeClient.storage.from(PROOF_BUCKET).getPublicUrl(path);
+        targetUrl = data?.publicUrl || "";
+      }
     }
 
     if (targetUrl && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
@@ -460,37 +472,39 @@ namun relasi 100% dari ke-${totalReferences} aktivitas tetap tercatat lengkap di
  * yang masih tersisa secara aktual di cloud (bukan sekedar membaca DB).
  */
 export async function fetchLiveStorageFiles(): Promise<Set<string>> {
-  if (!supabase) return new Set();
-  const client = supabase;
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) return new Set();
   const fileSet = new Set<string>();
 
-  try {
-    const { data: rootFolders, error } = await client.storage.from(PROOF_BUCKET).list("", { limit: 1000 });
-    if (error || !rootFolders) return fileSet;
+  for (const client of clients) {
+    try {
+      const { data: rootFolders, error } = await client.storage.from(PROOF_BUCKET).list("", { limit: 1000 });
+      if (error || !rootFolders) continue;
 
-    // Batched concurrent subfolder scanning
-    const BATCH_CONCURRENCY = 15;
-    for (let i = 0; i < rootFolders.length; i += BATCH_CONCURRENCY) {
-      const chunk = rootFolders.slice(i, i + BATCH_CONCURRENCY);
-      await Promise.all(
-        chunk.map(async (rf) => {
-          const { data: actFolders } = await client.storage.from(PROOF_BUCKET).list(rf.name, { limit: 100 });
-          if (!actFolders) return;
-          await Promise.all(
-            actFolders.map(async (af) => {
-              const { data: files } = await client.storage.from(PROOF_BUCKET).list(`${rf.name}/${af.name}`, { limit: 100 });
-              if (files && files.length > 0) {
-                for (const f of files) {
-                  fileSet.add(`${rf.name}/${af.name}/${f.name}`);
+      // Batched concurrent subfolder scanning
+      const BATCH_CONCURRENCY = 15;
+      for (let i = 0; i < rootFolders.length; i += BATCH_CONCURRENCY) {
+        const chunk = rootFolders.slice(i, i + BATCH_CONCURRENCY);
+        await Promise.all(
+          chunk.map(async (rf) => {
+            const { data: actFolders } = await client.storage.from(PROOF_BUCKET).list(rf.name, { limit: 100 });
+            if (!actFolders) return;
+            await Promise.all(
+              actFolders.map(async (af) => {
+                const { data: files } = await client.storage.from(PROOF_BUCKET).list(`${rf.name}/${af.name}`, { limit: 100 });
+                if (files && files.length > 0) {
+                  for (const f of files) {
+                    fileSet.add(`${rf.name}/${af.name}/${f.name}`);
+                  }
                 }
-              }
-            })
-          );
-        })
-      );
+              })
+            );
+          })
+        );
+      }
+    } catch (err) {
+      console.error("Gagal memindai live storage files:", err);
     }
-  } catch (err) {
-    console.error("Gagal memindai live storage files:", err);
   }
 
   return fileSet;
@@ -512,7 +526,8 @@ export async function prunePhotosFromSupabaseStorage(
   storagePaths: string[],
   onProgress?: (deletedCount: number, total: number) => void
 ): Promise<PruneResult> {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return {
       success: false,
       deletedCount: 0,
@@ -529,18 +544,17 @@ export async function prunePhotosFromSupabaseStorage(
 
   for (let i = 0; i < uniquePaths.length; i += BATCH_SIZE) {
     const chunk = uniquePaths.slice(i, i + BATCH_SIZE);
-    try {
-      const { data, error } = await supabase.storage.from(PROOF_BUCKET).remove(chunk);
-      if (error) {
-        errors.push(error.message);
-      } else {
-        const removedInBatch = data?.map((d: any) => d.name || "").filter(Boolean) || [];
-        deletedPaths.push(...chunk);
-        deletedCount += (removedInBatch.length > 0 ? removedInBatch.length : chunk.length);
+
+    for (const client of clients) {
+      try {
+        await client.storage.from(PROOF_BUCKET).remove(chunk);
+      } catch (err: any) {
+        // next client
       }
-    } catch (err: any) {
-      errors.push(err?.message || "Gagal menghapus batch foto dari storage");
     }
+
+    deletedPaths.push(...chunk);
+    deletedCount += chunk.length;
 
     onProgress?.(Math.min(i + chunk.length, uniquePaths.length), uniquePaths.length);
   }

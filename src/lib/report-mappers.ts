@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Report, ReportActivity, ReportActivityPhoto } from "../types/report";
 import { supabase } from "./supabase";
 import {
@@ -53,10 +54,11 @@ type ReportRow = {
   approver_division_head_role?: any;
 };
 
-function mapPhoto(row: PhotoRow): ReportActivityPhoto {
+function mapPhoto(row: PhotoRow, client?: SupabaseClient | null): ReportActivityPhoto {
   let publicUrl = row.public_url;
-  if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && supabase) {
-    const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
+  const activeClient = client || supabase;
+  if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && activeClient) {
+    const { data } = activeClient.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
     publicUrl = data?.publicUrl || "";
   }
   return {
@@ -70,18 +72,20 @@ function mapPhoto(row: PhotoRow): ReportActivityPhoto {
   };
 }
 
-function mapActivity(row: ActivityRow): ReportActivity {
+function mapActivity(row: ActivityRow, client?: SupabaseClient | null): ReportActivity {
   return {
     id: row.id,
     no: row.activity_order,
     description: row.activity_description,
     startTime: row.start_time_text,
     endTime: row.end_time_text,
-    photos: (row.daily_report_activity_photos ?? []).sort((a, b) => a.sort_order - b.sort_order).map(mapPhoto),
+    photos: (row.daily_report_activity_photos ?? [])
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((photo) => mapPhoto(photo, client)),
   };
 }
 
-export function mapReportRow(row: ReportRow): Report {
+export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Report {
   const isPusdalops = isPusdalopsTeam(row.tim);
   const isJanMar = isJanToMarPeriod(row.report_date);
   const useJanMarPusdalops = isPusdalops && isJanMar;
@@ -93,7 +97,9 @@ export function mapReportRow(row: ReportRow): Report {
     nama: row.reporter_name,
     tanggal: row.display_date_text.toUpperCase(),
     reportDate: row.report_date,
-    activities: (row.daily_report_activities ?? []).sort((a, b) => a.activity_order - b.activity_order).map(mapActivity),
+    activities: (row.daily_report_activities ?? [])
+      .sort((a, b) => a.activity_order - b.activity_order)
+      .map((act) => mapActivity(act, client)),
     approverCoordinatorTemplateId: useJanMarPusdalops
       ? JAN_MAR_PUSDALOPS_COORDINATOR.id
       : row.template_approver_coordinator_id,

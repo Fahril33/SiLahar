@@ -176,7 +176,7 @@ export async function askPasswordConfirmation(
       }
       if (options.onValidate) {
         try {
-          const err = await options.onValidate(trimmed);
+          const err = await options.onValidate(password);
           if (err) {
             Swal.showValidationMessage(err);
             return false;
@@ -186,7 +186,7 @@ export async function askPasswordConfirmation(
           return false;
         }
       }
-      return trimmed;
+      return password;
     },
     allowOutsideClick: () => !Swal.isLoading(),
   });

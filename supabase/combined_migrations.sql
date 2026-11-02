@@ -1,8 +1,8 @@
 -- ======================================================================================
 -- SiLahar (Sistem Laporan Harian Tim Reaksi Cepat & Pusdalops BPBD Provinsi Sulawesi Tengah)
--- CONSOLIDATED SQL MIGRATION FILE (001 to 021)
+-- CONSOLIDATED SQL MIGRATION FILE (001 to 027)
 -- ======================================================================================
--- File ini merupakan gabungan utuh dan terpadu dari seluruh file migrasi (001 s/d 021)
+-- File ini merupakan gabungan utuh dan terpadu dari seluruh file migrasi (001 s/d 027)
 -- yang telah disesuaikan dengan arsitektur dan pembaruan skema database terbaru.
 -- Idempoten: aman dieksekusi pada database baru maupun database yang sudah ada.
 -- ======================================================================================
@@ -99,7 +99,24 @@ create table if not exists public.reporter_directory (
   updated_at timestamptz not null default now()
 );
 
--- Tabel Template Laporan
+-- Tabel Jenis Tim & Kop Laporan (Team Types) [025, 026, 027]
+create table if not exists public.team_types (
+  id text primary key,
+  code text unique not null,
+  name text not null,
+  description text default '',
+  header_lines jsonb not null default '["LAPORAN HARIAN KINERJA TIM REAKSI CEPAT", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+  coordinator_name text default '',
+  coordinator_nip text default '',
+  coordinator_label text default '',
+  signature_url text default '',
+  is_default boolean default false,
+  is_active boolean default true,
+  created_at timestamptz not null default timezone('utc'::text, now()),
+  updated_at timestamptz not null default timezone('utc'::text, now())
+);
+
+-- Tabel Template Laporan [025]
 create table if not exists public.report_templates (
   id uuid primary key default gen_random_uuid(),
   template_code text not null unique,
@@ -107,10 +124,16 @@ create table if not exists public.report_templates (
   organization_name text,
   budget_year integer,
   schema_json jsonb not null default '{}'::jsonb,
+  header_lines jsonb not null default '["LAPORAN HARIAN KINERJA TIM REAKSI CEPAT", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+  team_type_id text references public.team_types(id) on delete set null,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.report_templates
+  add column if not exists header_lines jsonb not null default '["LAPORAN HARIAN KINERJA TIM REAKSI CEPAT", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+  add column if not exists team_type_id text references public.team_types(id) on delete set null;
 
 -- Tabel Catatan Footer Template Laporan
 create table if not exists public.report_template_notes (
@@ -122,7 +145,7 @@ create table if not exists public.report_template_notes (
   unique (template_id, note_order)
 );
 
--- Tabel Pejabat Penandatangan Template Laporan [013, 018]
+-- Tabel Pejabat Penandatangan Template Laporan [013, 018, 025, 027]
 create table if not exists public.report_template_approvers (
   id uuid primary key default gen_random_uuid(),
   template_id uuid not null references public.report_templates(id) on delete cascade,
@@ -131,11 +154,17 @@ create table if not exists public.report_template_approvers (
   official_name text not null,
   official_title text,
   official_nip text,
+  team_type_id text references public.team_types(id) on delete set null,
+  signature_url text default '',
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (template_id, approver_role)
 );
+
+alter table public.report_template_approvers
+  add column if not exists team_type_id text references public.team_types(id) on delete set null,
+  add column if not exists signature_url text default '';
 
 -- Tabel Template Dokumen Excel [012]
 create table if not exists public.excel_report_templates (
@@ -839,6 +868,167 @@ end;
 $$;
 
 -- --------------------------------------------------------------------------------------
+-- RPC: Modul Jenis Tim, Kop Laporan, & Tanda Tangan Pejabat [025, 026, 027]
+-- --------------------------------------------------------------------------------------
+
+-- Ambil seluruh jenis tim aktif untuk frontend
+drop function if exists public.get_team_types();
+create or replace function public.get_team_types()
+returns table (
+  id text,
+  code text,
+  name text,
+  description text,
+  header_lines jsonb,
+  coordinator_name text,
+  coordinator_nip text,
+  coordinator_label text,
+  signature_url text,
+  is_default boolean,
+  is_active boolean,
+  created_at timestamptz,
+  updated_at timestamptz
+)
+language sql
+security definer
+stable
+as $$
+  select
+    id, code, name, description, header_lines,
+    coordinator_name, coordinator_nip, coordinator_label,
+    signature_url,
+    is_default, is_active, created_at, updated_at
+  from public.team_types
+  where is_active = true
+  order by is_default desc, name asc;
+$$;
+
+-- Drop overload sebelumnya untuk menghindari ambiguitas signature RPC
+drop function if exists public.upsert_team_type(text, text, text, text, jsonb, boolean);
+drop function if exists public.upsert_team_type(text, text, text, text, jsonb, text, text, text, boolean);
+drop function if exists public.upsert_team_type(text, text, text, text, jsonb, text, text, text, text, boolean);
+
+-- Tambah / ubah data jenis tim dan pengaturannya
+create or replace function public.upsert_team_type(
+  p_id text,
+  p_code text,
+  p_name text,
+  p_description text,
+  p_header_lines jsonb,
+  p_coordinator_name text default '',
+  p_coordinator_nip text default '',
+  p_coordinator_label text default '',
+  p_signature_url text default '',
+  p_is_default boolean default false
+)
+returns public.team_types
+language plpgsql
+security definer
+as $$
+declare
+  v_result public.team_types;
+  v_id text;
+  v_code text;
+begin
+  v_code := lower(trim(p_code));
+
+  -- Resolusi ID atau CODE yang sudah ada untuk mencegah duplikasi key
+  select t.id into v_id
+  from public.team_types t
+  where t.id = trim(coalesce(p_id, '')) or t.code = v_code
+  limit 1;
+
+  if v_id is null then
+    v_id := coalesce(
+      nullif(trim(p_id), ''),
+      'team-type-' || extract(epoch from now())::bigint || '-' || floor(random() * 1000)::text
+    );
+  end if;
+
+  -- Jika diset sebagai default, reset default pada tim lainnya
+  if p_is_default = true then
+    update public.team_types set is_default = false where id <> v_id;
+  end if;
+
+  insert into public.team_types (
+    id, code, name, description, header_lines,
+    coordinator_name, coordinator_nip, coordinator_label,
+    signature_url,
+    is_default, is_active, updated_at
+  )
+  values (
+    v_id,
+    v_code,
+    trim(p_name),
+    coalesce(trim(p_description), ''),
+    coalesce(p_header_lines, '["LAPORAN HARIAN KINERJA", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb),
+    coalesce(trim(p_coordinator_name), ''),
+    coalesce(trim(p_coordinator_nip), ''),
+    coalesce(trim(p_coordinator_label), ''),
+    coalesce(trim(p_signature_url), ''),
+    coalesce(p_is_default, false),
+    true,
+    timezone('utc'::text, now())
+  )
+  on conflict (id) do update
+  set
+    code             = excluded.code,
+    name             = excluded.name,
+    description      = excluded.description,
+    header_lines     = excluded.header_lines,
+    coordinator_name = excluded.coordinator_name,
+    coordinator_nip  = excluded.coordinator_nip,
+    coordinator_label = excluded.coordinator_label,
+    signature_url    = excluded.signature_url,
+    is_default       = excluded.is_default,
+    is_active        = true,
+    updated_at       = timezone('utc'::text, now())
+  returning * into v_result;
+
+  return v_result;
+end;
+$$;
+
+-- Update khusus baris kop laporan tim
+create or replace function public.update_team_type_headers(
+  p_team_type_id text,
+  p_header_lines jsonb
+)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  update public.team_types
+  set
+    header_lines = coalesce(p_header_lines, '[]'::jsonb),
+    updated_at = timezone('utc'::text, now())
+  where id = p_team_type_id or code = lower(trim(p_team_type_id));
+end;
+$$;
+
+-- Soft delete jenis tim (tim default dilindungi dari penghapusan)
+create or replace function public.delete_team_type(
+  p_id text
+)
+returns void
+language plpgsql
+security definer
+as $$
+begin
+  if exists (select 1 from public.team_types where id = p_id and is_default = true) then
+    raise exception 'Jenis tim utama (default) tidak dapat dihapus.';
+  end if;
+
+  update public.team_types
+  set
+    is_active = false,
+    updated_at = timezone('utc'::text, now())
+  where id = p_id;
+end;
+$$;
+
+-- --------------------------------------------------------------------------------------
 -- 5. TRIGGERS PENJAGA DATA (TRIGGERS & EVENT HOOKS)
 -- --------------------------------------------------------------------------------------
 
@@ -1091,29 +1281,53 @@ create policy "system append audit logs"
 on public.daily_report_audit_logs for insert to anon, authenticated
 with check (true);
 
--- Policies: app_settings
+-- Policies: app_settings [004, 024]
 drop policy if exists "admin manage app_settings" on public.app_settings;
 create policy "admin manage app_settings"
 on public.app_settings for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
 
+drop policy if exists "public read app_settings" on public.app_settings;
+create policy "public read app_settings"
+on public.app_settings for select to anon, authenticated
+using (true);
+
+-- Policies: team_types [025]
+alter table public.team_types enable row level security;
+
+drop policy if exists "Public read team_types" on public.team_types;
+create policy "Public read team_types"
+  on public.team_types
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Admin modify team_types" on public.team_types;
+create policy "Admin modify team_types"
+  on public.team_types
+  for all
+  to authenticated, service_role
+  using (
+    auth.role() = 'authenticated' or auth.role() = 'service_role'
+  );
+
 -- --------------------------------------------------------------------------------------
 -- 7. STORAGE BUCKETS & STORAGE POLICIES
 -- --------------------------------------------------------------------------------------
 
--- Bucket: daily-report-proofs (Foto Bukti Aktivitas) [001]
+-- Bucket: daily-report-proofs (Foto Bukti Aktivitas & Fallback Signatures) [001, 027]
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'daily-report-proofs',
   'daily-report-proofs',
   true,
   5242880,
-  array['image/jpeg', 'image/png', 'image/webp']
+  array['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml']
 )
 on conflict (id) do update
-set public = excluded.public,
-    file_size_limit = excluded.file_size_limit,
-    allowed_mime_types = excluded.allowed_mime_types;
+set public = true,
+    file_size_limit = 5242880,
+    allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
 
 drop policy if exists "public read proof objects" on storage.objects;
 create policy "public read proof objects"
@@ -1135,6 +1349,41 @@ drop policy if exists "public delete proof objects" on storage.objects;
 create policy "public delete proof objects"
 on storage.objects for delete to public
 using (bucket_id = 'daily-report-proofs');
+
+-- Bucket: official-signatures (Tanda Tangan Pejabat & Tim) [027]
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'official-signatures',
+  'official-signatures',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml']
+)
+on conflict (id) do update
+set public = true,
+    file_size_limit = 5242880,
+    allowed_mime_types = array['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'];
+
+drop policy if exists "public read official signatures" on storage.objects;
+create policy "public read official signatures"
+on storage.objects for select to public
+using (bucket_id = 'official-signatures');
+
+drop policy if exists "public upload official signatures" on storage.objects;
+create policy "public upload official signatures"
+on storage.objects for insert to public
+with check (bucket_id = 'official-signatures');
+
+drop policy if exists "public update official signatures" on storage.objects;
+create policy "public update official signatures"
+on storage.objects for update to public
+using (bucket_id = 'official-signatures')
+with check (bucket_id = 'official-signatures');
+
+drop policy if exists "public delete official signatures" on storage.objects;
+create policy "public delete official signatures"
+on storage.objects for delete to public
+using (bucket_id = 'official-signatures');
 
 -- Bucket: report-excel-templates (File Master Template Excel) [012]
 insert into storage.buckets (id, name, public)
@@ -1180,17 +1429,68 @@ grant execute on function public.register_reporter(text, text) to anon, authenti
 grant execute on function public.update_reporter_profile(uuid, text, text) to anon, authenticated;
 grant execute on function public.admin_get_reporter_passwords() to authenticated;
 
+-- Hak akses tabel dan RPC Jenis Tim & Tanda Tangan [025, 026, 027]
+grant select, insert, update, delete on public.team_types to anon, authenticated, service_role;
+grant select, insert, update, delete on public.report_template_approvers to anon, authenticated, service_role;
+grant execute on function public.get_team_types() to anon, authenticated, service_role;
+grant execute on function public.upsert_team_type(text, text, text, text, jsonb, text, text, text, text, boolean) to anon, authenticated, service_role;
+grant execute on function public.update_team_type_headers(text, jsonb) to authenticated, service_role;
+grant execute on function public.delete_team_type(text) to authenticated, service_role;
+
 -- --------------------------------------------------------------------------------------
 -- 9. DATA AWAL (SEED & MASTER DATA) TERBARU
 -- --------------------------------------------------------------------------------------
 
--- 9.1. Template Laporan Utama [002]
+-- 9.0. Jenis Tim & Kop Laporan Default [025, 026, 027]
+insert into public.team_types (
+  id, code, name, description, header_lines, coordinator_name, coordinator_nip, coordinator_label, signature_url, is_default, is_active
+)
+values
+  (
+    'team-type-trc-default',
+    'trc',
+    'Tim Reaksi Cepat (TRC)',
+    'Tim lapangan tanggap darurat dan kejadian bencana',
+    '["LAPORAN HARIAN KINERJA TIM REAKSI CEPAT", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+    'RIKI',
+    '198607082016041001',
+    'KOORDINATOR TIM',
+    '',
+    true,
+    true
+  ),
+  (
+    'team-type-pusdalops-default',
+    'pusdalops',
+    'Pusat Pengendalian Operasi (PUSDALOPS)',
+    'Tim pemantauan, analisis data, dan koordinasi informasi bencana',
+    '["LAPORAN HARIAN KINERJA PUSDALOPS", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+    'MOH. YASIR SYURIADI N.',
+    '197309181993031004',
+    'KOORDINATOR PUSDALOPS',
+    '',
+    false,
+    true
+  )
+on conflict (code) do update
+set
+  name = excluded.name,
+  description = excluded.description,
+  header_lines = excluded.header_lines,
+  coordinator_name = excluded.coordinator_name,
+  coordinator_nip = excluded.coordinator_nip,
+  coordinator_label = excluded.coordinator_label,
+  updated_at = timezone('utc'::text, now());
+
+-- 9.1. Template Laporan Utama [002, 025]
 insert into public.report_templates (
   template_code,
   template_name,
   organization_name,
   budget_year,
   schema_json,
+  header_lines,
+  team_type_id,
   is_active
 )
 values (
@@ -1203,6 +1503,8 @@ values (
     'activity_fields', jsonb_build_array('no', 'detail_aktivitas', 'jam_mulai', 'jam_selesai', 'foto_bukti'),
     'timezone', 'Asia/Makassar'
   ),
+  '["LAPORAN HARIAN KINERJA TIM REAKSI CEPAT", "BADAN PENANGGULANGAN BENCANA DAERAH PROVINSI SULAWESI TENGAH", "TAHUN ANGGARAN 2026"]'::jsonb,
+  'team-type-trc-default',
   true
 )
 on conflict (template_code) do update
@@ -1210,6 +1512,8 @@ set template_name = excluded.template_name,
     organization_name = excluded.organization_name,
     budget_year = excluded.budget_year,
     schema_json = excluded.schema_json,
+    header_lines = excluded.header_lines,
+    team_type_id = excluded.team_type_id,
     is_active = excluded.is_active,
     updated_at = now();
 

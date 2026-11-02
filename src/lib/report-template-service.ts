@@ -1,5 +1,5 @@
 import { fallbackReportTemplateConfig } from "./report-template-defaults";
-import { supabase } from "./supabase";
+import { supabase, getReadSupabaseClients } from "./supabase";
 import type { TeamType, TeamTypeDraft } from "../types/team-type";
 import type {
   ReportTemplateApprover,
@@ -116,70 +116,73 @@ import {
 } from "./storage";
 
 export async function fetchActiveReportTemplateConfig() {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
   }
 
-  try {
-    const { data, error } = await supabase
-      .from("report_templates")
-      .select(
-        `
-        id,
-        template_code,
-        template_name,
-        organization_name,
-        budget_year,
-        header_lines,
-        team_type_id,
-        is_active,
-        updated_at,
-        report_template_notes (
-          note_order,
-          note_text
-        ),
-        report_template_approvers (
-          id,
-          template_id,
-          approver_role,
-          scope_label,
-          official_name,
-          official_title,
-          official_nip,
-          signature_url,
-          is_active,
-          created_at,
-          updated_at
-        )
-      `,
-      )
-      .eq("is_active", true)
-      .order("note_order", {
-        foreignTable: "report_template_notes",
-        ascending: true,
-      })
-      .maybeSingle();
+  const selectQuery = `
+    id,
+    template_code,
+    template_name,
+    organization_name,
+    budget_year,
+    header_lines,
+    team_type_id,
+    is_active,
+    updated_at,
+    report_template_notes (
+      note_order,
+      note_text
+    ),
+    report_template_approvers (
+      id,
+      template_id,
+      approver_role,
+      scope_label,
+      official_name,
+      official_title,
+      official_nip,
+      signature_url,
+      is_active,
+      created_at,
+      updated_at
+    )
+  `;
 
-    if (error || !data) {
-      return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
-    }
+  for (const client of clients) {
+    try {
+      const { data, error } = await client
+        .from("report_templates")
+        .select(selectQuery)
+        .eq("is_active", true)
+        .order("note_order", {
+          foreignTable: "report_template_notes",
+          ascending: true,
+        })
+        .maybeSingle();
 
-    const mapped = mapTemplateRow(data as ReportTemplateConfigRow);
-    saveCachedReportTemplateConfig(mapped);
+      if (!error && data) {
+        const mapped = mapTemplateRow(data as ReportTemplateConfigRow);
+        saveCachedReportTemplateConfig(mapped);
 
-    // Prefetch all approver signatures into local memory/data-cache
-    if (mapped.approvers) {
-      mapped.approvers.forEach((app) => {
-        if (app.signatureUrl) {
-          void prefetchAndCacheSignatureImage(app.signatureUrl);
+        // Prefetch all approver signatures into local memory/data-cache
+        if (mapped.approvers) {
+          mapped.approvers.forEach((app) => {
+            if (app.signatureUrl) {
+              void prefetchAndCacheSignatureImage(app.signatureUrl);
+            }
+          });
         }
-      });
-    }
 
-    return mapped;
-  } catch {
-    return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
+        return mapped;
+      }
+    } catch {
+      // try next client
+    }
   }
+
+  return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
 }
 
 export async function saveTemplateApproverDefaults(
@@ -375,52 +378,55 @@ export async function fetchTeamTypes() {
     },
   ];
 
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     return loadCachedTeamTypes<TeamType[]>() ?? fallback;
   }
 
-  try {
-    const { data, error } = await supabase
-      .from("team_types")
-      .select("*")
-      .eq("is_active", true)
-      .order("is_default", { ascending: false });
+  for (const client of clients) {
+    try {
+      const { data, error } = await client
+        .from("team_types")
+        .select("*")
+        .eq("is_active", true)
+        .order("is_default", { ascending: false });
 
-    if (error || !data || data.length === 0) {
-      return loadCachedTeamTypes<TeamType[]>() ?? fallback;
-    }
+      if (!error && data && data.length > 0) {
+        const mapped: TeamType[] = data.map((row: any) => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          description: row.description || "",
+          headerLines: Array.isArray(row.header_lines)
+            ? row.header_lines
+            : fallback[0].headerLines,
+          coordinatorName: row.coordinator_name || "",
+          coordinatorNip: row.coordinator_nip || "",
+          coordinatorLabel: row.coordinator_label || "",
+          signatureUrl: row.signature_url || "",
+          isDefault: Boolean(row.is_default),
+          isActive: Boolean(row.is_active),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
 
-    const mapped: TeamType[] = data.map((row: any) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      description: row.description || "",
-      headerLines: Array.isArray(row.header_lines)
-        ? row.header_lines
-        : fallback[0].headerLines,
-      coordinatorName: row.coordinator_name || "",
-      coordinatorNip: row.coordinator_nip || "",
-      coordinatorLabel: row.coordinator_label || "",
-      signatureUrl: row.signature_url || "",
-      isDefault: Boolean(row.is_default),
-      isActive: Boolean(row.is_active),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+        saveCachedTeamTypes(mapped);
 
-    saveCachedTeamTypes(mapped);
+        // Prefetch all team coordinator signature images into cache
+        mapped.forEach((team) => {
+          if (team.signatureUrl) {
+            void prefetchAndCacheSignatureImage(team.signatureUrl);
+          }
+        });
 
-    // Prefetch all team coordinator signature images into cache
-    mapped.forEach((team) => {
-      if (team.signatureUrl) {
-        void prefetchAndCacheSignatureImage(team.signatureUrl);
+        return mapped;
       }
-    });
-
-    return mapped;
-  } catch {
-    return loadCachedTeamTypes<TeamType[]>() ?? fallback;
+    } catch {
+      // try next client
+    }
   }
+
+  return loadCachedTeamTypes<TeamType[]>() ?? fallback;
 }
 
 export async function saveTeamTypeHeaderLines(
