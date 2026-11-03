@@ -1,8 +1,13 @@
 import { defaultDraft } from "../data/mock";
-import { getTemplateApproverByRole } from "./report-template-defaults";
+import {
+  getTemplateApproverByRole,
+  getRegisteredCoordinatorForTeam,
+} from "./report-template-defaults";
+import { loadCachedTeamTypes } from "./storage";
 import { getWitaDisplayDateUppercase, getWitaToday, nowIso } from "./time";
 import type { ReportTemplateConfig } from "../types/report-template";
 import type { DraftReport, Report } from "../types/report";
+import type { TeamType } from "../types/team-type";
 
 export type PendingPhotoMap = Record<number, File[]>;
 export type PendingPreviewMap = Record<number, Array<{ name: string; url: string }>>;
@@ -80,15 +85,18 @@ export function createEmptyDraft(
   initialReportDate?: string,
 ) {
   const defaultTim = "PUSDALOPS";
-  const coordinator = getTemplateApproverByRole(
+  const targetDate = initialReportDate || getWitaToday();
+  const cachedTeamTypes = loadCachedTeamTypes<TeamType[]>();
+  const registeredCoord = getRegisteredCoordinatorForTeam(
+    defaultTim,
+    cachedTeamTypes,
     templateConfig,
-    `coordinator_team_${defaultTim.toLowerCase()}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
+    targetDate,
   );
   const divisionHead = getTemplateApproverByRole(
     templateConfig,
     "division_head",
   );
-  const targetDate = initialReportDate || getWitaToday();
 
   return normalizeDraft({
     ...defaultDraft,
@@ -97,13 +105,15 @@ export function createEmptyDraft(
     tanggal: getWitaDisplayDateUppercase(targetDate),
     notes: templateConfig?.notes ?? defaultDraft.notes,
     approverCoordinatorTemplateId:
-      coordinator?.id ?? defaultDraft.approverCoordinatorTemplateId,
+      registeredCoord.templateId ?? defaultDraft.approverCoordinatorTemplateId,
     approverCoordinator:
-      coordinator?.officialName ?? defaultDraft.approverCoordinator,
+      registeredCoord.coordinatorName || defaultDraft.approverCoordinator,
     approverCoordinatorNip:
-      coordinator?.officialNip ?? defaultDraft.approverCoordinatorNip,
+      registeredCoord.coordinatorNip || defaultDraft.approverCoordinatorNip,
+    approverCoordinatorLabel:
+      registeredCoord.coordinatorLabel || defaultDraft.approverCoordinatorLabel,
     approverCoordinatorSignatureUrl:
-      coordinator?.signatureUrl ?? defaultDraft.approverCoordinatorSignatureUrl,
+      registeredCoord.signatureUrl || defaultDraft.approverCoordinatorSignatureUrl,
     approverDivisionHeadTemplateId:
       divisionHead?.id ?? defaultDraft.approverDivisionHeadTemplateId,
     approverDivisionHead:
@@ -122,6 +132,13 @@ export function applyTemplateDefaultsToDraft(
   previousTemplate: ReportTemplateConfig | null,
   nextTemplate: ReportTemplateConfig | null,
 ) {
+  const cachedTeamTypes = loadCachedTeamTypes<TeamType[]>();
+  const registeredCoord = getRegisteredCoordinatorForTeam(
+    draft.tim || "PUSDALOPS",
+    cachedTeamTypes,
+    nextTemplate,
+    draft.reportDate,
+  );
   const previousCoordinator = getTemplateApproverByRole(
     previousTemplate,
     `coordinator_team_${(draft.tim || "PUSDALOPS").toLowerCase()}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
@@ -143,6 +160,31 @@ export function applyTemplateDefaultsToDraft(
     return !currentValue.trim() || currentValue === previousValue;
   }
 
+  const effectiveCoordinatorName =
+    registeredCoord.coordinatorName ||
+    (shouldReplace(draft.approverCoordinator, previousCoordinator?.officialName ?? "")
+      ? (nextCoordinator?.officialName ?? draft.approverCoordinator)
+      : draft.approverCoordinator);
+
+  const effectiveCoordinatorNip =
+    registeredCoord.coordinatorNip ||
+    (shouldReplace(draft.approverCoordinatorNip, previousCoordinator?.officialNip ?? "")
+      ? (nextCoordinator?.officialNip ?? draft.approverCoordinatorNip)
+      : draft.approverCoordinatorNip);
+
+  const effectiveCoordinatorLabel =
+    registeredCoord.coordinatorLabel || draft.approverCoordinatorLabel;
+
+  const effectiveCoordinatorSig =
+    registeredCoord.signatureUrl ||
+    (nextCoordinator?.signatureUrl ?? draft.approverCoordinatorSignatureUrl);
+
+  const effectiveCoordinatorTemplateId =
+    registeredCoord.templateId ||
+    (shouldReplace(draft.approverCoordinator, previousCoordinator?.officialName ?? "")
+      ? (nextCoordinator?.id ?? draft.approverCoordinatorTemplateId)
+      : draft.approverCoordinatorTemplateId);
+
   return normalizeDraft({
     ...draft,
     templateId:
@@ -150,27 +192,11 @@ export function applyTemplateDefaultsToDraft(
       (previousTemplate && draft.templateId === previousTemplate.id)
         ? (nextTemplate?.id ?? draft.templateId)
         : draft.templateId,
-    approverCoordinatorTemplateId:
-      shouldReplace(
-        draft.approverCoordinator,
-        previousCoordinator?.officialName ?? "",
-      )
-        ? (nextCoordinator?.id ?? draft.approverCoordinatorTemplateId)
-        : draft.approverCoordinatorTemplateId,
-    approverCoordinator: shouldReplace(
-      draft.approverCoordinator,
-      previousCoordinator?.officialName ?? "",
-    )
-      ? (nextCoordinator?.officialName ?? draft.approverCoordinator)
-      : draft.approverCoordinator,
-    approverCoordinatorNip: shouldReplace(
-      draft.approverCoordinatorNip,
-      previousCoordinator?.officialNip ?? "",
-    )
-      ? (nextCoordinator?.officialNip ?? draft.approverCoordinatorNip)
-      : draft.approverCoordinatorNip,
-    approverCoordinatorSignatureUrl:
-      nextCoordinator?.signatureUrl ?? draft.approverCoordinatorSignatureUrl,
+    approverCoordinatorTemplateId: effectiveCoordinatorTemplateId,
+    approverCoordinator: effectiveCoordinatorName,
+    approverCoordinatorNip: effectiveCoordinatorNip,
+    approverCoordinatorLabel: effectiveCoordinatorLabel,
+    approverCoordinatorSignatureUrl: effectiveCoordinatorSig,
     approverDivisionHeadTemplateId: shouldReplace(
       draft.approverDivisionHead,
       previousDivisionHead?.officialName ?? "",

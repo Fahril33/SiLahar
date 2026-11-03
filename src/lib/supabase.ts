@@ -47,6 +47,14 @@ export function getReadSupabaseClients(): SupabaseClient[] {
   return clients;
 }
 
+/** Returns list of configured Supabase clients for settings & template reading (legacy database first to preserve established settings and values, then primary). */
+export function getSettingsSupabaseClients(): SupabaseClient[] {
+  const clients: SupabaseClient[] = [];
+  if (legacySupabase) clients.push(legacySupabase);
+  if (supabase) clients.push(supabase);
+  return clients;
+}
+
 /** Resolves appropriate SupabaseClient based on a storage URL or file path. */
 export function getClientForUrl(url?: string): SupabaseClient | null {
   if (!url) return supabase;

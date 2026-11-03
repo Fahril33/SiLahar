@@ -1,5 +1,5 @@
 import { fallbackReportTemplateConfig } from "./report-template-defaults";
-import { supabase, getReadSupabaseClients } from "./supabase";
+import { supabase, getReadSupabaseClients, getSettingsSupabaseClients } from "./supabase";
 import type { TeamType, TeamTypeDraft } from "../types/team-type";
 import type {
   ReportTemplateApprover,
@@ -116,7 +116,7 @@ import {
 } from "./storage";
 
 export async function fetchActiveReportTemplateConfig() {
-  const clients = getReadSupabaseClients();
+  const clients = getSettingsSupabaseClients();
   if (clients.length === 0) {
     return loadCachedReportTemplateConfig<ReportTemplateConfig>() ?? fallbackReportTemplateConfig;
   }
@@ -233,12 +233,15 @@ export async function saveTemplateApproverDefaults(
     throw new Error("Nama pejabat default wajib diisi untuk setiap peran.");
   }
 
-  const { error } = await supabase
-    .from("report_template_approvers")
-    .upsert(payload, { onConflict: "template_id,approver_role" });
-
-  if (error) {
-    throw error;
+  const clients = getReadSupabaseClients();
+  for (const client of clients) {
+    try {
+      await client
+        .from("report_template_approvers")
+        .upsert(payload, { onConflict: "template_id,approver_role" });
+    } catch {
+      // ignore
+    }
   }
 
   return fetchActiveReportTemplateConfig();
@@ -248,7 +251,8 @@ export async function saveCustomHeaderLines(
   templateId: string,
   headerLines: string[],
 ) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
@@ -260,24 +264,26 @@ export async function saveCustomHeaderLines(
     throw new Error("Kop laporan minimal harus memiliki 1 baris teks.");
   }
 
-  const { error } = await supabase
-    .from("report_templates")
-    .update({
-      header_lines: cleanedLines,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", templateId);
+  for (const client of clients) {
+    try {
+      const { error } = await client
+        .from("report_templates")
+        .update({
+          header_lines: cleanedLines,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", templateId);
 
-  if (error) {
-    // If update direct column failed, try RPC
-    const { error: rpcErr } = await supabase.rpc(
-      "update_report_template_headers",
-      {
-        p_template_id: templateId,
-        p_header_lines: cleanedLines,
-      },
-    );
-    if (rpcErr) throw rpcErr;
+      if (error) {
+        // If update direct column failed, try RPC
+        await client.rpc("update_report_template_headers", {
+          p_template_id: templateId,
+          p_header_lines: cleanedLines,
+        });
+      }
+    } catch {
+      // ignore
+    }
   }
 
   return fetchActiveReportTemplateConfig();
@@ -378,7 +384,7 @@ export async function fetchTeamTypes() {
     },
   ];
 
-  const clients = getReadSupabaseClients();
+  const clients = getSettingsSupabaseClients();
   if (clients.length === 0) {
     return loadCachedTeamTypes<TeamType[]>() ?? fallback;
   }
@@ -441,20 +447,25 @@ export async function saveTeamTypeHeaderLines(
     throw new Error("Kop laporan minimal harus memiliki 1 baris teks.");
   }
 
-  if (supabase) {
-    const { error } = await supabase
-      .from("team_types")
-      .update({
-        header_lines: cleanedLines,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", teamTypeId);
+  const clients = getReadSupabaseClients();
+  for (const client of clients) {
+    try {
+      const { error } = await client
+        .from("team_types")
+        .update({
+          header_lines: cleanedLines,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", teamTypeId);
 
-    if (error) {
-      await supabase.rpc("update_team_type_headers", {
-        p_team_type_id: teamTypeId,
-        p_header_lines: cleanedLines,
-      });
+      if (error) {
+        await client.rpc("update_team_type_headers", {
+          p_team_type_id: teamTypeId,
+          p_header_lines: cleanedLines,
+        });
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -478,39 +489,44 @@ export async function saveTeamType(draft: TeamTypeDraft): Promise<TeamType[]> {
 
   const headerLinesToSave = cleanedLines.length > 0 ? cleanedLines : fallbackHeaders;
 
-  if (supabase) {
-    const { error } = await supabase.rpc("upsert_team_type", {
-      p_id: draft.id || "",
-      p_code: draft.code.trim().toLowerCase(),
-      p_name: draft.name.trim(),
-      p_description: draft.description ? draft.description.trim() : "",
-      p_header_lines: headerLinesToSave,
-      p_coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
-      p_coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
-      p_coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
-      p_signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
-      p_is_default: Boolean(draft.isDefault),
-    });
+  const clients = getReadSupabaseClients();
+  for (const client of clients) {
+    try {
+      const { error } = await client.rpc("upsert_team_type", {
+        p_id: draft.id || "",
+        p_code: draft.code.trim().toLowerCase(),
+        p_name: draft.name.trim(),
+        p_description: draft.description ? draft.description.trim() : "",
+        p_header_lines: headerLinesToSave,
+        p_coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
+        p_coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
+        p_coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
+        p_signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
+        p_is_default: Boolean(draft.isDefault),
+      });
 
-    if (error) {
-      // Fallback to direct upsert if RPC fails
-      await supabase.from("team_types").upsert(
-        {
-          id: draft.id || `team-type-${Date.now()}`,
-          code: draft.code.trim().toLowerCase(),
-          name: draft.name.trim(),
-          description: draft.description ? draft.description.trim() : "",
-          header_lines: headerLinesToSave,
-          coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
-          coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
-          coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
-          signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
-          is_default: Boolean(draft.isDefault),
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: draft.id ? "id" : "code" },
-      );
+      if (error) {
+        // Fallback to direct upsert if RPC fails
+        await client.from("team_types").upsert(
+          {
+            id: draft.id || `team-type-${Date.now()}`,
+            code: draft.code.trim().toLowerCase(),
+            name: draft.name.trim(),
+            description: draft.description ? draft.description.trim() : "",
+            header_lines: headerLinesToSave,
+            coordinator_name: draft.coordinatorName ? draft.coordinatorName.trim() : null,
+            coordinator_nip: draft.coordinatorNip ? draft.coordinatorNip.trim() : null,
+            coordinator_label: draft.coordinatorLabel ? draft.coordinatorLabel.trim() : null,
+            signature_url: draft.signatureUrl ? draft.signatureUrl.trim() : null,
+            is_default: Boolean(draft.isDefault),
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: draft.id ? "id" : "code" },
+        );
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -518,15 +534,20 @@ export async function saveTeamType(draft: TeamTypeDraft): Promise<TeamType[]> {
 }
 
 export async function deleteTeamType(teamTypeId: string) {
-  if (supabase) {
-    const { error } = await supabase.rpc("delete_team_type", {
-      p_id: teamTypeId,
-    });
-    if (error) {
-      await supabase
-        .from("team_types")
-        .update({ is_active: false, updated_at: new Date().toISOString() })
-        .eq("id", teamTypeId);
+  const clients = getReadSupabaseClients();
+  for (const client of clients) {
+    try {
+      const { error } = await client.rpc("delete_team_type", {
+        p_id: teamTypeId,
+      });
+      if (error) {
+        await client
+          .from("team_types")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", teamTypeId);
+      }
+    } catch {
+      // ignore
     }
   }
 

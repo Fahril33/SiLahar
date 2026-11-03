@@ -3,6 +3,7 @@ import type {
   ReportTemplateApproverRole,
   ReportTemplateConfig,
 } from "../types/report-template";
+import type { TeamType } from "../types/team-type";
 
 export const FALLBACK_TEMPLATE_ID = "fallback-bpbd-trc-harian-2026";
 export const FALLBACK_COORDINATOR_TRC_ID = "fallback-coordinator-team-trc";
@@ -131,5 +132,86 @@ export function getTemplateApproverByRole(
       (approver) => approver.approverRole === role && approver.isActive,
     ) ?? null
   );
+}
+
+export function getRegisteredCoordinatorForTeam(
+  teamCodeOrName?: string | null,
+  teamTypes?: TeamType[] | null,
+  templateConfig?: ReportTemplateConfig | null,
+  reportDate?: string | null,
+): {
+  coordinatorName: string;
+  coordinatorNip: string;
+  coordinatorLabel: string;
+  signatureUrl: string;
+  templateId?: string | null;
+} {
+  const clean = (teamCodeOrName || "PUSDALOPS").trim().toLowerCase();
+  const isTrc = clean.includes("trc");
+  const isPusdalops = clean.includes("pusdalops");
+
+  // 1. Search in registered teamTypes
+  const list = teamTypes && teamTypes.length > 0 ? teamTypes : [];
+  const matchedTeam = list.find((t) => {
+    const code = (t.code || "").trim().toLowerCase();
+    const name = (t.name || "").trim().toLowerCase();
+    return (
+      code === clean ||
+      name === clean ||
+      (isTrc && (code === "trc" || name.includes("trc"))) ||
+      (isPusdalops && (code === "pusdalops" || name.includes("pusdalops")))
+    );
+  });
+
+  // 2. Search in templateConfig approvers
+  const role: ReportTemplateApproverRole = isTrc
+    ? "coordinator_team_trc"
+    : "coordinator_team_pusdalops";
+  const approver = templateConfig?.approvers?.find(
+    (a) => a.approverRole === role && a.isActive,
+  );
+
+  // 3. Registered values from team_types take primary precedence
+  let coordinatorName =
+    matchedTeam?.coordinatorName?.trim() || approver?.officialName?.trim() || "";
+  let coordinatorNip =
+    matchedTeam?.coordinatorNip?.trim() || approver?.officialNip?.trim() || "";
+  let coordinatorLabel =
+    matchedTeam?.coordinatorLabel?.trim() ||
+    approver?.scopeLabel?.trim() ||
+    (isTrc ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS");
+  let signatureUrl =
+    matchedTeam?.signatureUrl?.trim() || approver?.signatureUrl?.trim() || "";
+  let templateId = approver?.id || matchedTeam?.id || null;
+
+  // 4. Fallback to historical Jan-Mar Pusdalops only if NO registered coordinator was found
+  if (!coordinatorName && isPusdalops && isJanToMarPeriod(reportDate)) {
+    coordinatorName = JAN_MAR_PUSDALOPS_COORDINATOR.officialName;
+    coordinatorNip = JAN_MAR_PUSDALOPS_COORDINATOR.officialNip;
+    coordinatorLabel = JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel;
+    templateId = JAN_MAR_PUSDALOPS_COORDINATOR.id;
+  }
+
+  // 5. Final fallback to template fallback
+  if (!coordinatorName) {
+    const fallbackApprover = fallbackReportTemplateConfig.approvers.find(
+      (a) => a.approverRole === role,
+    );
+    if (fallbackApprover) {
+      coordinatorName = fallbackApprover.officialName;
+      coordinatorNip = fallbackApprover.officialNip;
+      coordinatorLabel = fallbackApprover.scopeLabel;
+      signatureUrl = fallbackApprover.signatureUrl || "";
+      templateId = fallbackApprover.id;
+    }
+  }
+
+  return {
+    coordinatorName,
+    coordinatorNip,
+    coordinatorLabel,
+    signatureUrl,
+    templateId,
+  };
 }
 

@@ -1,10 +1,12 @@
 import type { Report } from "../types/report";
+import type { TeamType } from "../types/team-type";
 import { supabase } from "../lib/supabase";
-import { getCachedSignatureDataUrl } from "../lib/storage";
+import { getCachedSignatureDataUrl, loadCachedTeamTypes } from "../lib/storage";
 import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
   isPusdalopsTeam,
+  getRegisteredCoordinatorForTeam,
 } from "../lib/report-template-defaults";
 
 export function ReportPdfDocument(props: { report: Report; headerLines?: string[] }) {
@@ -13,19 +15,35 @@ export function ReportPdfDocument(props: { report: Report; headerLines?: string[
   const isJanMar = isJanToMarPeriod(report.reportDate || report.tanggal);
   const useJanMarPusdalops = isPusdalops && isJanMar;
 
-  const coordinatorName = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
-    : (report.approverCoordinator || "-");
-  const coordinatorNip = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
-    : (report.approverCoordinatorNip || "-");
-  const coordinatorLabel = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
-    : (report.approverCoordinatorLabel || "KOORDINATOR TIM");
+  const registeredCoord = getRegisteredCoordinatorForTeam(
+    report.tim,
+    loadCachedTeamTypes<TeamType[]>(),
+    null,
+    report.reportDate || report.tanggal,
+  );
 
-  const coordinatorSignature =
-    getCachedSignatureDataUrl(report.approverCoordinatorSignatureUrl) ||
+  const coordinatorName =
+    registeredCoord.coordinatorName ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+      : (report.approverCoordinator || "-"));
+  const coordinatorNip =
+    registeredCoord.coordinatorNip ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+      : (report.approverCoordinatorNip || "-"));
+  const coordinatorLabel =
+    registeredCoord.coordinatorLabel ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+      : (report.approverCoordinatorLabel || "KOORDINATOR TIM"));
+
+  const coordinatorSignatureUrl =
+    registeredCoord.signatureUrl ||
     report.approverCoordinatorSignatureUrl;
+  const coordinatorSignature =
+    getCachedSignatureDataUrl(coordinatorSignatureUrl) ||
+    coordinatorSignatureUrl;
   const divisionHeadSignature =
     getCachedSignatureDataUrl(report.approverDivisionHeadSignatureUrl) ||
     report.approverDivisionHeadSignatureUrl;

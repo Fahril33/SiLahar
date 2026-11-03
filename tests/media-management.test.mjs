@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { build } from "esbuild";
 
+if (typeof globalThis.File === "undefined") {
+  globalThis.File = class File extends Blob {
+    constructor(chunks, name, options) {
+      super(chunks, options);
+      this.name = name;
+      this.lastModified = options?.lastModified || Date.now();
+    }
+  };
+}
+
 // Bundle the real services with in-memory Supabase adapters. No test can contact a server.
 const bundled = await build({
   stdin: { contents: 'export * from "./src/lib/media-service"; export * from "./src/lib/media-utils";', resolveDir: process.cwd(), loader: "ts" },
@@ -13,7 +23,7 @@ const bundled = await build({
       builder.onResolve({ filter: /^\.\/(supabase|report-service)$/ }, (args) => ({ path: args.path, namespace: "memory-fixture" }));
       builder.onLoad({ filter: /.*/, namespace: "memory-fixture" }, (args) => ({ contents: args.path.endsWith("report-service")
         ? "export async function getActiveAdminSession() { return globalThis.mediaFixture.admin; }"
-        : "export const supabase = new Proxy({}, { get: (_, key) => globalThis.mediaFixture.client[key] }); export function createIsolatedSupabaseClient() { return globalThis.mediaFixture.isolated; }", loader: "js" }));
+        : "export const supabase = new Proxy({}, { get: (_, key) => globalThis.mediaFixture.client[key] }); export const legacySupabase = null; export const supabaseUrl = 'https://fixture.invalid'; export const legacySupabaseUrl = undefined; export function getReadSupabaseClients() { return [supabase]; } export function createIsolatedSupabaseClient() { return globalThis.mediaFixture.isolated; }", loader: "js" }));
     },
   }],
 });
@@ -50,6 +60,16 @@ beforeEach(() => {
       },
       getPublicUrl: (path) => ({ data: { publicUrl: `https://fixture.invalid/storage/v1/object/public/${id}/${path}` } }),
       createSignedUrls: async (paths) => ({ data: paths.map((path) => ({ path, signedUrl: `https://fixture.invalid/signed/${path}`, error: null })), error: null }),
+      download: async (path) => {
+        fixture.downloaded = fixture.downloaded || [];
+        fixture.downloaded.push({ bucket: id, path });
+        return { data: new Blob(["small-mock-data"], { type: "image/jpeg" }), error: null };
+      },
+      upload: async (path, file, options) => {
+        fixture.uploaded = fixture.uploaded || [];
+        fixture.uploaded.push({ bucket: id, path, file, options });
+        return { data: { path }, error: null };
+      },
     }),
   });
   fixture.client = {
@@ -254,4 +274,108 @@ test("handles nested array relations, backslashes, and root-relative URLs gracef
   const unknownFile = media.correlateMedia([image("random.png")], refs, bucket.id, true);
   assert.equal(unknownFile[0].status, "orphan");
 });
+
+test("correctly parses upload and report month keys and formats Indonesian month labels", () => {
+  assert.equal(media.getImageMonthKey("2026-11-02T13:20:00.000Z"), "2026-11");
+  assert.equal(media.getImageMonthKey("2025-01-15"), "2025-01");
+  assert.equal(media.getImageMonthKey("invalid-date"), null);
+  assert.equal(media.getImageMonthKey(""), null);
+
+  assert.equal(media.formatMediaMonthLabel("2026-11"), "November 2026");
+  assert.equal(media.formatMediaMonthLabel("2025-01"), "Januari 2025");
+  assert.equal(media.formatMediaMonthLabel("2024-08"), "Agustus 2024");
+  assert.equal(media.formatMediaMonthLabel("invalid"), "invalid");
+
+  // Report month categorization
+  const photoImage = { references: [{ date: "2026-11-02", kind: "report" }] };
+  assert.deepEqual(media.getImageReportMonthKeys(photoImage), ["2026-11"]);
+
+  const multiPhotoImage = { references: [{ date: "2026-10-15", kind: "report" }, { date: "2026-11-01", kind: "report" }] };
+  assert.deepEqual(media.getImageReportMonthKeys(multiPhotoImage), ["2026-10", "2026-11"]);
+
+  const orphanImage = { status: "orphan", references: [] };
+  assert.deepEqual(media.getImageReportMonthKeys(orphanImage), ["unlinked"]);
+
+  const signatureImage = { references: [{ date: null, kind: "team" }] };
+  assert.deepEqual(media.getImageReportMonthKeys(signatureImage), ["master"]);
+});
+
+test("compressAndOverwriteMediaImages skips already small files and processes heavy files with upsert", async () => {
+  const smallFile = image("report/small.jpg");
+  smallFile.size = 200 * 1024; // 200 KB (<= 300 KB)
+
+  const heavyFile = image("report/heavy.jpg");
+  heavyFile.size = 1.5 * 1024 * 1024; // 1.5 MB (> 300 KB)
+
+  let progressReported = null;
+  const result = await media.compressAndOverwriteMediaImages(
+    bucket,
+    [smallFile, heavyFile],
+    "admin-1",
+    "primary",
+    (done, total, savedBytes) => {
+      progressReported = { done, total, savedBytes };
+    },
+  );
+
+  assert.equal(result.skipped.includes("report/small.jpg"), true);
+  assert.equal(result.processed.includes("report/heavy.jpg"), true);
+  assert.equal(progressReported?.done, 2);
+  assert.equal(fixture.downloaded?.some((d) => d.path === "report/heavy.jpg"), true);
+  assert.equal(fixture.uploaded?.some((u) => u.path === "report/heavy.jpg" && u.options?.upsert === true), true);
+});
+
+test("compressAndOverwriteMediaImages works on audited buckets and rejects non-audited buckets", async () => {
+  const heavyFile = image("report/heavy.jpg");
+  heavyFile.size = 1.5 * 1024 * 1024;
+
+  const unauditedBucket = { ...bucket, id: "unknown-bucket", auditable: false };
+
+  // 1. Should reject unaudited bucket
+  await assert.rejects(
+    async () => {
+      await media.compressAndOverwriteMediaImages(
+        unauditedBucket,
+        [heavyFile],
+        "admin-1",
+        "primary",
+      );
+    },
+    /tidak terdaftar untuk audit dan kompresi media/,
+  );
+
+  // 2. Should succeed on signatureBucket (audited)
+  const result = await media.compressAndOverwriteMediaImages(
+    signatureBucket,
+    [heavyFile],
+    "admin-1",
+    "primary",
+  );
+  assert.equal(result.processed.includes("report/heavy.jpg"), true);
+});
+
+test("compressAndOverwriteMediaImages aborts when signal is triggered", async () => {
+  const heavyFile = image("report/heavy.jpg");
+  heavyFile.size = 1.5 * 1024 * 1024;
+
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    async () => {
+      await media.compressAndOverwriteMediaImages(
+        bucket,
+        [heavyFile],
+        "admin-1",
+        "primary",
+        undefined,
+        { signal: controller.signal },
+      );
+    },
+    (err) => err.name === "AbortError",
+  );
+});
+
+
+
 

@@ -22,6 +22,7 @@ export type ReportActivity = {
 export type Report = {
   id: string;
   source?: "db" | "local";
+  databaseAccount?: "primary" | "legacy";
   templateId: string | null;
   tim: string;
   nama: string;

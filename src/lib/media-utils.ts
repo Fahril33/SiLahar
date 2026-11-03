@@ -6,6 +6,45 @@ export function isStorageImage(name: string, mimeType = "") {
   return mimeType.toLowerCase().startsWith("image/") || IMAGE_EXTENSION.test(name);
 }
 
+/**
+ * Normalizes a storage object path relative to the bucket root:
+ * 1. Replaces backslashes with forward slashes
+ * 2. Strips URL schemes and query parameters / fragments
+ * 3. Strips accidental bucketId prefix (e.g. "daily-report-proofs/foo.jpg" -> "foo.jpg")
+ * 4. Strips leading slashes (e.g. "/foo.jpg" -> "foo.jpg")
+ */
+export function normalizeStoragePath(raw: string, bucketId?: string): string {
+  let path = (raw || "").trim().replace(/\\/g, "/");
+  if (!path || path.startsWith("data:")) return "";
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      const url = new URL(path);
+      path = url.pathname;
+    } catch {
+      /* Keep path as-is */
+    }
+  }
+  const match = path.match(
+    /\/?storage\/v1\/(?:object|render\/image)\/(?:public|sign|authenticated)\/([^/?#]+)\/(.+)$/,
+  );
+  if (match) {
+    let urlBucket = match[1];
+    try {
+      urlBucket = decodeURIComponent(urlBucket);
+    } catch {
+      /* Keep literal */
+    }
+    if (!bucketId || urlBucket === bucketId) {
+      path = match[2];
+    }
+  }
+  path = path.split(/[?#]/)[0].replace(/^\/+/, "");
+  if (bucketId && path.startsWith(`${bucketId}/`)) {
+    path = path.slice(bucketId.length + 1).replace(/^\/+/, "");
+  }
+  return path;
+}
+
 function decodedVariants(value: string) {
   const variants = new Set([value]);
   let next = value;
@@ -79,3 +118,60 @@ export function formatMediaBytes(value: number) {
 export function mediaStatusLabel(status: MediaImage["status"]) {
   return status === "linked" ? "Terkait data" : status === "orphan" ? "Orphan" : "Belum diaudit";
 }
+
+export function getImageMonthKey(createdAt: string): string | null {
+  if (!createdAt) return null;
+  const time = Date.parse(createdAt);
+  if (!Number.isNaN(time)) {
+    const d = new Date(time);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    return `${year}-${month}`;
+  }
+  const match = /^\d{4}-\d{2}/.exec(createdAt);
+  return match ? match[0] : null;
+}
+
+const INDONESIAN_MONTHS = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+];
+
+export function formatMediaMonthLabel(monthKey: string): string {
+  const [yearStr, monthStr] = monthKey.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  if (!year || !month || month < 1 || month > 12) return monthKey;
+  return `${INDONESIAN_MONTHS[month - 1]} ${year}`;
+}
+
+export function getImageReportMonthKeys(image: {
+  status?: string;
+  references: Array<{ date: string | null; kind?: string }>;
+}): string[] {
+  const keys: string[] = [];
+  let hasReportDate = false;
+  let hasMasterRef = false;
+
+  for (const ref of image.references) {
+    if (ref.date) {
+      const match = /^\d{4}-\d{2}/.exec(ref.date);
+      if (match) {
+        keys.push(match[0]);
+        hasReportDate = true;
+      }
+    } else {
+      hasMasterRef = true;
+    }
+  }
+
+  if (!image.references.length || image.status === "orphan") {
+    keys.push("unlinked");
+  } else if (!hasReportDate && hasMasterRef) {
+    keys.push("master");
+  }
+
+  return [...new Set(keys)];
+}
+
+

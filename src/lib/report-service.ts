@@ -1,10 +1,14 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { fallbackReportTemplateConfig } from "./report-template-defaults";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
 import {
   supabase,
+  legacySupabase,
+  legacySupabaseUrl,
   getReadSupabaseClients,
+  getSettingsSupabaseClients,
   getClientForUrl,
 } from "./supabase";
 import { logSafeError, logSafeWarn } from "./logger";
@@ -20,6 +24,7 @@ import type {
   ReporterDirectoryProfile,
 } from "../types/report";
 import { optimizeReportImage } from "./image-optimizer";
+import { getWitaToday } from "./time";
 
 const PROOF_BUCKET = "daily-report-proofs";
 
@@ -104,12 +109,12 @@ function mapReporterDirectoryRow(
   };
 }
 
-async function removeExistingAssets(report: Report) {
-  if (!supabase) {
+async function removeExistingAssets(report: Report, client: SupabaseClient = supabase!) {
+  if (!client) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const { error: deleteActivitiesError } = await supabase
+  const { error: deleteActivitiesError } = await client
     .from("daily_report_activities")
     .delete()
     .eq("report_id", report.id);
@@ -345,7 +350,7 @@ export async function fetchReporterDirectoryProfiles() {
 }
 
 export async function fetchReportRules(): Promise<ReportRules> {
-  const clients = getReadSupabaseClients();
+  const clients = getSettingsSupabaseClients();
   if (clients.length === 0) {
     return initialReportRules;
   }
@@ -405,7 +410,7 @@ export async function fetchNotificationSettings() {
     },
   };
 
-  const clients = getReadSupabaseClients();
+  const clients = getSettingsSupabaseClients();
   if (clients.length === 0) {
     return fallback;
   }
@@ -454,33 +459,49 @@ export async function fetchNotificationSettings() {
 export async function saveNotificationSettingsToDatabase(
   settings: NotificationSettings,
 ) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const { error } = await supabase.from("app_settings").upsert(
-    {
-      key: "notification_settings",
-      value: {
-        show_admin_sound_settings: settings.showAdminSoundSettings,
-        disable_sound_responses_for_all_users:
-          settings.disableSoundResponsesForAllUsers,
-        success: {
-          mode: settings.success.mode,
-          specific_file: settings.success.specificFile,
-        },
-        fail: {
-          mode: settings.fail.mode,
-          specific_file: settings.fail.specificFile,
-        },
-      },
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "key" },
-  );
+  let savedAny = false;
+  let lastError: any = null;
 
-  if (error) {
-    throw error;
+  for (const client of clients) {
+    try {
+      const { error } = await client.from("app_settings").upsert(
+        {
+          key: "notification_settings",
+          value: {
+            show_admin_sound_settings: settings.showAdminSoundSettings,
+            disable_sound_responses_for_all_users:
+              settings.disableSoundResponsesForAllUsers,
+            success: {
+              mode: settings.success.mode,
+              specific_file: settings.success.specificFile,
+            },
+            fail: {
+              mode: settings.fail.mode,
+              specific_file: settings.fail.specificFile,
+            },
+          },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
+      );
+
+      if (!error) {
+        savedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!savedAny && lastError) {
+    throw lastError;
   }
 
   return fetchNotificationSettings();
@@ -670,7 +691,8 @@ export async function signOutAdminAccount() {
 }
 
 export async function saveReportRulesToDatabase(rules: ReportRules) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
@@ -679,21 +701,37 @@ export async function saveReportRulesToDatabase(rules: ReportRules) {
     maxPhotosPerActivity: Math.max(1, Number(rules.maxPhotosPerActivity) || 1),
     systemStartDate: rules.systemStartDate || "",
   };
-  const { error } = await supabase.from("app_settings").upsert(
-    {
-      key: "report_rules",
-      value: {
-        allow_any_report_date: normalizedRules.allowAnyReportDate,
-        max_photos_per_activity: normalizedRules.maxPhotosPerActivity,
-        system_start_date: normalizedRules.systemStartDate,
-      },
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "key" },
-  );
 
-  if (error) {
-    throw error;
+  let savedAny = false;
+  let lastError: any = null;
+
+  for (const client of clients) {
+    try {
+      const { error } = await client.from("app_settings").upsert(
+        {
+          key: "report_rules",
+          value: {
+            allow_any_report_date: normalizedRules.allowAnyReportDate,
+            max_photos_per_activity: normalizedRules.maxPhotosPerActivity,
+            system_start_date: normalizedRules.systemStartDate,
+          },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
+      );
+
+      if (!error) {
+        savedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!savedAny && lastError) {
+    throw lastError;
   }
 
   return fetchReportRules();
@@ -948,43 +986,134 @@ export async function registerReporter(name: string, pass: string): Promise<Repo
 }
 
 export async function updateReporterProfile(reporterId: string, nextName: string, nextPass: string) {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
-  const { error } = await supabase.rpc("update_reporter_profile", {
-    reporter_id: reporterId,
-    next_name: nextName,
-    next_password: nextPass
-  });
-  if (error) {
-    throw error;
+
+  let updatedAny = false;
+  let lastError: any = null;
+
+  for (const client of clients) {
+    try {
+      const { error } = await client.rpc("update_reporter_profile", {
+        reporter_id: reporterId,
+        next_name: nextName,
+        next_password: nextPass,
+      });
+
+      if (!error) {
+        updatedAny = true;
+      } else {
+        lastError = error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!updatedAny && lastError) {
+    throw lastError;
   }
 }
 
 export async function adminGetReporterPasswords(): Promise<Record<string, string>> {
-  if (!supabase) {
+  const clients = getReadSupabaseClients();
+  if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
-  const { data, error } = await supabase.rpc("admin_get_reporter_passwords");
-  if (error) {
-    throw error;
-  }
+
   const res: Record<string, string> = {};
-  if (data) {
-    for (const row of data) {
-      res[row.id] = row.password;
+  for (const client of clients) {
+    try {
+      const { data, error } = await client.rpc("admin_get_reporter_passwords");
+      if (!error && data) {
+        for (const row of data) {
+          if (!res[row.id]) {
+            res[row.id] = row.password;
+          }
+        }
+      }
+    } catch {
+      // continue next client
     }
   }
+
   return res;
 }
 
-async function upsertReporterDirectory(name: string) {
-  if (!supabase) {
+export async function resolveTargetClientForReport(
+  existingReport: Report | null,
+  reportId?: string,
+): Promise<{ client: SupabaseClient; account: "primary" | "legacy" }> {
+  // If legacySupabase is not configured, always return primary supabase
+  if (!legacySupabase) {
+    if (!supabase) throw new Error("Supabase client belum terkonfigurasi.");
+    return { client: supabase, account: "primary" };
+  }
+
+  // 1. If explicitly tagged as legacy
+  if (existingReport?.databaseAccount === "legacy") {
+    return { client: legacySupabase, account: "legacy" };
+  }
+
+  // 2. If existingReport photos point to legacySupabaseUrl
+  if (
+    existingReport?.activities?.some((a) =>
+      a.photos?.some((p) => p.publicUrl?.includes(legacySupabaseUrl || "___never___")),
+    )
+  ) {
+    return { client: legacySupabase, account: "legacy" };
+  }
+
+  const targetId = existingReport?.id || reportId;
+  if (!targetId) {
+    return { client: supabase || legacySupabase, account: supabase ? "primary" : "legacy" };
+  }
+
+  // 3. Verify where this report actually exists: check primary first
+  if (supabase) {
+    try {
+      const { data } = await supabase
+        .from("daily_reports")
+        .select("id")
+        .eq("id", targetId)
+        .maybeSingle();
+
+      if (data?.id) {
+        return { client: supabase, account: "primary" };
+      }
+    } catch {
+      // continue to legacy check
+    }
+  }
+
+  // 4. Check legacy
+  try {
+    const { data: legacyData } = await legacySupabase
+      .from("daily_reports")
+      .select("id")
+      .eq("id", targetId)
+      .maybeSingle();
+
+    if (legacyData?.id) {
+      return { client: legacySupabase, account: "legacy" };
+    }
+  } catch {
+    // fallback
+  }
+
+  return { client: supabase || legacySupabase, account: supabase ? "primary" : "legacy" };
+}
+
+async function upsertReporterDirectory(name: string, client: SupabaseClient = supabase!) {
+  if (!client) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const { data, error } = await supabase.rpc("upsert_reporter_directory_for_report", {
-    reporter_name_input: formatReporterNameForDatabase(name),
+  const formattedName = formatReporterNameForDatabase(name);
+  const { data, error } = await client.rpc("upsert_reporter_directory_for_report", {
+    reporter_name_input: formattedName,
   });
 
   if (error) {
@@ -995,15 +1124,31 @@ async function upsertReporterDirectory(name: string) {
     throw new Error("Gagal mendapatkan ID reporter dari database.");
   }
 
+  // Also sync reporter directory to primary database if we are targeting legacy
+  if (client !== supabase && supabase) {
+    try {
+      await supabase.rpc("upsert_reporter_directory_for_report", {
+        reporter_name_input: formattedName,
+      });
+    } catch {
+      // ignore sync error
+    }
+  }
+
   return data as string;
 }
 
-async function upsertReportRow(draft: DraftReport, existingReport: Report | null, reportId: string) {
-  if (!supabase) {
+async function upsertReportRow(
+  draft: DraftReport,
+  existingReport: Report | null,
+  reportId: string,
+  targetClient: SupabaseClient = supabase!,
+) {
+  if (!targetClient) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
-  const reporterDirectoryId = await upsertReporterDirectory(draft.nama);
+  const reporterDirectoryId = await upsertReporterDirectory(draft.nama, targetClient);
 
   const isValidUuid = (id: string | null | undefined): id is string =>
     Boolean(
@@ -1040,7 +1185,7 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
   };
 
   if (existingReport && existingReport.source !== "local") {
-    const { data, error } = await supabase
+    const { data, error } = await targetClient
       .from("daily_reports")
       .update(payload)
       .eq("id", existingReport.id)
@@ -1061,7 +1206,7 @@ async function upsertReportRow(draft: DraftReport, existingReport: Report | null
   }
 
   payload.id = existingReport?.id ?? reportId;
-  const { data, error } = await supabase
+  const { data, error } = await targetClient
     .from("daily_reports")
     .upsert(payload, { onConflict: "id" })
     .select("id")
@@ -1098,11 +1243,32 @@ export async function saveReportToDatabase(
   reportRules: ReportRules = initialReportRules,
   onStage?: (stageId: string, detail?: string) => void,
 ) {
-  if (!supabase) {
+  if (!supabase && !legacySupabase) {
     throw new Error("Supabase client belum terkonfigurasi.");
   }
 
   const reportId = existingReport?.id ?? generateUUID();
+  const { client: targetClient } = await resolveTargetClientForReport(existingReport, reportId);
+
+  // If allowAnyReportDate is enabled or this is a past date report, sync to targetClient app_settings
+  if (reportRules.allowAnyReportDate || (existingReport && existingReport.reportDate !== getWitaToday())) {
+    try {
+      await targetClient.from("app_settings").upsert(
+        {
+          key: "report_rules",
+          value: {
+            allow_any_report_date: true,
+            max_photos_per_activity: reportRules.maxPhotosPerActivity || 1,
+            system_start_date: reportRules.systemStartDate || "",
+          },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
+      );
+    } catch {
+      // non-blocking
+    }
+  }
 
   // 1. Generate client-side UUIDs for each activity
   const activityIds = draft.activities.map(() => generateUUID());
@@ -1123,19 +1289,33 @@ export async function saveReportToDatabase(
           // Kompresi ketat sebelum upload: downscale & kompresi ke WebP/JPEG (< 350 KB)
           const file = await optimizeReportImage(rawFile);
           const storagePath = `${reportId}/${activityId}/${Date.now()}-${fileIndex}-${sanitizeFileName(file.name)}`;
-          const { error: uploadError } = await supabase.storage
+
+          let activeStorageClient = targetClient;
+          let uploadResult = await activeStorageClient.storage
             .from(PROOF_BUCKET)
             .upload(storagePath, file, {
               upsert: false,
               contentType: file.type || "image/jpeg",
             });
 
-          if (uploadError) {
-            throw uploadError;
+          // Fallback to primary supabase storage if target is legacy and storage upload fails
+          if (uploadResult.error && activeStorageClient !== supabase && supabase) {
+            logSafeWarn("Gagal upload ke storage target, mencoba storage akun utama:", uploadResult.error);
+            activeStorageClient = supabase;
+            uploadResult = await activeStorageClient.storage
+              .from(PROOF_BUCKET)
+              .upload(storagePath, file, {
+                upsert: false,
+                contentType: file.type || "image/jpeg",
+              });
+          }
+
+          if (uploadResult.error) {
+            throw uploadResult.error;
           }
           newUploadedPaths.push(storagePath);
 
-          const { data: publicUrlData } = supabase.storage.from(PROOF_BUCKET).getPublicUrl(storagePath);
+          const { data: publicUrlData } = activeStorageClient.storage.from(PROOF_BUCKET).getPublicUrl(storagePath);
           uploadedList.push({
             storagePath,
             publicUrl: publicUrlData.publicUrl,
@@ -1148,7 +1328,9 @@ export async function saveReportToDatabase(
   } catch (err) {
     // If any file upload fails, clean up successfully uploaded files in this session
     if (newUploadedPaths.length > 0) {
-      await supabase.storage.from(PROOF_BUCKET).remove(newUploadedPaths).catch(console.error);
+      for (const c of getReadSupabaseClients()) {
+        await c.storage.from(PROOF_BUCKET).remove(newUploadedPaths).catch(console.error);
+      }
     }
     throw err;
   }
@@ -1165,20 +1347,20 @@ export async function saveReportToDatabase(
       .filter((path) => !keptStoragePaths.has(path));
 
     if (deletedStoragePaths.length > 0) {
-      const { error: removeStorageError } = await supabase.storage
-        .from(PROOF_BUCKET)
-        .remove(deletedStoragePaths);
-
-      if (removeStorageError) {
-        throw removeStorageError;
+      for (const client of getReadSupabaseClients()) {
+        try {
+          await client.storage.from(PROOF_BUCKET).remove(deletedStoragePaths);
+        } catch (err) {
+          logSafeWarn("Gagal menghapus photo storage:", err);
+        }
       }
     }
 
-    await removeExistingAssets(existingReport);
+    await removeExistingAssets(existingReport, targetClient);
   }
 
   // Insert or update the report row
-  await upsertReportRow(draft, existingReport, reportId);
+  await upsertReportRow(draft, existingReport, reportId, targetClient);
 
   // Insert the new activities
   onStage?.("activities", "Mencatat detail aktivitas ke database.");
@@ -1191,7 +1373,7 @@ export async function saveReportToDatabase(
     end_time_text: activity.endTime,
   }));
 
-  const { error: activitiesError } = await supabase
+  const { error: activitiesError } = await targetClient
     .from("daily_report_activities")
     .insert(activityPayload);
 
@@ -1235,7 +1417,7 @@ export async function saveReportToDatabase(
   }
 
   if (photoRows.length > 0) {
-    const { error: photoInsertError } = await supabase
+    const { error: photoInsertError } = await targetClient
       .from("daily_report_activity_photos")
       .insert(photoRows);
 

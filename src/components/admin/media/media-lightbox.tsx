@@ -4,7 +4,14 @@ import { formatWitaDate, formatWitaDateTime } from "../../../lib/time";
 import type { MediaBucket, MediaImage } from "../../../types/media";
 import { MediaStatus, MediaThumbnail } from "./media-file-list";
 
-export function MediaLightbox(props: { image: MediaImage; bucket: MediaBucket; url?: string; onClose: () => void }) {
+export function MediaLightbox(props: {
+  image: MediaImage;
+  bucket: MediaBucket;
+  url?: string;
+  onClose: () => void;
+  onCompress?: (image: MediaImage) => void;
+  disabled?: boolean;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [copyState, setCopyState] = useState("");
   useEffect(() => {
@@ -44,7 +51,13 @@ export function MediaLightbox(props: { image: MediaImage; bucket: MediaBucket; u
           <dl className="media-metadata">
             <div><dt>Bucket</dt><dd>{props.bucket.id}</dd></div>
             <div><dt>Lokasi berkas</dt><dd className="font-mono">{props.image.path}</dd></div>
-            <div><dt>Ukuran</dt><dd>{formatMediaBytes(props.image.size)} · {new Intl.NumberFormat("id-ID").format(props.image.size)} byte</dd></div>
+            <div>
+              <dt>Ukuran</dt>
+              <dd>
+                {formatMediaBytes(props.image.size)} · {new Intl.NumberFormat("id-ID").format(props.image.size)} byte
+                {props.image.size > 300 * 1024 && <span style={{ marginLeft: "8px", color: "var(--danger, #dc2626)", fontWeight: 600 }}>(&gt; 300 KB)</span>}
+              </dd>
+            </div>
             <div><dt>Format</dt><dd>{props.image.mimeType || "Tidak tersedia"}</dd></div>
             <div><dt>Diunggah (WITA)</dt><dd>{formatWitaDateTime(props.image.createdAt) || "Tidak tersedia"}</dd></div>
             <div><dt>Terakhir diperbarui</dt><dd>{formatWitaDateTime(props.image.updatedAt) || "Tidak tersedia"}</dd></div>
@@ -56,6 +69,17 @@ export function MediaLightbox(props: { image: MediaImage; bucket: MediaBucket; u
             ))}</ul> : <p className="settings-hint">Tidak ditemukan pada data laporan maupun tanda tangan.</p>}
           </div>
           <div className="media-lightbox-actions">
+            {props.image.size > 300 * 1024 && props.onCompress && (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={props.disabled}
+                onClick={() => props.onCompress?.(props.image)}
+                title="Kompres gambar ini menjadi <= 300 KB dan timpa file lama di storage"
+              >
+                ⚡ Kompres &amp; Timpa (&le; 300 KB)
+              </button>
+            )}
             <button
               type="button"
               className="btn-secondary"

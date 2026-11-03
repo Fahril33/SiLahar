@@ -263,6 +263,7 @@ export function TeamSettingsPanel(
         isEdit ? "Jenis Tim Diperbarui" : "Jenis Tim Ditambahkan",
         `Jenis tim "${teamDraft.name}" berhasil disimpan ke sistem.`,
       );
+      void props.onReloadReports?.();
     } catch (err: any) {
       await showError(
         "Simpan Gagal",

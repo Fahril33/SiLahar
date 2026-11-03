@@ -1,10 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Report, ReportActivity, ReportActivityPhoto } from "../types/report";
-import { supabase } from "./supabase";
+import type { TeamType } from "../types/team-type";
+import { supabase, legacySupabase, legacySupabaseUrl, getClientForUrl } from "./supabase";
+import { loadCachedTeamTypes } from "./storage";
 import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
   isPusdalopsTeam,
+  getRegisteredCoordinatorForTeam,
 } from "./report-template-defaults";
 
 type PhotoRow = {
@@ -56,7 +59,7 @@ type ReportRow = {
 
 function mapPhoto(row: PhotoRow, client?: SupabaseClient | null): ReportActivityPhoto {
   let publicUrl = row.public_url;
-  const activeClient = client || supabase;
+  const activeClient = client || (publicUrl ? getClientForUrl(publicUrl) : null) || supabase;
   if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && activeClient) {
     const { data } = activeClient.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
     publicUrl = data?.publicUrl || "";
@@ -90,8 +93,49 @@ export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Re
   const isJanMar = isJanToMarPeriod(row.report_date);
   const useJanMarPusdalops = isPusdalops && isJanMar;
 
+  const targetLegacyUrl = legacySupabaseUrl;
+  const isLegacy = Boolean(
+    (legacySupabase && client === legacySupabase) ||
+    (targetLegacyUrl && row.daily_report_activities?.some((a) =>
+      a.daily_report_activity_photos?.some((p) => Boolean(p.public_url && p.public_url.includes(targetLegacyUrl))),
+    ))
+  );
+
+  const cachedTeamTypes = loadCachedTeamTypes<TeamType[]>();
+  const registeredCoord = getRegisteredCoordinatorForTeam(
+    row.tim,
+    cachedTeamTypes,
+    null,
+    row.report_date,
+  );
+
+  const effectiveCoordinatorName =
+    registeredCoord.coordinatorName ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+      : (row.approver_coordinator_name ?? ""));
+  const effectiveCoordinatorNip =
+    registeredCoord.coordinatorNip ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+      : (row.approver_coordinator_nip ?? ""));
+  const effectiveCoordinatorLabel =
+    registeredCoord.coordinatorLabel ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+      : ((Array.isArray(row.approver_coordinator_role)
+          ? row.approver_coordinator_role[0]?.scope_label
+          : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS")));
+  const effectiveCoordinatorSignatureUrl =
+    registeredCoord.signatureUrl ||
+    ((Array.isArray(row.approver_coordinator_role)
+      ? row.approver_coordinator_role[0]?.signature_url
+      : row.approver_coordinator_role?.signature_url) ?? row.approver_coordinator_signature_url ?? "");
+
   return {
     id: row.id,
+    source: "db",
+    databaseAccount: isLegacy ? "legacy" : "primary",
     templateId: row.template_id,
     tim: row.tim ?? "PUSDALOPS",
     nama: row.reporter_name,
@@ -100,23 +144,15 @@ export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Re
     activities: (row.daily_report_activities ?? [])
       .sort((a, b) => a.activity_order - b.activity_order)
       .map((act) => mapActivity(act, client)),
-    approverCoordinatorTemplateId: useJanMarPusdalops
-      ? JAN_MAR_PUSDALOPS_COORDINATOR.id
-      : row.template_approver_coordinator_id,
-    approverCoordinator: useJanMarPusdalops
-      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
-      : (row.approver_coordinator_name ?? ""),
-    approverCoordinatorNip: useJanMarPusdalops
-      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
-      : (row.approver_coordinator_nip ?? ""),
-    approverCoordinatorLabel: useJanMarPusdalops
-      ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
-      : ((Array.isArray(row.approver_coordinator_role)
-          ? row.approver_coordinator_role[0]?.scope_label
-          : row.approver_coordinator_role?.scope_label) ?? (row.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS")),
-    approverCoordinatorSignatureUrl: (Array.isArray(row.approver_coordinator_role)
-      ? row.approver_coordinator_role[0]?.signature_url
-      : row.approver_coordinator_role?.signature_url) ?? row.approver_coordinator_signature_url ?? "",
+    approverCoordinatorTemplateId:
+      registeredCoord.templateId ||
+      (useJanMarPusdalops
+        ? JAN_MAR_PUSDALOPS_COORDINATOR.id
+        : row.template_approver_coordinator_id),
+    approverCoordinator: effectiveCoordinatorName,
+    approverCoordinatorNip: effectiveCoordinatorNip,
+    approverCoordinatorLabel: effectiveCoordinatorLabel,
+    approverCoordinatorSignatureUrl: effectiveCoordinatorSignatureUrl,
     approverDivisionHeadTemplateId: row.template_approver_division_head_id,
     approverDivisionHead: row.approver_division_head_name ?? "",
     approverDivisionHeadTitle: row.approver_division_head_title ?? "",

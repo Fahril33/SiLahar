@@ -24,6 +24,7 @@ import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
   isPusdalopsTeam,
+  getRegisteredCoordinatorForTeam,
 } from "./report-template-defaults";
 
 const IMAGE_READY_TIMEOUT_MS = 12000;
@@ -353,29 +354,24 @@ export async function materializeReportImages(
   let divisionHeadNip = report.approverDivisionHeadNip;
   let divisionHeadTitle = report.approverDivisionHeadTitle;
 
-  // Resolve team headers and coordinator signatures if missing
+  // Resolve team headers and coordinator signatures if missing or registered
   try {
     const teamTypes = await fetchTeamTypes();
     if (!headerLines || headerLines.length === 0) {
       headerLines = getHeaderLinesForTeam(report.tim, teamTypes);
     }
-    const matchedTeam = teamTypes.find(
-      (t) =>
-        t.code.toLowerCase() === (report.tim || "trc").toLowerCase() ||
-        t.name.toLowerCase() === (report.tim || "trc").toLowerCase(),
+    const registeredCoord = getRegisteredCoordinatorForTeam(
+      report.tim,
+      teamTypes,
+      undefined,
+      report.reportDate || report.tanggal,
     );
-    if (matchedTeam) {
-      if (!coordinatorSig && matchedTeam.signatureUrl) {
-        coordinatorSig = matchedTeam.signatureUrl;
-      }
-      if (!coordinatorName && matchedTeam.coordinatorName) {
-        coordinatorName = matchedTeam.coordinatorName;
-      }
-      if (!coordinatorNip && matchedTeam.coordinatorNip) {
-        coordinatorNip = matchedTeam.coordinatorNip;
-      }
-      if (!coordinatorLabel && matchedTeam.coordinatorLabel) {
-        coordinatorLabel = matchedTeam.coordinatorLabel;
+    if (registeredCoord.coordinatorName) {
+      coordinatorName = registeredCoord.coordinatorName;
+      coordinatorNip = registeredCoord.coordinatorNip;
+      coordinatorLabel = registeredCoord.coordinatorLabel;
+      if (registeredCoord.signatureUrl) {
+        coordinatorSig = registeredCoord.signatureUrl;
       }
     }
   } catch {
@@ -384,8 +380,8 @@ export async function materializeReportImages(
     }
   }
 
-  // Khusus periode Januari - Maret: koordinator Pusdalops menggunakan FERA FAKTA EFA, SKM.,MM
-  if (isPusdalopsTeam(report.tim) && isJanToMarPeriod(report.reportDate || report.tanggal)) {
+  // Khusus periode Januari - Maret: koordinator Pusdalops menggunakan FERA FAKTA EFA, SKM.,MM jika belum ada yang terdaftar
+  if (!coordinatorName && isPusdalopsTeam(report.tim) && isJanToMarPeriod(report.reportDate || report.tanggal)) {
     coordinatorName = JAN_MAR_PUSDALOPS_COORDINATOR.officialName;
     coordinatorNip = JAN_MAR_PUSDALOPS_COORDINATOR.officialNip;
     coordinatorLabel = JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel;

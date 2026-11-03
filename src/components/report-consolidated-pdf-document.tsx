@@ -1,6 +1,7 @@
 import type { Report } from "../types/report";
+import type { TeamType } from "../types/team-type";
 import { supabase } from "../lib/supabase";
-import { getCachedSignatureDataUrl } from "../lib/storage";
+import { getCachedSignatureDataUrl, loadCachedTeamTypes } from "../lib/storage";
 import {
   groupReportsToConsolidatedDateEntries,
   getWeekAndMonthFromReports,
@@ -9,6 +10,7 @@ import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
   isPusdalopsTeam,
+  getRegisteredCoordinatorForTeam,
 } from "../lib/report-template-defaults";
 
 export interface ReportConsolidatedPdfDocumentProps {
@@ -54,19 +56,36 @@ export function ReportConsolidatedPdfDocument(
   const isJanMar = reports.length > 0 && reports.every((r) => isJanToMarPeriod(r.reportDate || r.tanggal));
   const useJanMarPusdalops = isPusdalops && isJanMar;
 
-  const effectiveCoordinatorName = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
-    : (approverCoordinator || "-");
-  const effectiveCoordinatorNip = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
-    : (approverCoordinatorNip || "-");
-  const effectiveCoordinatorLabel = useJanMarPusdalops
-    ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
-    : (approverCoordinatorLabel || "KOORDINATOR TIM");
+  const registeredCoord = getRegisteredCoordinatorForTeam(
+    teamName || (reports[0]?.tim),
+    loadCachedTeamTypes<TeamType[]>(),
+    null,
+    reports[0]?.reportDate || reports[0]?.tanggal,
+  );
+
+  const effectiveCoordinatorName =
+    registeredCoord.coordinatorName ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialName
+      : (approverCoordinator || "-"));
+  const effectiveCoordinatorNip =
+    registeredCoord.coordinatorNip ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.officialNip
+      : (approverCoordinatorNip || "-"));
+  const effectiveCoordinatorLabel =
+    registeredCoord.coordinatorLabel ||
+    (useJanMarPusdalops
+      ? JAN_MAR_PUSDALOPS_COORDINATOR.scopeLabel
+      : (approverCoordinatorLabel || "KOORDINATOR TIM"));
+
+  const effectiveCoordinatorSig =
+    registeredCoord.signatureUrl ||
+    approverCoordinatorSignatureUrl;
 
   const coordinatorSignature =
-    getCachedSignatureDataUrl(approverCoordinatorSignatureUrl) ||
-    approverCoordinatorSignatureUrl;
+    getCachedSignatureDataUrl(effectiveCoordinatorSig) ||
+    effectiveCoordinatorSig;
 
   const divisionHeadSignature =
     getCachedSignatureDataUrl(approverDivisionHeadSignatureUrl) ||

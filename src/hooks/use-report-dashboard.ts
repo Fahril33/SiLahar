@@ -15,7 +15,7 @@ import { notifyBackgroundTask } from "../lib/background-task-notifier";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { OFFLINE_EMERGENCY_MODE } from "../config/app-mode";
 import { getNextWorkDay } from "../lib/holidays";
-import { supabase } from "../lib/supabase";
+import { supabase, legacySupabase, getClientForUrl } from "../lib/supabase";
 import { warmUpExcelTemplateCache } from "../lib/excel/cacheManager";
 import { generateDailyReportExcel } from "../lib/excel/excelGenerator";
 import {
@@ -63,11 +63,15 @@ import {
 import {
   createApproverDraftFromTemplate,
   fetchActiveReportTemplateConfig,
+  fetchTeamTypes,
   saveCustomHeaderLines,
   saveTemplateApproverDefaults,
 } from "../lib/report-template-service";
-import { DEFAULT_HEADER_LINES } from "../types/team-type";
-import { getTemplateApproverByRole } from "../lib/report-template-defaults";
+import { DEFAULT_HEADER_LINES, type TeamType } from "../types/team-type";
+import {
+  getTemplateApproverByRole,
+  getRegisteredCoordinatorForTeam,
+} from "../lib/report-template-defaults";
 import {
   applyTemplateDefaultsToDraft,
   createEmptyDraft,
@@ -108,6 +112,7 @@ import {
   loadCachedReporterNames,
   loadCachedReports,
   loadCachedReportTemplateConfig,
+  loadCachedTeamTypes,
   loadDeviceSubmittedNames,
   loadDraft,
   pushDeviceSubmittedName,
@@ -207,8 +212,9 @@ function mapOriginalActivityPhotos(report: Report) {
       activity.no,
       (activity.photos ?? []).map(p => {
         let url = p.publicUrl;
-        if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath && supabase) {
-          const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+        if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
+          const client = (p.publicUrl ? getClientForUrl(p.publicUrl) : null) || (report.databaseAccount === "legacy" ? legacySupabase : supabase) || supabase;
+          const { data } = client?.storage.from("daily-report-proofs").getPublicUrl(p.storagePath) || {};
           url = data?.publicUrl || "";
         }
         return { ...p, publicUrl: url };
@@ -323,6 +329,13 @@ export function useReportDashboard() {
   const [paperFormat, setPaperFormat] = useState<"a4" | "f4" | "legal" | "letter">("a4");
   const [activeReportTemplateConfig, setActiveReportTemplateConfig] =
     useState<ReportTemplateConfig | null>(() => loadCachedReportTemplateConfig<ReportTemplateConfig>());
+  const [teamTypes, setTeamTypes] = useState<TeamType[]>(
+    () => loadCachedTeamTypes<TeamType[]>() || [],
+  );
+  const teamTypesRef = useRef<TeamType[]>(teamTypes);
+  useEffect(() => {
+    teamTypesRef.current = teamTypes;
+  }, [teamTypes]);
   const [draft, setDraft] = useState<DraftReport>(() =>
     normalizeDraft(loadDraft(createEmptyDraft(loadCachedReportTemplateConfig<ReportTemplateConfig>()))),
   );
@@ -682,10 +695,13 @@ export function useReportDashboard() {
     lastDashboardLoadTimeRef.current = Date.now();
     setLoading(true);
     try {
-      const [dbR, dbRP, dbRules, dbET, dbATC, dbNS] = await Promise.all([
+      const [dbR, dbRP, dbRules, dbET, dbATC, dbNS, dbTT] = await Promise.all([
         fetchReports(), fetchReporterDirectoryProfiles(), fetchReportRules(),
-        fetchExcelReportTemplates(), fetchActiveReportTemplateConfig(), fetchNotificationSettings()
+        fetchExcelReportTemplates(), fetchActiveReportTemplateConfig(), fetchNotificationSettings(),
+        fetchTeamTypes(),
       ]);
+      setTeamTypes(dbTT);
+      teamTypesRef.current = dbTT;
       const dbRPFiltered = dbRP.filter(r => r.isActive && !isAdminName(r.fullName));
       const dbRN = dbRPFiltered.map(r => r.fullName);
       
@@ -955,18 +971,18 @@ export function useReportDashboard() {
     setDraft(c => {
       const updated = { ...c, [key]: value };
       if (key === "tim" || key === "reportDate") {
-        const teamCode = (updated.tim || "pusdalops").toLowerCase();
-        const coordinator = getTemplateApproverByRole(
+        const registered = getRegisteredCoordinatorForTeam(
+          updated.tim,
+          teamTypesRef.current.length > 0 ? teamTypesRef.current : loadCachedTeamTypes<TeamType[]>(),
           activeReportTemplateConfig,
-          `coordinator_team_${teamCode}` as "coordinator_team_trc" | "coordinator_team_pusdalops",
           updated.reportDate,
         );
-        if (coordinator) {
-          updated.approverCoordinatorTemplateId = coordinator.id;
-          updated.approverCoordinator = coordinator.officialName;
-          updated.approverCoordinatorNip = coordinator.officialNip;
-          updated.approverCoordinatorSignatureUrl = coordinator.signatureUrl || "";
-          updated.approverCoordinatorLabel = coordinator.scopeLabel || (updated.tim === "TRC" ? "KOORDINATOR TIM" : "KOORDINATOR PUSDALOPS");
+        if (registered.coordinatorName) {
+          updated.approverCoordinatorTemplateId = registered.templateId || null;
+          updated.approverCoordinator = registered.coordinatorName;
+          updated.approverCoordinatorNip = registered.coordinatorNip;
+          updated.approverCoordinatorSignatureUrl = registered.signatureUrl || "";
+          updated.approverCoordinatorLabel = registered.coordinatorLabel;
         }
       }
       return normalizeDraft(updated);
@@ -1539,12 +1555,20 @@ export function useReportDashboard() {
   }
 
   function loadReportIntoDraft(report: Report) {
+    const registeredCoord = getRegisteredCoordinatorForTeam(
+      report.tim,
+      teamTypesRef.current.length > 0 ? teamTypesRef.current : loadCachedTeamTypes<TeamType[]>(),
+      activeReportTemplateConfig,
+      report.reportDate || report.tanggal,
+    );
+
     const d = normalizeDraft({
       templateId: report.templateId,
       tim: report.tim,
       nama: report.nama,
       tanggal: report.tanggal,
       reportDate: report.reportDate,
+      databaseAccount: report.databaseAccount,
       activities: report.activities.map(a => ({
         id: a.id,
         no: a.no,
@@ -1553,21 +1577,24 @@ export function useReportDashboard() {
         endTime: a.endTime,
         photos: (a.photos ?? []).map(p => {
           let url = p.publicUrl;
-          if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath && supabase) {
-            const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+          if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
+            const client = (p.publicUrl ? getClientForUrl(p.publicUrl) : null) || (report.databaseAccount === "legacy" ? legacySupabase : supabase) || supabase;
+            const { data } = client?.storage.from("daily-report-proofs").getPublicUrl(p.storagePath) || {};
             url = data?.publicUrl || "";
           }
           return { ...p, publicUrl: url };
         }),
       })),
-      approverCoordinatorTemplateId: report.approverCoordinatorTemplateId,
-      approverCoordinator: report.approverCoordinator,
-      approverCoordinatorNip: report.approverCoordinatorNip,
-      approverCoordinatorLabel: report.approverCoordinatorLabel,
+      approverCoordinatorTemplateId: registeredCoord.templateId || report.approverCoordinatorTemplateId,
+      approverCoordinator: registeredCoord.coordinatorName || report.approverCoordinator,
+      approverCoordinatorNip: registeredCoord.coordinatorNip || report.approverCoordinatorNip,
+      approverCoordinatorLabel: registeredCoord.coordinatorLabel || report.approverCoordinatorLabel,
+      approverCoordinatorSignatureUrl: registeredCoord.signatureUrl || report.approverCoordinatorSignatureUrl || "",
       approverDivisionHeadTemplateId: report.approverDivisionHeadTemplateId,
       approverDivisionHead: report.approverDivisionHead,
       approverDivisionHeadTitle: report.approverDivisionHeadTitle,
       approverDivisionHeadNip: report.approverDivisionHeadNip,
+      approverDivisionHeadSignatureUrl: report.approverDivisionHeadSignatureUrl || "",
       notes: report.notes,
     });
     revokePreviewMap(pendingPreviews);
@@ -2502,7 +2529,7 @@ export function useReportDashboard() {
   async function handleReloadDashboardData() { await loadDashboardData(); }
 
   return {
-    view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles,
+    view, setView, paperFormat, setPaperFormat, draft, reports, reporterProfiles, teamTypes,
     activeReportTemplateConfig, notificationSettings, excelTemplates, activeExcelTemplate,
     excelTemplateDraft, selectedExcelTemplateFileName: selectedExcelTemplateFile?.name ?? "",
     adminExcelTemplateDrafts, excelTemplateUploading, excelExportingReportId, pdfExportingReportId, pdfExportingDraftId, bulkExporting, deviceBackupExporting, deviceBackupBulkUploading, editLoadingReportId,

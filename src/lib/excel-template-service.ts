@@ -1,6 +1,6 @@
 import type { ExcelReportTemplate } from "../types/excel-template";
-import { supabase } from "./supabase";
-import { logSafeError, logSafeWarn } from "./logger";
+import { supabase, getSettingsSupabaseClients } from "./supabase";
+import { logSafeError } from "./logger";
 import { getWitaToday } from "./time";
 
 const EXCEL_TEMPLATE_BUCKET = "report-excel-templates";
@@ -68,33 +68,32 @@ export function resolveNextExcelTemplateVersion(
 }
 
 export async function fetchExcelReportTemplates() {
-  if (!supabase) {
+  const clients = getSettingsSupabaseClients();
+  if (clients.length === 0) {
     return [];
   }
 
-  const { data, error } = await supabase
-    .from("excel_report_templates")
-    .select(
-      "id, template_name, cache_version, storage_path, public_url, is_active, created_at, updated_at",
-    )
-    .order("is_active", { ascending: false })
-    .order("updated_at", { ascending: false });
+  for (const client of clients) {
+    try {
+      const { data, error } = await client
+        .from("excel_report_templates")
+        .select(
+          "id, template_name, cache_version, storage_path, public_url, is_active, created_at, updated_at",
+        )
+        .order("is_active", { ascending: false })
+        .order("updated_at", { ascending: false });
 
-  if (error) {
-    if (error.code === "42P01") {
-      logSafeWarn(
-        "Tabel excel_report_templates belum tersedia, lewati fitur template Excel.",
-        error,
-      );
-      return [];
+      if (!error && data && data.length > 0) {
+        return (data ?? []).map((row) =>
+          mapExcelTemplateRow(row as ExcelReportTemplateRow),
+        );
+      }
+    } catch {
+      // try next client
     }
-
-    throw error;
   }
 
-  return (data ?? []).map((row) =>
-    mapExcelTemplateRow(row as ExcelReportTemplateRow),
-  );
+  return [];
 }
 
 export async function uploadExcelReportTemplate(

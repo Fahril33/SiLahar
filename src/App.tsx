@@ -455,6 +455,7 @@ export default function App() {
             navbarPosition={navbarPosition}
             navbarSlot={navbarPosition !== "top" ? compactNavbar : null}
             isOnline={isOnline}
+            teamTypes={dashboard.teamTypes}
           />
         ) : null}
 

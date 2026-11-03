@@ -39,3 +39,19 @@ export type MediaScan = {
 
 export type MediaFilter = "all" | "linked" | "orphan";
 export type MediaSort = "newest" | "oldest" | "largest" | "smallest" | "name";
+
+export type MediaMonthOption = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+export type MediaAccountTarget = "primary" | "legacy";
+
+export interface MediaAccountOption {
+  id: MediaAccountTarget;
+  label: string;
+  url: string;
+  isAvailable: boolean;
+}
+

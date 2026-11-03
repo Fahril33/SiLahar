@@ -1061,6 +1061,10 @@ export function EntryView(props: EntryViewProps) {
                           "approverCoordinatorLabel",
                           matchingTeam.coordinatorLabel || `KOORDINATOR ${(matchingTeam.code || newTim).toUpperCase()}`,
                         );
+                        props.onChange(
+                          "approverCoordinatorSignatureUrl",
+                          matchingTeam.signatureUrl || "",
+                        );
                       }
                     }}
                     className={inputClassName}
