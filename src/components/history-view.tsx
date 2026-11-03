@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { Fragment, useEffect, useRef, useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useMediaQuery } from "../hooks/use-media-query";
 import { formatWitaDateTime, formatWitaDate } from "../lib/time";
+import {
+  getMonthCalendarWeeks,
+  getWeekAndMonthFromDate,
+} from "../lib/calendar-week-utils";
 import type {
   Report,
   ReporterDirectoryProfile,
@@ -805,6 +809,15 @@ export function HistoryView(props: {
     return items;
   }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays, effectiveStartDate]);
 
+  const currentYm = useMemo(
+    () => `${chronoYear}-${String(chronoMonth + 1).padStart(2, "0")}`,
+    [chronoYear, chronoMonth],
+  );
+  const currentMonthCalendarWeeks = useMemo(
+    () => getMonthCalendarWeeks(currentYm),
+    [currentYm],
+  );
+
   const handleScrollToDate = (targetDate: string) => {
     if (!targetDate) return;
 
@@ -1537,21 +1550,53 @@ export function HistoryView(props: {
                 </p>
               </div>
             ) : (
-              chronoItems.map((item) => {
-                if (item.type === "report") {
-                  const report = item.report!;
-                  const isExpanded = expandedCardNames[report.id] || false;
-                  return (
-                    <div
-                      key={report.id}
-                      id={`date-group-${report.reportDate}`}
-                      onClick={() => toggleExpand(report.id)}
-                      className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all cursor-pointer hover:bg-[var(--surface-muted)]/30 ${
-                        flashingDate === report.reportDate
-                          ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
-                          : ""
-                      }`}
-                    >
+              chronoItems.map((item, index) => {
+                const currentWeekInfo = getWeekAndMonthFromDate(item.date);
+                const prevItem = index > 0 ? chronoItems[index - 1] : null;
+                const prevWeekNumber = prevItem
+                  ? getWeekAndMonthFromDate(prevItem.date).weekNumber
+                  : null;
+                const isFirstOfNewWeek =
+                  index === 0 || currentWeekInfo.weekNumber !== prevWeekNumber;
+                const matchedWeek = currentMonthCalendarWeeks.find(
+                  (w) => w.weekNumber === currentWeekInfo.weekNumber,
+                );
+                const itemKey =
+                  item.type === "report" ? item.report.id : `missing-${item.date}`;
+
+                return (
+                  <Fragment key={itemKey}>
+                    {isFirstOfNewWeek && (
+                      <div
+                        className={`flex items-center gap-3 ${index === 0 ? "mb-1 mt-0.5" : "mt-5 mb-1"}`}
+                        role="separator"
+                      >
+                        <hr className="flex-1 border-0 border-t border-[var(--border-soft)] m-0" />
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-[var(--text-muted)] bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] shadow-2xs select-none">
+                          <span>Minggu ke-{currentWeekInfo.weekNumber}</span>
+                          {matchedWeek?.rangeLabel && (
+                            <span className="text-[10px] font-normal opacity-75">
+                              ({matchedWeek.rangeLabel})
+                            </span>
+                          )}
+                        </span>
+                        <hr className="flex-1 border-0 border-t border-[var(--border-soft)] m-0" />
+                      </div>
+                    )}
+                    {item.type === "report" ? (
+                      (() => {
+                        const report = item.report!;
+                        const isExpanded = expandedCardNames[report.id] || false;
+                        return (
+                          <div
+                            id={`date-group-${report.reportDate}`}
+                            onClick={() => toggleExpand(report.id)}
+                            className={`surface-card rounded-[26px] p-5 border border-[var(--border-soft)] shadow-sm flex flex-col justify-between hover:scale-[1.01] transition-all cursor-pointer hover:bg-[var(--surface-muted)]/30 ${
+                              flashingDate === report.reportDate
+                                ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
+                                : ""
+                            }`}
+                          >
                       <div>
                         <div className="flex flex-col md:flex-row md:items-center md:justify-between">
                           <div className="flex items-center gap-3 min-w-0">
@@ -1819,63 +1864,63 @@ export function HistoryView(props: {
                       ) : null}
                     </div>
                   );
-                } else {
-                  // Render missing report card placeholder
-                  return (
-                    <div
-                      key={`missing-${item.date}`}
-                      id={`date-group-${item.date}`}
-                      className={`surface-card rounded-[26px] p-4 sm:p-5 border border-[var(--border-soft)] shadow-sm flex flex-row items-center justify-between gap-3 hover:scale-[1.01] transition-all bg-[var(--surface-panel-strong)]/40 ${
-                        flashingDate === item.date
-                          ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
-                          : ""
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="h-10 w-10 rounded-xl bg-[var(--danger-soft)] text-[var(--danger)] flex items-center justify-center shrink-0">
-                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                            <line x1="12" y1="9" x2="12" y2="13" />
-                            <line x1="12" y1="17" x2="12.01" y2="17" />
-                          </svg>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className="text-xs font-extrabold text-[var(--text-primary)] truncate leading-tight">
-                            {formatWitaDate(item.date)}
-                          </h4>
-                          <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <span className="inline-flex items-center text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] shrink-0">
-                              Belum dibuat
-                            </span>
-                            <span className="text-[9px] text-[var(--text-muted)] font-semibold hidden xs:inline truncate">
-                              Laporan harian kosong
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="shrink-0 flex items-center">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (onStartNewReportForDate) {
-                              onStartNewReportForDate(item.date);
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--primary)] text-white hover:bg-[var(--primary-strong)] text-[10px] font-extrabold transition shadow-sm shrink-0"
-                        >
-                          <span>Buat</span>
-                          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="7" y1="17" x2="17" y2="7" />
-                            <polyline points="7 7 17 7 17 17" />
-                          </svg>
-                        </button>
+                })()
+              ) : (
+                // Render missing report card placeholder
+                <div
+                  id={`date-group-${item.date}`}
+                  className={`surface-card rounded-[26px] p-4 sm:p-5 border border-[var(--border-soft)] shadow-sm flex flex-row items-center justify-between gap-3 hover:scale-[1.01] transition-all bg-[var(--surface-panel-strong)]/40 ${
+                    flashingDate === item.date
+                      ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
+                      : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="h-10 w-10 rounded-xl bg-[var(--danger-soft)] text-[var(--danger)] flex items-center justify-center shrink-0">
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-xs font-extrabold text-[var(--text-primary)] truncate leading-tight">
+                        {formatWitaDate(item.date)}
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <span className="inline-flex items-center text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] shrink-0">
+                          Belum dibuat
+                        </span>
+                        <span className="text-[9px] text-[var(--text-muted)] font-semibold hidden xs:inline truncate">
+                          Laporan harian kosong
+                        </span>
                       </div>
                     </div>
-                  );
-                }
-              })
+                  </div>
+
+                  <div className="shrink-0 flex items-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onStartNewReportForDate) {
+                          onStartNewReportForDate(item.date);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--primary)] text-white hover:bg-[var(--primary-strong)] text-[10px] font-extrabold transition shadow-sm shrink-0"
+                    >
+                      <span>Buat</span>
+                      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="7" y1="17" x2="17" y2="7" />
+                        <polyline points="7 7 17 7 17 17" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </Fragment>
+          );
+        })
             )}
           </div>
         ) : (
