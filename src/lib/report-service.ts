@@ -1184,13 +1184,76 @@ async function upsertReportRow(
     updated_by_label: "Pengguna umum",
   };
 
+  // Defensive FK verification: ensure template and approver IDs exist in targetClient
+  try {
+    if (payload.template_id) {
+      const { data: tCheck } = await targetClient
+        .from("report_templates")
+        .select("id")
+        .eq("id", payload.template_id)
+        .maybeSingle();
+
+      if (!tCheck) {
+        // Fallback to active template in target database or null
+        const { data: activeT } = await targetClient
+          .from("report_templates")
+          .select("id")
+          .eq("is_active", true)
+          .limit(1)
+          .maybeSingle();
+        payload.template_id = activeT?.id ?? null;
+      }
+    }
+
+    if (payload.template_approver_coordinator_id) {
+      const { data: cCheck } = await targetClient
+        .from("report_template_approvers")
+        .select("id")
+        .eq("id", payload.template_approver_coordinator_id)
+        .maybeSingle();
+
+      if (!cCheck) {
+        payload.template_approver_coordinator_id = null;
+      }
+    }
+
+    if (payload.template_approver_division_head_id) {
+      const { data: dCheck } = await targetClient
+        .from("report_template_approvers")
+        .select("id")
+        .eq("id", payload.template_approver_division_head_id)
+        .maybeSingle();
+
+      if (!dCheck) {
+        payload.template_approver_division_head_id = null;
+      }
+    }
+  } catch (err) {
+    console.warn("FK verification check encountered an error, falling back to safe payload:", err);
+  }
+
   if (existingReport && existingReport.source !== "local") {
-    const { data, error } = await targetClient
+    let { data, error } = await targetClient
       .from("daily_reports")
       .update(payload)
       .eq("id", existingReport.id)
       .select("id")
       .maybeSingle();
+
+    if (error && (error.code === "23503" || error.message.includes("foreign key constraint"))) {
+      console.warn("FK constraint encountered during update, retrying with null template references:", error.message);
+      payload.template_id = null;
+      payload.template_approver_coordinator_id = null;
+      payload.template_approver_division_head_id = null;
+      const retry = await targetClient
+        .from("daily_reports")
+        .update(payload)
+        .eq("id", existingReport.id)
+        .select("id")
+        .maybeSingle();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       throw error;
@@ -1206,11 +1269,25 @@ async function upsertReportRow(
   }
 
   payload.id = existingReport?.id ?? reportId;
-  const { data, error } = await targetClient
+  let { data, error } = await targetClient
     .from("daily_reports")
     .upsert(payload, { onConflict: "id" })
     .select("id")
     .maybeSingle();
+
+  if (error && (error.code === "23503" || error.message.includes("foreign key constraint"))) {
+    console.warn("FK constraint encountered during insert, retrying with null template references:", error.message);
+    payload.template_id = null;
+    payload.template_approver_coordinator_id = null;
+    payload.template_approver_division_head_id = null;
+    const retry = await targetClient
+      .from("daily_reports")
+      .upsert(payload, { onConflict: "id" })
+      .select("id")
+      .maybeSingle();
+    data = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     throw error;

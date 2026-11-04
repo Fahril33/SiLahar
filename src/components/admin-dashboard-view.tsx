@@ -11,6 +11,7 @@ import { BulkExportPanel } from "./admin/bulk-export-panel";
 import { BulkUploadPanel } from "./admin/bulk-upload-panel";
 import { UserProfilePanel } from "./admin/user-profile-panel";
 import { MediaSettingsPanel } from "./admin/media-settings-panel";
+import { DatabaseMigrationPanel } from "./admin/database-migration-panel";
 import { SettingsNavigation, getSettingsSection, loadSettingsSection, type AdminSection } from "./admin/settings-navigation";
 import "../styles/admin-settings.css";
 
@@ -110,6 +111,12 @@ export function AdminDashboardView(props: AdminDashboardViewProps) {
                 onHandleBulkUploadDeviceBackup={props.onHandleBulkUploadDeviceBackup}
                 deviceBackupBulkUploading={props.deviceBackupBulkUploading}
                 onRefreshReports={props.onReloadReports}
+              />
+            )}
+            {activeSection === "migration" && (
+              <DatabaseMigrationPanel
+                adminSession={props.adminSession}
+                onReloadReports={props.onReloadReports}
               />
             )}
           </div>

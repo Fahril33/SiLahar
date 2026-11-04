@@ -22,6 +22,7 @@ export const SETTINGS_GROUPS = [
       { id: "media", label: "Media gambar", description: "Audit foto dan tanda tangan, kelola arsip, dan bersihkan berkas yang tidak terpakai.", icon: "M3 3h18v18H3zM3 17l6-6 4 4 3-3 5 5M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0" },
       { id: "bulk-export", label: "Unduh laporan", description: "Pilih laporan dan aktivitas, lalu unduh dalam format yang diperlukan.", icon: "M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5" },
       { id: "bulk-upload", label: "Cadangan data", description: "Kelola cadangan perangkat dan pulihkan laporan ke database.", icon: "M4 3h16v6H4zM4 15h16v6H4zM8 6h.01M8 18h.01M12 9v6" },
+      { id: "migration", label: "Migrasi database", description: "Salin struktur data sistem, akun pengguna, dan pengaturan dari database lama ke database baru dengan UUID identik.", icon: "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" },
     ],
   },
 ] as const;
