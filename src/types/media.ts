@@ -29,6 +29,7 @@ export type StorageImage = {
 export type MediaImage = StorageImage & {
   status: "linked" | "orphan" | "unknown";
   references: MediaReference[];
+  isCompressed?: boolean;
 };
 
 export type MediaScan = {
@@ -37,8 +38,32 @@ export type MediaScan = {
   cached: boolean;
 };
 
-export type MediaFilter = "all" | "linked" | "orphan";
+export type MediaFilter = "all" | "linked" | "orphan" | "compressed";
 export type MediaSort = "newest" | "oldest" | "largest" | "smallest" | "name";
+
+export type CompressItemStatus = "pending" | "processing" | "success" | "skipped" | "error";
+
+export interface CompressItemProgress {
+  path: string;
+  name: string;
+  oldSize: number;
+  newSize?: number;
+  savedBytes?: number;
+  status: CompressItemStatus;
+  errorMessage?: string;
+}
+
+export interface CompressProgressState {
+  isOpen: boolean;
+  done: number;
+  total: number;
+  savedBytes: number;
+  currentMessage: string;
+  currentFile?: string;
+  items: CompressItemProgress[];
+  isFinished: boolean;
+  isAborted: boolean;
+}
 
 export type MediaMonthOption = {
   key: string;

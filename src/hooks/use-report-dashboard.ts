@@ -2065,17 +2065,18 @@ export function useReportDashboard() {
           errContext.title,
           errContext.text,
           errContext.confirmText,
+          {
+            icon: errContext.icon,
+            html: errContext.html,
+          },
         );
         if (saveLocal) {
           await persistCurrentAsLocalDraft({ showToast: true });
         } else {
-          const rawMsg =
-            err instanceof Error
-              ? err.message
-              : typeof err === "object" && err !== null && "message" in err && typeof err.message === "string"
-              ? err.message
-              : "Gagal menyimpan laporan.";
-          await showError("Simpan belum berhasil", rawMsg);
+          await showError(
+            "Laporan Belum Tersimpan",
+            errContext.explanation || "Laporan belum terkirim ke server pusat. Data ketikan Anda masih tetap ada di form.",
+          );
         }
       } finally {
         window.clearTimeout(slowSaveTimer);

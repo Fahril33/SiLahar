@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AdminSessionState } from "../types/admin";
 import type {
+  CompressProgressState,
   MediaAccountTarget,
   MediaBucket,
   MediaFilter,
@@ -16,6 +17,8 @@ import {
   formatMediaBytes,
   formatMediaMonthLabel,
   getImageReportMonthKeys,
+  getStoredCompressedPaths,
+  saveStoredCompressedPaths,
 } from "../lib/media-utils";
 import {
   compressAndOverwriteMediaImages,
@@ -29,6 +32,7 @@ import {
   getScanCacheKey,
   readScanCache,
   scanStorageImages,
+  updateMediaScanCacheSizes,
   verifyMediaDeletionPassword,
   type VerifiedMediaAccess,
 } from "../lib/media-service";
@@ -61,6 +65,27 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
   const [deleteProgress, setDeleteProgress] = useState({ done: 0, total: 0 });
   const [compressing, setCompressing] = useState(false);
   const [compressProgress, setCompressProgress] = useState({ done: 0, total: 0, savedBytes: 0 });
+  const [compressProgressState, setCompressProgressState] = useState<CompressProgressState>({
+    isOpen: false,
+    done: 0,
+    total: 0,
+    savedBytes: 0,
+    currentMessage: "",
+    items: [],
+    isFinished: false,
+    isAborted: false,
+  });
+  const compressAbortController = useRef<AbortController | null>(null);
+
+  const [compressedPaths, setCompressedPaths] = useState<Set<string>>(() =>
+    getStoredCompressedPaths(bucketId, account),
+  );
+
+  // Sync compressedPaths when bucket or account changes
+  useEffect(() => {
+    setCompressedPaths(getStoredCompressedPaths(bucketId, account));
+  }, [bucketId, account]);
+
   const request = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const operationLock = useRef(false);
@@ -150,15 +175,26 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
 
   const currentSnapshot = snapshot && snapshot.account === account && snapshot.bucketId === bucketId ? snapshot : null;
-  const images = useMemo(() => bucket && currentSnapshot
-    ? correlateMedia(currentSnapshot.scan.files, currentSnapshot.references, bucket.id, bucket.auditable)
-    : [], [bucket, currentSnapshot]);
+  const images = useMemo(() => {
+    if (!bucket || !currentSnapshot) return [];
+    const raw = correlateMedia(currentSnapshot.scan.files, currentSnapshot.references, bucket.id, bucket.auditable);
+    return raw.map((img) => ({
+      ...img,
+      isCompressed:
+        compressedPaths.has(img.path) ||
+        (img.size > 0 &&
+          img.size <= 300 * 1024 &&
+          (img.mimeType === "image/webp" || /\.webp$/i.test(img.name))),
+    }));
+  }, [bucket, currentSnapshot, compressedPaths]);
+
   const metrics = useMemo(() => ({
     count: images.length,
     bytes: images.reduce((sum, file) => sum + file.size, 0),
     linked: images.filter((file) => file.status === "linked").length,
     orphans: images.filter((file) => file.status === "orphan").length,
     orphanBytes: images.filter((file) => file.status === "orphan").reduce((sum, file) => sum + file.size, 0),
+    compressed: images.filter((file) => file.isCompressed).length,
     heavyCount: images.filter((file) => file.size > 300 * 1024).length,
     heavyBytes: images.filter((file) => file.size > 300 * 1024).reduce((sum, file) => sum + file.size, 0),
   }), [images]);
@@ -201,7 +237,13 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
   const filtered = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("id-ID");
     const files = images.filter((file) => {
-      if (filter !== "all" && file.status !== filter) return false;
+      if (filter !== "all") {
+        if (filter === "compressed") {
+          if (!file.isCompressed) return false;
+        } else if (file.status !== filter) {
+          return false;
+        }
+      }
       if (monthFilter !== "all") {
         const fileKeys = getImageReportMonthKeys(file);
         if (!fileKeys.includes(monthFilter)) return false;
@@ -228,6 +270,7 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
     linked: filtered.filter((file) => file.status === "linked").length,
     orphans: filtered.filter((file) => file.status === "orphan").length,
     orphanBytes: filtered.filter((file) => file.status === "orphan").reduce((sum, file) => sum + file.size, 0),
+    compressed: filtered.filter((file) => file.isCompressed).length,
     heavyCount: filtered.filter((file) => file.size > 300 * 1024).length,
     heavyBytes: filtered.filter((file) => file.size > 300 * 1024).reduce((sum, file) => sum + file.size, 0),
   }), [filtered]);
@@ -382,6 +425,27 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
 
     operationLock.current = true;
     setCompressing(true);
+
+    const controller = new AbortController();
+    compressAbortController.current = controller;
+
+    // Initialize rich progress modal state (matching bulk PDF UX)
+    setCompressProgressState({
+      isOpen: true,
+      done: 0,
+      total: heavy.length,
+      savedBytes: 0,
+      currentMessage: `Menyiapkan kompresi untuk ${heavy.length} gambar...`,
+      currentFile: heavy[0]?.name,
+      items: heavy.map((f) => ({
+        path: f.path,
+        name: f.name,
+        oldSize: f.size,
+        status: "pending",
+      })),
+      isFinished: false,
+      isAborted: false,
+    });
     setCompressProgress({ done: 0, total: heavy.length, savedBytes: 0 });
 
     try {
@@ -390,9 +454,32 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
         heavy,
         admin.user.id,
         account,
-        (done, total, savedBytes) => {
-          if (mounted.current) setCompressProgress({ done, total, savedBytes });
+        (done, total, savedBytes, currentItem, allItems) => {
+          if (!mounted.current) return;
+          setCompressProgress({ done, total, savedBytes });
+          setCompressProgressState((prev) => ({
+            ...prev,
+            done,
+            total,
+            savedBytes,
+            currentMessage: currentItem
+              ? `Mengompresi "${currentItem.name}" (${done}/${total})...`
+              : prev.currentMessage,
+            currentFile: currentItem?.name,
+            items: allItems
+              ? allItems.map((it) => ({
+                  path: it.path,
+                  name: it.name,
+                  oldSize: it.oldSize,
+                  newSize: it.newSize,
+                  savedBytes: it.savedBytes,
+                  status: it.status,
+                  errorMessage: it.error,
+                }))
+              : prev.items,
+          }));
         },
+        { signal: controller.signal },
       );
 
       if (mounted.current) {
@@ -417,11 +504,63 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
               ...prev,
               size: updatedItem.newSize!,
               updatedAt: new Date().toISOString(),
+              isCompressed: true,
             } : null));
           }
         }
 
-        await load(true);
+        // UPDATE IN-MEMORY SNAPSHOT INSTEAD OF load(true)!
+        // This avoids resetting pagination, clearing the visible images, or flashing a full reload.
+        if (result.processed.length > 0) {
+          const resultMap = new Map(
+            result.results
+              .filter((r) => r.success && r.newSize != null)
+              .map((r) => [r.path, r.newSize!]),
+          );
+
+          setSnapshot((prev) => {
+            if (!prev) return prev;
+            const updatedFiles = prev.scan.files.map((f) => {
+              const newSize = resultMap.get(f.path);
+              if (newSize !== undefined) {
+                return {
+                  ...f,
+                  size: newSize,
+                  updatedAt: new Date().toISOString(),
+                };
+              }
+              return f;
+            });
+            return {
+              ...prev,
+              scan: {
+                ...prev.scan,
+                files: updatedFiles,
+                scannedAt: Date.now(),
+              },
+            };
+          });
+
+          // Update scan cache in sessionStorage
+          updateMediaScanCacheSizes(bucket, admin.user.id, account, resultMap);
+
+          // Update compressedPaths in localStorage and state
+          setCompressedPaths((prev) => {
+            const next = new Set(prev);
+            result.processed.forEach((p) => next.add(p));
+            saveStoredCompressedPaths(bucket.id, account, next);
+            return next;
+          });
+        }
+
+        // Mark progress state finished
+        setCompressProgressState((prev) => ({
+          ...prev,
+          done: heavy.length,
+          savedBytes: result.savedBytes,
+          isFinished: true,
+          currentMessage: `Selesai! ${result.processed.length} gambar berhasil dioptimalkan.`,
+        }));
       }
 
       if (result.processed.length > 0) {
@@ -436,16 +575,35 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
           `${result.failed.length} gambar gagal diunduh atau ditimpa di storage.`,
         );
       }
-    } catch (reason) {
-      await showError(
-        "Kompresi Gagal",
-        reason instanceof Error ? reason.message : "Terjadi kesalahan saat memproses gambar.",
-      );
+    } catch (reason: any) {
+      const isAbort = reason?.name === "AbortError" || controller.signal.aborted;
+      if (mounted.current) {
+        setCompressProgressState((prev) => ({
+          ...prev,
+          isAborted: isAbort,
+          isFinished: false,
+          currentMessage: isAbort ? "Proses kompresi dibatalkan." : (reason instanceof Error ? reason.message : "Terjadi kesalahan"),
+        }));
+      }
+      if (!isAbort) {
+        await showError(
+          "Kompresi Gagal",
+          reason instanceof Error ? reason.message : "Terjadi kesalahan saat memproses gambar.",
+        );
+      }
     } finally {
       operationLock.current = false;
       if (mounted.current) setCompressing(false);
     }
   }
+
+  const abortCompression = () => {
+    compressAbortController.current?.abort();
+  };
+
+  const closeCompressProgressModal = () => {
+    setCompressProgressState((prev) => ({ ...prev, isOpen: false }));
+  };
 
   return {
     account, setAccount, accountOptions,
@@ -457,7 +615,7 @@ export function useMediaManager(admin: AdminSessionState, onBusyChange: (busy: b
     selectOrphans: () => setSelected(new Set(activePool.filter((file) => file.status === "orphan").map((file) => file.path))),
     selectHeavyFiles: () => setSelected(new Set(activePool.filter((file) => file.size > 300 * 1024).map((file) => file.path))),
     preview, setPreview, urls, urlError, deleting, deleteProgress, canDelete, removeFiles,
-    canCompress, compressing, compressProgress, compressFiles,
+    canCompress, compressing, compressProgress, compressProgressState, compressFiles, abortCompression, closeCompressProgressModal,
     scan: currentSnapshot?.scan ?? null,
   };
 }

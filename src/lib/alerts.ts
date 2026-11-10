@@ -87,14 +87,24 @@ function fireToast(icon: "success" | "error" | "info", title: string, text: stri
   return Promise.resolve();
 }
 
-export async function askConfirmation(title: string, text: string, confirmText: string) {
+export async function askConfirmation(
+  title: string,
+  text: string,
+  confirmText: string,
+  options?: {
+    icon?: "warning" | "error" | "success" | "info" | "question";
+    html?: string;
+    cancelButtonText?: string;
+  },
+) {
+  const isHtml = Boolean(options?.html) || text.trim().startsWith("<") || text.includes("<div") || text.includes("<p");
   const result = await Swal.fire({
     title,
-    text,
-    icon: "question",
+    ...(isHtml ? { html: options?.html || text } : { text }),
+    icon: options?.icon || "question",
     showCancelButton: true,
     confirmButtonText: confirmText,
-    cancelButtonText: "Batal",
+    cancelButtonText: options?.cancelButtonText || "Batal",
     reverseButtons: true,
     customClass: {
       popup: confirmPopupClass,
@@ -302,12 +312,63 @@ export async function askDraftUploadConfirmation(options: {
   };
 }
 
-export function resolveSaveErrorContext(err: unknown): {
+function buildSaveErrorModalHtml(options: {
+  explanation: string;
+  action: string;
+  technicalDetail?: string;
+}) {
+  return `
+    <div class="text-left space-y-3 pt-1 text-slate-700 dark:text-slate-200">
+      <div class="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 rounded-xl">
+        <div class="flex items-start gap-2.5">
+          <span class="text-base select-none leading-none mt-0.5" aria-hidden="true">🛡️</span>
+          <div class="space-y-0.5">
+            <p class="font-semibold text-xs tracking-wider uppercase text-emerald-800 dark:text-emerald-300">Data Anda Tetap Aman</p>
+            <p class="text-xs sm:text-sm text-emerald-950 dark:text-emerald-100 leading-relaxed font-normal">${options.explanation}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-3 bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 rounded-xl">
+        <div class="flex items-start gap-2.5">
+          <span class="text-base select-none leading-none mt-0.5" aria-hidden="true">💡</span>
+          <div class="space-y-0.5">
+            <p class="font-semibold text-xs tracking-wider uppercase text-blue-800 dark:text-blue-300">Saran Tindakan</p>
+            <p class="text-xs sm:text-sm text-blue-950 dark:text-blue-100 leading-relaxed font-normal">${options.action}</p>
+          </div>
+        </div>
+      </div>
+
+      ${
+        options.technicalDetail
+          ? `
+        <details class="text-[11px] text-slate-600 dark:text-slate-300 pt-1 border-t border-slate-200/60 dark:border-slate-800">
+          <summary class="cursor-pointer hover:underline text-slate-600 dark:text-slate-300 select-none py-0.5">
+            Rincian Teknis (Untuk Administrator)
+          </summary>
+          <div class="mt-1.5 p-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 rounded text-slate-800 dark:text-slate-200 font-mono text-[10px] break-all leading-relaxed select-all">
+            ${escapeHtml(options.technicalDetail)}
+          </div>
+        </details>
+      `
+          : ""
+      }
+    </div>
+  `;
+}
+
+export interface SaveErrorContext {
   title: string;
   text: string;
+  html: string;
   confirmText: string;
   isOffline: boolean;
-} {
+  icon: "warning" | "error" | "info" | "question";
+  explanation: string;
+  rawMessage: string;
+}
+
+export function resolveSaveErrorContext(err: unknown): SaveErrorContext {
   const isBrowserOffline = typeof navigator !== "undefined" && !navigator.onLine;
   const rawMsg =
     err instanceof Error
@@ -318,17 +379,42 @@ export function resolveSaveErrorContext(err: unknown): {
       ? err
       : "Terjadi kesalahan saat memproses data.";
 
-  if (isBrowserOffline) {
-    return {
-      title: "Koneksi Internet Terputus",
-      text: "Perangkat Anda sedang tidak terhubung ke jaringan internet.\n\nIngin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?",
-      confirmText: "Simpan ke Draft Lokal",
-      isOffline: true,
-    };
-  }
-
   const lower = rawMsg.toLowerCase();
-  const isNetworkError =
+
+  let title = "Kendala Penyimpanan Laporan";
+  let icon: "warning" | "error" | "info" | "question" = "warning";
+  let explanation =
+    "Terjadi kendala saat menyinkronkan laporan ke database pusat. Isian teks dan foto Anda tetap kami amankan di memori perangkat.";
+  let action =
+    "Klik <strong>Simpan ke Draf Lokal</strong> sekarang agar isian Anda tidak hilang, lalu coba kirimkan kembali setelah koneksi siap.";
+  let confirmText = "Simpan ke Draf Lokal";
+  let isOffline = false;
+
+  if (isBrowserOffline) {
+    title = "Perangkat Sedang Offline";
+    icon = "warning";
+    explanation =
+      "Perangkat Anda sedang tidak terhubung ke jaringan internet. Seluruh data laporan dan foto yang telah Anda isi tetap terjaga di perangkat ini.";
+    action =
+      "Simpan ke <strong>Draf Lokal</strong> sekarang. Anda dapat mengirimkannya kembali saat sinyal internet sudah terhubung kembali.";
+    confirmText = "Simpan ke Draf Lokal";
+    isOffline = true;
+  } else if (
+    lower.includes("violates foreign key constraint") ||
+    lower.includes("foreign key") ||
+    lower.includes("23503") ||
+    lower.includes("template_id_fkey") ||
+    lower.includes("report_templates") ||
+    lower.includes("report_template_approvers")
+  ) {
+    title = "Penyelarasan Format Sistem";
+    icon = "info";
+    explanation =
+      "Data ketikan dan foto Anda aman. Server pusat baru saja memperbarui konfigurasi data template/database, sehingga browser/aplikasi Anda perlu menyelaraskan data terbaru.";
+    action =
+      "Klik <strong>Simpan ke Draf Lokal</strong> agar isian tidak hilang. Setelah itu, segarkan (refresh) halaman atau tutup-buka kembali aplikasi pada ponsel Anda untuk mengirim ulang.";
+    confirmText = "Simpan ke Draf Lokal (Aman)";
+  } else if (
     lower.includes("failed to fetch") ||
     lower.includes("networkerror") ||
     lower.includes("network request failed") ||
@@ -339,22 +425,60 @@ export function resolveSaveErrorContext(err: unknown): {
     lower.includes("service unavailable") ||
     lower.includes("502") ||
     lower.includes("503") ||
-    lower.includes("504");
-
-  if (isNetworkError) {
-    return {
-      title: "Koneksi Server Terkendala",
-      text: `${rawMsg}\n\nTidak dapat menjangkau server saat ini. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
-      confirmText: "Simpan ke Draft Lokal",
-      isOffline: false,
-    };
+    lower.includes("504")
+  ) {
+    title = "Koneksi Server Terkendala";
+    icon = "warning";
+    explanation =
+      "Tidak dapat menjangkau server pusat saat ini. Hal ini biasanya terjadi akibat sinyal seluler yang tidak stabil atau server sedang sibuk.";
+    action =
+      "Data Anda tidak akan hilang. Simpan ke <strong>Draf Lokal</strong> terlebih dahulu dan Anda dapat mengirimkannya kembali saat sinyal sudah stabil.";
+    confirmText = "Simpan ke Draf Lokal";
+  } else if (
+    lower.includes("row-level security") ||
+    lower.includes("42501") ||
+    lower.includes("permission denied") ||
+    lower.includes("akses dibatasi") ||
+    lower.includes("tanggal laporan")
+  ) {
+    title = "Akses Pengisian Dibatasi";
+    icon = "warning";
+    explanation =
+      "Sistem membatasi pengisian atau perubahan laporan untuk tanggal yang dipilih sesuai kebijakan aturan tanggal operasional yang berlaku.";
+    action =
+      "Anda dapat menyimpan salinan laporan ini ke <strong>Draf Lokal</strong> sebagai arsip catatan di perangkat Anda.";
+    confirmText = "Simpan ke Draf Lokal";
+  } else if (
+    lower.includes("duplicate key") ||
+    lower.includes("23505") ||
+    lower.includes("already exists")
+  ) {
+    title = "Laporan Sudah Tercatat";
+    icon = "info";
+    explanation =
+      "Laporan dengan tanggal atau identitas ini sudah tercatat sebelumnya di server.";
+    action =
+      "Simpan ke <strong>Draf Lokal</strong> jika Anda ingin mengamankan catatan perubahan Anda, atau periksa kembali daftar laporan di menu Riwayat.";
+    confirmText = "Simpan ke Draf Lokal";
   }
 
+  const html = buildSaveErrorModalHtml({
+    explanation,
+    action,
+    technicalDetail: rawMsg,
+  });
+
+  const plainText = `${explanation}\n\n${action.replace(/<[^>]+>/g, "")}\n\nIngin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`;
+
   return {
-    title: "Gagal Menyimpan ke Database",
-    text: `${rawMsg}\n\nTerjadi kendala saat menyimpan laporan. Ingin simpan laporan ini ke Draft Lokal sekarang agar data Anda tetap aman?`,
-    confirmText: "Simpan ke Draft Lokal",
-    isOffline: false,
+    title,
+    text: plainText,
+    html,
+    confirmText,
+    isOffline,
+    icon,
+    explanation,
+    rawMessage: rawMsg,
   };
 }
 

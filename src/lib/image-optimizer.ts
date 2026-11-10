@@ -340,6 +340,8 @@ export async function optimizeReportImage(
         { maxEdge: 900,  quality: 0.55 },
         { maxEdge: 750,  quality: 0.45 },
         { maxEdge: 640,  quality: 0.38 },
+        { maxEdge: 540,  quality: 0.32 },
+        { maxEdge: 480,  quality: 0.28 },
       ];
 
       let bestBlob: Blob | null = null;

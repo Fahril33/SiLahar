@@ -1,4 +1,4 @@
-import type { MediaImage, MediaReference, StorageImage } from "../types/media";
+import type { MediaAccountTarget, MediaImage, MediaReference, StorageImage } from "../types/media";
 
 const IMAGE_EXTENSION = /\.(?:avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)$/i;
 
@@ -143,6 +143,36 @@ export function formatMediaMonthLabel(monthKey: string): string {
   const month = Number(monthStr);
   if (!year || !month || month < 1 || month > 12) return monthKey;
   return `${INDONESIAN_MONTHS[month - 1]} ${year}`;
+}
+
+const COMPRESSED_STORAGE_KEY_PREFIX = "silahar:compressed_media:v1:";
+
+export function getStoredCompressedPaths(bucketId: string, account: MediaAccountTarget = "primary"): Set<string> {
+  if (typeof localStorage === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(`${COMPRESSED_STORAGE_KEY_PREFIX}${bucketId}:${account}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((p): p is string => typeof p === "string"));
+      }
+    }
+  } catch {
+    /* Ignore localStorage errors */
+  }
+  return new Set();
+}
+
+export function saveStoredCompressedPaths(bucketId: string, account: MediaAccountTarget = "primary", paths: Set<string>): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(
+      `${COMPRESSED_STORAGE_KEY_PREFIX}${bucketId}:${account}`,
+      JSON.stringify(Array.from(paths)),
+    );
+  } catch {
+    /* Ignore storage full errors */
+  }
 }
 
 export function getImageReportMonthKeys(image: {

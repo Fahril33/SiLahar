@@ -29,11 +29,26 @@ export function MediaLightbox(props: {
     catch { setCopyState("Tidak dapat mengakses clipboard. Gunakan tautan buka gambar."); }
   }
 
+  const handleBackdropClick = (event: React.MouseEvent<HTMLDialogElement>) => {
+    const dialogElement = dialog.current;
+    if (!dialogElement) return;
+    const rect = dialogElement.getBoundingClientRect();
+    const isOutside =
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom;
+    if (isOutside || event.target === dialogElement) {
+      props.onClose();
+    }
+  };
+
   return (
     <dialog
       ref={dialog}
       className="media-lightbox"
       aria-labelledby="media-preview-title"
+      onClick={handleBackdropClick}
       onCancel={(event) => { event.preventDefault(); props.onClose(); }}
     >
       <header className="media-lightbox-header">
@@ -58,6 +73,14 @@ export function MediaLightbox(props: {
                 {props.image.size > 300 * 1024 && <span style={{ marginLeft: "8px", color: "var(--danger, #dc2626)", fontWeight: 600 }}>(&gt; 300 KB)</span>}
               </dd>
             </div>
+            {props.image.isCompressed && (
+              <div>
+                <dt>Optimalisasi</dt>
+                <dd style={{ color: "#059669", fontWeight: 600 }}>
+                  ⚡ Terkompresi (&le; 300 KB)
+                </dd>
+              </div>
+            )}
             <div><dt>Format</dt><dd>{props.image.mimeType || "Tidak tersedia"}</dd></div>
             <div><dt>Diunggah (WITA)</dt><dd>{formatWitaDateTime(props.image.createdAt) || "Tidak tersedia"}</dd></div>
             <div><dt>Terakhir diperbarui</dt><dd>{formatWitaDateTime(props.image.updatedAt) || "Tidak tersedia"}</dd></div>

@@ -9,6 +9,7 @@ import { PhotoBackupDialog } from "../photo-backup-dialog";
 import { SpinnerIcon } from "./shared";
 import { MediaFileList } from "./media/media-file-list";
 import { MediaLightbox } from "./media/media-lightbox";
+import { MediaCompressProgressModal } from "./media/media-compress-progress-modal";
 import "../../styles/media-settings.css";
 
 export function MediaSettingsPanel(props: {
@@ -138,7 +139,12 @@ export function MediaSettingsPanel(props: {
         role="group"
         aria-label="Filter keterkaitan media"
       >
-        {([{ key: "all", label: "Semua file", count: manager.metrics.count }, { key: "linked", label: "Terkait data", count: manager.metrics.linked }, { key: "orphan", label: "File orphan", count: manager.metrics.orphans }] as const).map((tab) => <button
+        {([
+          { key: "all", label: "Semua file", count: manager.metrics.count },
+          { key: "linked", label: "Terkait data", count: manager.metrics.linked },
+          { key: "orphan", label: "File orphan", count: manager.metrics.orphans },
+          { key: "compressed", label: "Compressed", count: manager.metrics.compressed },
+        ] as const).map((tab) => <button
           type="button"
           key={tab.key}
           aria-pressed={manager.filter === tab.key}
@@ -329,42 +335,11 @@ export function MediaSettingsPanel(props: {
       />
     </> : <div className="media-empty-state"><h4>{manager.query || manager.filter !== "all" || manager.monthFilter !== "all" ? "Tidak ada gambar yang sesuai" : "Belum ada gambar dalam bucket ini"}</h4><p>{manager.query || manager.filter !== "all" || manager.monthFilter !== "all" ? "Sesuaikan kata pencarian atau filter keterkaitan dan bulan diunggah." : "Gambar yang tersimpan akan muncul setelah pemindaian."}</p></div>}
 
-    {manager.compressing && (
-      <aside className="media-progress-card" role="status" aria-live="polite">
-        <div className="media-progress-card-header">
-          <div className="media-progress-title-group">
-            <div className="media-progress-pulse-icon">
-              <SpinnerIcon />
-            </div>
-            <div>
-              <h4 className="media-progress-title">Mengompresi &amp; Mengoptimalkan</h4>
-              <p className="media-progress-subtitle">
-                {manager.compressProgress.done} dari {manager.compressProgress.total} gambar diproses
-              </p>
-            </div>
-          </div>
-          <span className="media-progress-percent">{compressPercent}%</span>
-        </div>
-        <div className="media-progress-bar-track" aria-hidden="true">
-          <div
-            className="media-progress-bar-fill"
-            style={{ width: `${compressPercent}%` }}
-          >
-            <div className="media-progress-shimmer" />
-          </div>
-        </div>
-        <div className="media-progress-card-footer">
-          {manager.compressProgress.savedBytes > 0 ? (
-            <span className="media-progress-badge-saved">
-              Hemat <strong>{formatMediaBytes(manager.compressProgress.savedBytes)}</strong>
-            </span>
-          ) : (
-            <span className="media-progress-notice">Target berkas ≤ 300 KB</span>
-          )}
-          <span className="media-progress-notice">Mohon jangan tutup jendela</span>
-        </div>
-      </aside>
-    )}
+    <MediaCompressProgressModal
+      state={manager.compressProgressState}
+      onAbort={manager.abortCompression}
+      onClose={manager.closeCompressProgressModal}
+    />
 
     {manager.deleting && (
       <aside className="media-progress-card media-delete-card" role="status" aria-live="polite">

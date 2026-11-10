@@ -37,7 +37,21 @@ export function MediaThumbnail({ src, name }: { src?: string; name: string }) {
 }
 
 export function MediaStatus({ image }: { image: MediaImage }) {
-  return <span className={`media-status media-status-${image.status}`}>{mediaStatusLabel(image.status)}</span>;
+  return (
+    <div className="media-status-group">
+      <span className={`media-status media-status-${image.status}`}>
+        {mediaStatusLabel(image.status)}
+      </span>
+      {image.isCompressed && (
+        <span
+          className="media-status media-status-compressed"
+          title="Berkas telah dikompresi (<= 300 KB)"
+        >
+          ⚡ Compressed
+        </span>
+      )}
+    </div>
+  );
 }
 
 export function MediaFileList(props: {

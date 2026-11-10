@@ -178,8 +178,11 @@
 .media-card-checkbox { position: absolute; top: 10px; left: 10px; display: grid; place-items: center; height: 28px; width: 28px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--surface-elevated); cursor: pointer; }
 .media-card-status { position: absolute; top: 12px; right: 10px; pointer-events: none; }
 .media-status { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; padding: 4px 7px; font-size: 10px; font-weight: 600; border-radius: 5px; background: var(--surface-muted); color: var(--text-muted); border: 1px solid var(--border-soft); }
+.media-status-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .media-status-linked { color: var(--primary); background: var(--surface-elevated); border-color: color-mix(in srgb, var(--primary) 35%, var(--border-soft)); }
 .media-status-orphan { color: var(--warning); background: var(--surface-elevated); border-color: color-mix(in srgb, var(--warning) 35%, var(--border-soft)); }
+.media-status-compressed { color: #059669; background: color-mix(in srgb, #10b981 12%, var(--surface-elevated)); border-color: color-mix(in srgb, #10b981 40%, var(--border-soft)); font-weight: 700; }
+:root.dark .media-status-compressed { color: #34d399; background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); }
 .media-file-details { display: grid; gap: 5px; padding: 14px; }
 .media-file-name { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font-size: 12px; font-weight: 600; }
 .media-file-path { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--text-muted); }

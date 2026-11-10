@@ -346,19 +346,62 @@ export async function deleteMediaImages(
   return { deleted, failed };
 }
 
+export function updateMediaScanCacheSizes(
+  bucket: MediaBucket,
+  ownerId: string,
+  account: MediaAccountTarget = "primary",
+  updatedSizes: Map<string, number>,
+) {
+  const key = cacheKey(bucket, ownerId, account);
+  const cached = readScanCache(key);
+  if (cached) {
+    let changed = false;
+    const updatedFiles = cached.files.map((file) => {
+      const newSize = updatedSizes.get(file.path);
+      if (newSize !== undefined) {
+        changed = true;
+        return {
+          ...file,
+          size: newSize,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return file;
+    });
+    if (changed) {
+      const updatedScan: MediaScan = {
+        ...cached,
+        files: updatedFiles,
+        scannedAt: Date.now(),
+      };
+      try {
+        sessionStorage.setItem(key, JSON.stringify(updatedScan));
+      } catch {
+        /* Ignore storage errors */
+      }
+    }
+  }
+}
+
 export async function compressAndOverwriteMediaImages(
   bucket: MediaBucket,
   files: MediaImage[],
   ownerId: string,
   account: MediaAccountTarget = "primary",
-  onProgress?: (done: number, total: number, savedBytes: number) => void,
+  onProgress?: (
+    done: number,
+    total: number,
+    savedBytes: number,
+    currentItem?: { path: string; name: string; status: "pending" | "processing" | "success" | "skipped" | "error"; oldSize: number; newSize?: number; savedBytes?: number; error?: string },
+    allItems?: Array<{ path: string; name: string; status: "pending" | "processing" | "success" | "skipped" | "error"; oldSize: number; newSize?: number; savedBytes?: number; error?: string }>,
+  ) => void,
   options?: { signal?: AbortSignal },
 ): Promise<{
   processed: string[];
   skipped: string[];
   failed: string[];
   savedBytes: number;
-  results: { path: string; success: boolean; oldSize: number; newSize?: number }[];
+  results: { path: string; success: boolean; oldSize: number; newSize?: number; error?: string }[];
 }> {
   if (!bucket.auditable) {
     throw new Error(`Bucket "${bucket.id}" tidak terdaftar untuk audit dan kompresi media.`);
@@ -371,8 +414,24 @@ export async function compressAndOverwriteMediaImages(
   const processed: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
-  const results: { path: string; success: boolean; oldSize: number; newSize?: number }[] = [];
+  const results: { path: string; success: boolean; oldSize: number; newSize?: number; error?: string }[] = [];
   let totalSavedBytes = 0;
+
+  // Initialize progress tracking items
+  const trackingItems: Array<{
+    path: string;
+    name: string;
+    status: "pending" | "processing" | "success" | "skipped" | "error";
+    oldSize: number;
+    newSize?: number;
+    savedBytes?: number;
+    error?: string;
+  }> = files.map((f) => ({
+    path: f.path,
+    name: f.name,
+    status: f.size <= 300 * 1024 ? "skipped" : "pending",
+    oldSize: f.size,
+  }));
 
   // Invalidate scan cache so refreshed metadata will be loaded after compression
   invalidateMediaScan(bucket, ownerId, account);
@@ -380,35 +439,65 @@ export async function compressAndOverwriteMediaImages(
   for (let i = 0; i < files.length; i++) {
     options?.signal?.throwIfAborted();
     const file = files[i];
+    const trackItem = trackingItems[i];
 
     // Jika ukuran file sudah <= 300 KB, lewati
     if (file.size <= 300 * 1024) {
       skipped.push(file.path);
       results.push({ path: file.path, success: false, oldSize: file.size });
-      onProgress?.(i + 1, files.length, totalSavedBytes);
+      trackItem.status = "skipped";
+      onProgress?.(i + 1, files.length, totalSavedBytes, trackItem, trackingItems);
       continue;
     }
 
+    trackItem.status = "processing";
+    onProgress?.(i, files.length, totalSavedBytes, trackItem, trackingItems);
+
     try {
       const canonicalPath = normalizeStoragePath(file.path, bucket.id);
+      const cleanUploadPath = canonicalPath.replace(/^\/+/, "");
 
       // 1. Download file gambar asli dari bucket
-      const { data: blob, error: downloadError } = await client.storage
+      let blob: Blob | null = null;
+      const { data: downloadedBlob, error: downloadError } = await client.storage
         .from(bucket.id)
-        .download(canonicalPath);
+        .download(cleanUploadPath);
 
-      if (downloadError || !blob) {
+      if (downloadedBlob && !downloadError) {
+        blob = downloadedBlob;
+      } else if (bucket.public) {
+        // Fallback: download via public URL if direct storage.download returned an error
+        try {
+          const publicUrl = getMediaImageUrlSync(bucket, cleanUploadPath, account);
+          if (publicUrl) {
+            const resp = await fetch(publicUrl);
+            if (resp.ok) {
+              blob = await resp.blob();
+            }
+          }
+        } catch {
+          // Ignore fallback fetch error
+        }
+      }
+
+      if (!blob) {
+        const errorMsg = downloadError ? downloadError.message : "Berkas tidak ditemukan di storage";
         failed.push(file.path);
-        results.push({ path: file.path, success: false, oldSize: file.size });
-        onProgress?.(i + 1, files.length, totalSavedBytes);
+        results.push({ path: file.path, success: false, oldSize: file.size, error: errorMsg });
+        trackItem.status = "error";
+        trackItem.error = errorMsg;
+        onProgress?.(i + 1, files.length, totalSavedBytes, trackItem, trackingItems);
         continue;
       }
 
       // 2. Kompresi gambar menjadi WebP/JPEG <= 300 KB dengan format yang sesuai ekstensi berkas
       const isJpg = /\.(jpe?g)$/i.test(file.name);
-      const fileType = blob.type && blob.type.startsWith("image/")
-        ? blob.type
-        : (isJpg ? "image/jpeg" : (file.mimeType || "image/jpeg"));
+      const isPng = /\.png$/i.test(file.name);
+      const isWebp = /\.webp$/i.test(file.name);
+      let fileType = blob.type && blob.type.startsWith("image/") ? blob.type : "";
+      if (!fileType) {
+        fileType = isJpg ? "image/jpeg" : isPng ? "image/png" : isWebp ? "image/webp" : (file.mimeType || "image/jpeg");
+      }
 
       const rawFile: File = typeof File !== "undefined"
         ? new File([blob], file.name, { type: fileType })
@@ -429,30 +518,39 @@ export async function compressAndOverwriteMediaImages(
 
         const { error: uploadError } = await client.storage
           .from(bucket.id)
-          .upload(canonicalPath, optimizedFile, {
+          .upload(cleanUploadPath, optimizedFile, {
             upsert: true,
             contentType: optimizedFile.type || fileType,
           });
 
         if (uploadError) {
           failed.push(file.path);
-          results.push({ path: file.path, success: false, oldSize: file.size });
+          results.push({ path: file.path, success: false, oldSize: file.size, error: uploadError.message });
+          trackItem.status = "error";
+          trackItem.error = uploadError.message;
         } else {
           processed.push(file.path);
           const saved = file.size - optimized.size;
           totalSavedBytes += saved;
           results.push({ path: file.path, success: true, oldSize: file.size, newSize: optimized.size });
+          trackItem.status = "success";
+          trackItem.newSize = optimized.size;
+          trackItem.savedBytes = saved;
         }
       } else {
         skipped.push(file.path);
         results.push({ path: file.path, success: false, oldSize: file.size });
+        trackItem.status = "skipped";
       }
-    } catch {
+    } catch (err: any) {
+      const errorMsg = err instanceof Error ? err.message : "Gagal memproses kompresi";
       failed.push(file.path);
-      results.push({ path: file.path, success: false, oldSize: file.size });
+      results.push({ path: file.path, success: false, oldSize: file.size, error: errorMsg });
+      trackItem.status = "error";
+      trackItem.error = errorMsg;
     }
 
-    onProgress?.(i + 1, files.length, totalSavedBytes);
+    onProgress?.(i + 1, files.length, totalSavedBytes, trackItem, trackingItems);
 
     // Yield ke event loop agar antarmuka tidak freeze dan GC browser dapat membersihkan memori
     if (i < files.length - 1) {
