@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Report, ReportActivity, ReportActivityPhoto } from "../types/report";
 import type { TeamType } from "../types/team-type";
-import { supabase, legacySupabase, legacySupabaseUrl, getClientForUrl } from "./supabase";
+import { supabase, legacySupabase, legacySupabaseUrl, supabaseUrl, getClientForUrl } from "./supabase";
 import { loadCachedTeamTypes } from "./storage";
+import { resolveAccountForDate } from "./database-routing-service";
 import {
   JAN_MAR_PUSDALOPS_COORDINATOR,
   isJanToMarPeriod,
@@ -57,13 +58,21 @@ type ReportRow = {
   approver_division_head_role?: any;
 };
 
-function mapPhoto(row: PhotoRow, client?: SupabaseClient | null): ReportActivityPhoto {
+function mapPhoto(row: PhotoRow, client?: SupabaseClient | null, reportDate?: string): ReportActivityPhoto {
   let publicUrl = row.public_url;
-  const activeClient = client || (publicUrl ? getClientForUrl(publicUrl) : null) || supabase;
-  if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && activeClient) {
-    const { data } = activeClient.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
-    publicUrl = data?.publicUrl || "";
+  const targetAccount = resolveAccountForDate(reportDate);
+
+  // Jika periode dialihkan ke DB Baru atau client aktif adalah DB baru, arahkan langsung ke storage baru
+  if ((targetAccount === "primary" || client === supabase) && row.storage_path && supabaseUrl) {
+    publicUrl = `${supabaseUrl}/storage/v1/object/public/daily-report-proofs/${row.storage_path}`;
+  } else {
+    const activeClient = client || (publicUrl ? getClientForUrl(publicUrl) : null) || supabase;
+    if ((!publicUrl || publicUrl.trim() === "" || publicUrl.includes("undefined")) && row.storage_path && activeClient) {
+      const { data } = activeClient.storage.from("daily-report-proofs").getPublicUrl(row.storage_path);
+      publicUrl = data?.publicUrl || "";
+    }
   }
+
   return {
     id: row.id,
     activityId: row.activity_id,
@@ -75,7 +84,7 @@ function mapPhoto(row: PhotoRow, client?: SupabaseClient | null): ReportActivity
   };
 }
 
-function mapActivity(row: ActivityRow, client?: SupabaseClient | null): ReportActivity {
+function mapActivity(row: ActivityRow, client?: SupabaseClient | null, reportDate?: string): ReportActivity {
   return {
     id: row.id,
     no: row.activity_order,
@@ -84,7 +93,7 @@ function mapActivity(row: ActivityRow, client?: SupabaseClient | null): ReportAc
     endTime: row.end_time_text,
     photos: (row.daily_report_activity_photos ?? [])
       .sort((a, b) => a.sort_order - b.sort_order)
-      .map((photo) => mapPhoto(photo, client)),
+      .map((photo) => mapPhoto(photo, client, reportDate)),
   };
 }
 
@@ -93,12 +102,17 @@ export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Re
   const isJanMar = isJanToMarPeriod(row.report_date);
   const useJanMarPusdalops = isPusdalops && isJanMar;
 
+  // Resolusi akun database berdasarkan aturan routing periode yang dikonfigurasi admin
+  const targetAccount = resolveAccountForDate(row.report_date);
   const targetLegacyUrl = legacySupabaseUrl;
-  const isLegacy = Boolean(
-    (legacySupabase && client === legacySupabase) ||
-    (targetLegacyUrl && row.daily_report_activities?.some((a) =>
-      a.daily_report_activity_photos?.some((p) => Boolean(p.public_url && p.public_url.includes(targetLegacyUrl))),
-    ))
+  const isLegacy = targetAccount === "legacy" || (
+    targetAccount !== "primary" &&
+    Boolean(
+      (legacySupabase && client === legacySupabase) ||
+      (targetLegacyUrl && row.daily_report_activities?.some((a) =>
+        a.daily_report_activity_photos?.some((p) => Boolean(p.public_url && p.public_url.includes(targetLegacyUrl))),
+      ))
+    )
   );
 
   const cachedTeamTypes = loadCachedTeamTypes<TeamType[]>();
@@ -143,7 +157,7 @@ export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Re
     reportDate: row.report_date,
     activities: (row.daily_report_activities ?? [])
       .sort((a, b) => a.activity_order - b.activity_order)
-      .map((act) => mapActivity(act, client)),
+      .map((act) => mapActivity(act, client, row.report_date)),
     approverCoordinatorTemplateId:
       registeredCoord.templateId ||
       (useJanMarPusdalops

@@ -100,6 +100,23 @@ export function isJanToMarPeriod(dateStr?: string | null): boolean {
   );
 }
 
+export function isSeptOktPeriod(dateStr?: string | null): boolean {
+  if (!dateStr || typeof dateStr !== "string") return false;
+  const clean = dateStr.trim().slice(0, 10);
+  const match = clean.match(/^\d{4}-(\d{2})-\d{2}$/);
+  if (match) {
+    const month = parseInt(match[1], 10);
+    return month === 9 || month === 10;
+  }
+  const upper = dateStr.toUpperCase();
+  return (
+    upper.includes("SEPTEMBER") ||
+    upper.includes("OKTOBER") ||
+    upper.includes("SEP") ||
+    upper.includes("OKT")
+  );
+}
+
 export function isPusdalopsTeam(tim?: string | null): boolean {
   if (!tim) return true;
   const normalized = tim.trim().toUpperCase();

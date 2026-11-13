@@ -10,6 +10,7 @@ import { SpinnerIcon } from "./shared";
 import { MediaFileList } from "./media/media-file-list";
 import { MediaLightbox } from "./media/media-lightbox";
 import { MediaCompressProgressModal } from "./media/media-compress-progress-modal";
+import { MediaMigrationSubpanel } from "./media-migration-subpanel";
 import "../../styles/media-settings.css";
 
 export function MediaSettingsPanel(props: {
@@ -20,6 +21,7 @@ export function MediaSettingsPanel(props: {
 }) {
   const manager = useMediaManager(props.adminSession, props.onBusyChange, props.onRefreshReports);
   const [showArchive, setShowArchive] = useState(false);
+  const [showMediaMigration, setShowMediaMigration] = useState(false);
   const selectPage = useRef<HTMLInputElement>(null);
   const selectedOnPage = manager.visible.filter((file) => manager.selected.has(file.path)).length;
   const allPageSelected = manager.visible.length > 0 && selectedOnPage === manager.visible.length;
@@ -89,6 +91,18 @@ export function MediaSettingsPanel(props: {
           >
             <span aria-hidden="true">📦</span>
             <span>Arsip ZIP</span>
+          </button>
+        )}
+        {manager.accountOptions.length > 1 && (
+          <button
+            type="button"
+            className="btn-secondary media-btn-compact font-semibold text-blue-500 hover:text-blue-600"
+            disabled={manager.deleting}
+            onClick={() => setShowMediaMigration(true)}
+            title="Migrasi media gambar dari akun database lama ke baru"
+          >
+            <span aria-hidden="true">🚀</span>
+            <span>Migrasi Media</span>
           </button>
         )}
       </div>
@@ -406,5 +420,35 @@ export function MediaSettingsPanel(props: {
       onClose={() => setShowArchive(false)}
       reports={props.reports}
     />
+    {showMediaMigration && (
+      <div
+        className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fadeIn"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setShowMediaMigration(false);
+        }}
+      >
+        <div className="bg-[var(--surface-panel)] border border-[var(--border-strong)] rounded-[26px] shadow-2xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+          <div className="p-4 sm:p-5 border-b border-[var(--border-soft)] flex items-center justify-between bg-[var(--surface-elevated)]">
+            <h3 className="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <span>🚀</span>
+              <span>Migrasi Media Gambar &amp; Relasi Database</span>
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowMediaMigration(false)}
+              className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-[var(--surface-muted)] cursor-pointer"
+            >
+              ✕ Tutup
+            </button>
+          </div>
+          <div className="p-4 sm:p-6 overflow-y-auto flex-1 scrollbar-thin">
+            <MediaMigrationSubpanel
+              adminSession={props.adminSession}
+              onReloadReports={props.onRefreshReports}
+            />
+          </div>
+        </div>
+      </div>
+    )}
   </div>;
 }

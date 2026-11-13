@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type ReportRules, initialReportRules } from "../types/report-rules";
 import { fallbackReportTemplateConfig } from "./report-template-defaults";
+import { resolveAccountForDate } from "./database-routing-service";
 import type { AdminProfile, AdminSessionState } from "../types/admin";
 import type { NotificationSettings } from "../types/notification-settings";
 import {
@@ -212,7 +213,17 @@ export async function fetchReports() {
       from += pageSize;
     }
 
-    return allRows.map((row) =>
+    // Evaluasi aturan routing periode database yang diatur admin
+    const filteredRows = allRows.filter((row) => {
+      const routedAccount = resolveAccountForDate(row.report_date);
+      // Jika aturan menetapkan periode ini dari DB Baru, jangan ambil dari database legacy
+      if (client === legacySupabase && supabase && routedAccount === "primary") {
+        return false;
+      }
+      return true;
+    });
+
+    return filteredRows.map((row) =>
       mapReportRow(
         {
           ...row,
@@ -231,10 +242,24 @@ export async function fetchReports() {
 
   const results = await Promise.all(clients.map((c) => fetchClientReports(c)));
 
+  // Kumpulkan kunci tanggal & nama laporan dari DB baru agar tidak terduplikasi oleh legacy
+  const primaryKeys = new Set<string>();
+  for (const rep of results[0] || []) {
+    primaryKeys.add(`${rep.reportDate}_${rep.nama.trim().toUpperCase()}`);
+  }
+
   // Deduplikasi by ID: primary client (new database) takes precedence
   const reportMap = new Map<string, Report>();
   for (const list of results) {
     for (const report of list) {
+      const routedAccount = resolveAccountForDate(report.reportDate);
+      if (routedAccount === "primary" && report.databaseAccount === "legacy") {
+        const key = `${report.reportDate}_${report.nama.trim().toUpperCase()}`;
+        if (primaryKeys.has(key)) {
+          continue;
+        }
+      }
+
       if (!reportMap.has(report.id)) {
         reportMap.set(report.id, report);
       }
@@ -1049,6 +1074,12 @@ export async function resolveTargetClientForReport(
   // If legacySupabase is not configured, always return primary supabase
   if (!legacySupabase) {
     if (!supabase) throw new Error("Supabase client belum terkonfigurasi.");
+    return { client: supabase, account: "primary" };
+  }
+
+  // 0. Evaluasi aturan routing periode database
+  const routedAccount = resolveAccountForDate(existingReport?.reportDate);
+  if (routedAccount === "primary" && supabase) {
     return { client: supabase, account: "primary" };
   }
 

@@ -7,6 +7,7 @@ export interface TableMigrationConfig {
   description: string;
   onConflict?: string;
   order: number;
+  selectColumns?: string;
 }
 
 export const MIGRATION_TABLES: TableMigrationConfig[] = [
@@ -54,9 +55,10 @@ export const MIGRATION_TABLES: TableMigrationConfig[] = [
     tableId: "reporter_directory",
     tableName: "reporter_directory",
     label: "Pengguna / Direktori Petugas",
-    description: "Akun login petugas, password hash, status aktif, dan UUID akun",
+    description: "Akun login petugas, status aktif, dan UUID akun",
     onConflict: "id",
     order: 6,
+    selectColumns: "id, full_name, normalized_name, unit_name, first_reported_at, last_reported_at, total_reports, is_active, created_at, updated_at",
   },
   {
     tableId: "admin_profiles",
@@ -210,14 +212,20 @@ export async function fetchMigrationSummary(): Promise<TableSummaryItem[]> {
     let errorMessage: string | undefined;
 
     // Fetch legacy rows
+    const selectCols = config.selectColumns || "*";
     try {
       const { data, error } = await legacySupabase
         .from(config.tableName)
-        .select("*");
+        .select(selectCols);
       if (error) {
-        errorMessage = `Legacy: ${error.message}`;
+        // If legacy table is restricted or missing (401/403/PGRST301), note gracefully
+        if (config.tableId === "reporter_directory" && (error.code === "PGRST301" || error.message.includes("401") || error.code === "42501")) {
+          errorMessage = "Legacy: Akses tabel dibatasi (dilindungi)";
+        } else {
+          errorMessage = `Legacy: ${error.message}`;
+        }
       } else {
-        legacyRows = data || [];
+        legacyRows = (data as any[]) || [];
       }
     } catch (err: any) {
       errorMessage = `Legacy: ${err.message || "Gagal membaca"}`;
@@ -227,11 +235,11 @@ export async function fetchMigrationSummary(): Promise<TableSummaryItem[]> {
     try {
       const { data, error } = await supabase
         .from(config.tableName)
-        .select("*");
+        .select(selectCols);
       if (error) {
         errorMessage = (errorMessage ? `${errorMessage} | ` : "") + `Primary: ${error.message}`;
       } else {
-        primaryRows = data || [];
+        primaryRows = (data as any[]) || [];
       }
     } catch (err: any) {
       errorMessage = (errorMessage ? `${errorMessage} | ` : "") + `Primary: ${err.message || "Gagal membaca"}`;
@@ -340,13 +348,16 @@ export async function executeDatabaseMigration(
 
     try {
       // 1. Fetch raw rows from legacy database preserving all original columns
-      const { data: rows, error: selectError } = await legacySupabase
+      const selectCols = tableConfig.selectColumns || "*";
+      const { data: rawRows, error: selectError } = await legacySupabase
         .from(tableConfig.tableName)
-        .select("*");
+        .select(selectCols);
 
       if (selectError) {
         throw new Error(`Gagal membaca ${tableConfig.tableName}: ${selectError.message}`);
       }
+
+      const rows: any[] = (rawRows as any[]) || [];
 
       if (!rows || rows.length === 0) {
         onProgress?.({

@@ -11,11 +11,14 @@ import {
 import { askConfirmation, showError, showSuccess } from "../../lib/alerts";
 import { SpinnerIcon } from "./shared";
 import type { AdminSessionState } from "../../types/admin";
+import { MediaMigrationSubpanel } from "./media-migration-subpanel";
+import { DatabasePeriodRoutingSubpanel } from "./database-period-routing-subpanel";
 
 export function DatabaseMigrationPanel(props: {
   adminSession?: AdminSessionState | null;
   onReloadReports?: () => Promise<void>;
 }) {
+  const [migrationTab, setMigrationTab] = useState<"tables" | "media" | "routing">("routing");
   const [connections, setConnections] = useState<DatabaseConnectionStatus | null>(null);
   const [summaries, setSummaries] = useState<TableSummaryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -208,6 +211,62 @@ export function DatabaseMigrationPanel(props: {
         </div>
       </div>
 
+      {/* Tab Navigasi Mode Migrasi */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-soft)] pb-3">
+        <button
+          type="button"
+          onClick={() => setMigrationTab("tables")}
+          disabled={migrating}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            migrationTab === "tables"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-[var(--surface-muted)]/40 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span>📋</span>
+          <span>Migrasi Tabel Konfigurasi &amp; Master</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMigrationTab("media")}
+          disabled={migrating}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            migrationTab === "media"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-[var(--surface-muted)]/40 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span>🖼️</span>
+          <span>Migrasi Laporan &amp; Media</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMigrationTab("routing")}
+          disabled={migrating}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+            migrationTab === "routing"
+              ? "bg-blue-600 text-white shadow-sm"
+              : "bg-[var(--surface-muted)]/40 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <span>🔀</span>
+          <span>Routing Database per Periode</span>
+        </button>
+      </div>
+
+      {migrationTab === "media" ? (
+        <MediaMigrationSubpanel
+          adminSession={props.adminSession}
+          onReloadReports={props.onReloadReports}
+        />
+      ) : migrationTab === "routing" ? (
+        <DatabasePeriodRoutingSubpanel
+          onReloadReports={props.onReloadReports}
+        />
+      ) : (
+        <>
       {/* 2. Table Comparison & Selection List */}
       <div className="surface-card rounded-[22px] p-5 sm:p-6 border border-[var(--border-soft)] shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -432,6 +491,8 @@ export function DatabaseMigrationPanel(props: {
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -72,6 +72,7 @@ import {
   getTemplateApproverByRole,
   getRegisteredCoordinatorForTeam,
 } from "../lib/report-template-defaults";
+import { resolveAccountForDate } from "../lib/database-routing-service";
 import {
   applyTemplateDefaultsToDraft,
   createEmptyDraft,
@@ -207,12 +208,16 @@ function buildPendingPreviewMap(
 }
 
 function mapOriginalActivityPhotos(report: Report) {
+  const targetAccount = resolveAccountForDate(report.reportDate);
   return Object.fromEntries(
     report.activities.map((activity) => [
       activity.no,
       (activity.photos ?? []).map(p => {
         let url = p.publicUrl;
-        if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
+        if (targetAccount === "primary" && p.storagePath && supabase) {
+          const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+          url = data?.publicUrl || url;
+        } else if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
           const client = (p.publicUrl ? getClientForUrl(p.publicUrl) : null) || (report.databaseAccount === "legacy" ? legacySupabase : supabase) || supabase;
           const { data } = client?.storage.from("daily-report-proofs").getPublicUrl(p.storagePath) || {};
           url = data?.publicUrl || "";
@@ -1577,7 +1582,11 @@ export function useReportDashboard() {
         endTime: a.endTime,
         photos: (a.photos ?? []).map(p => {
           let url = p.publicUrl;
-          if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
+          const targetAccount = resolveAccountForDate(report.reportDate);
+          if (targetAccount === "primary" && p.storagePath && supabase) {
+            const { data } = supabase.storage.from("daily-report-proofs").getPublicUrl(p.storagePath);
+            url = data?.publicUrl || url;
+          } else if ((!url || url.trim() === "" || url.includes("undefined")) && p.storagePath) {
             const client = (p.publicUrl ? getClientForUrl(p.publicUrl) : null) || (report.databaseAccount === "legacy" ? legacySupabase : supabase) || supabase;
             const { data } = client?.storage.from("daily-report-proofs").getPublicUrl(p.storagePath) || {};
             url = data?.publicUrl || "";
