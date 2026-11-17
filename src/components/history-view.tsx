@@ -280,6 +280,27 @@ function DatabaseIcon(props: { className?: string }) {
   );
 }
 
+function DatabaseAccountBadge(props: { account?: "primary" | "legacy" }) {
+  const isLegacy = props.account === "legacy";
+  return isLegacy ? (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0 shadow-2xs"
+      title="Data tersimpan di Database 1 (Lama)"
+    >
+      <DatabaseIcon className="h-3 w-3" />
+      <span>db 1</span>
+    </span>
+  ) : (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shrink-0 shadow-2xs"
+      title="Data tersimpan di Database 2 (Baru)"
+    >
+      <DatabaseIcon className="h-3 w-3" />
+      <span>db 2</span>
+    </span>
+  );
+}
+
 function HardDriveIcon(props: { className?: string }) {
   return (
     <svg
@@ -381,7 +402,9 @@ export function HistoryView(props: {
 
   const [showDraftsModal, setShowDraftsModal] = useState(false);
   const [statusSearchQuery, setStatusSearchQuery] = useState("");
-  const [adminViewMode, setAdminViewMode] = useState<"daily" | "chrono">("daily");
+  const [adminViewMode, setAdminViewMode] = useState<"daily" | "chrono">(
+    "daily",
+  );
   const [expandedCardNames, setExpandedCardNames] = useState<
     Record<string, boolean>
   >({});
@@ -474,7 +497,9 @@ export function HistoryView(props: {
             includesReporterName(r.nama, targetName) ||
             (r.nama || "").toLowerCase().includes(targetName.toLowerCase()) ||
             (r.activities || []).some((a) =>
-              (a?.description || "").toLowerCase().includes(targetName.toLowerCase()),
+              (a?.description || "")
+                .toLowerCase()
+                .includes(targetName.toLowerCase()),
             );
           if (!matchName) return false;
         }
@@ -498,7 +523,6 @@ export function HistoryView(props: {
     chronoYear,
   ]);
 
-
   // Active reports for logged-in user in chronological view (sorted by date ascending)
   const activeReportsToPrint = useMemo(() => {
     if (!props.userSession) return [];
@@ -521,7 +545,8 @@ export function HistoryView(props: {
   };
 
   // Combined DB + Local/Cache reports for comprehensive modal selection
-  const [combinedAllReports, setCombinedAllReports] = useState<Report[]>(allReports);
+  const [combinedAllReports, setCombinedAllReports] =
+    useState<Report[]>(allReports);
 
   useEffect(() => {
     let alive = true;
@@ -551,15 +576,23 @@ export function HistoryView(props: {
       .filter((r) => {
         if (!r || !r.reportDate) return false;
         if (props.userSession && !props.adminSession) {
-          return Boolean(r.nama && isSameReporterName(r.nama, props.userSession.fullName));
+          return Boolean(
+            r.nama && isSameReporterName(r.nama, props.userSession.fullName),
+          );
         }
         return (
           isSameReporterName(r.nama, targetName) ||
-          (r.nama || "").trim().toLowerCase() === targetName.trim().toLowerCase()
+          (r.nama || "").trim().toLowerCase() ===
+            targetName.trim().toLowerCase()
         );
       })
       .sort((a, b) => (b.reportDate || "").localeCompare(a.reportDate || ""));
-  }, [adminPrintModal, combinedAllReports, props.userSession, props.adminSession]);
+  }, [
+    adminPrintModal,
+    combinedAllReports,
+    props.userSession,
+    props.adminSession,
+  ]);
 
   const handleOpenPrintAction = (report: Report) => {
     if (isMobileOrTablet) {
@@ -578,7 +611,10 @@ export function HistoryView(props: {
     }
   };
 
-  const handleOpenPrintForUser = (userName: string, defaultReportId?: string) => {
+  const handleOpenPrintForUser = (
+    userName: string,
+    defaultReportId?: string,
+  ) => {
     if (isMobileOrTablet) {
       void onHandleUnsupportedMobilePrint();
       return;
@@ -599,9 +635,21 @@ export function HistoryView(props: {
     includeDivisionHeadOnLastWeek: boolean = true,
   ) => {
     if (props.onHandlePrintAll) {
-      await props.onHandlePrintAll(reportsToPrint, paperFormat, onProgress, presentationMode, includeDivisionHeadOnLastWeek);
+      await props.onHandlePrintAll(
+        reportsToPrint,
+        paperFormat,
+        onProgress,
+        presentationMode,
+        includeDivisionHeadOnLastWeek,
+      );
     } else {
-      await printMultipleReportsDocument(reportsToPrint, paperFormat, onProgress, presentationMode, includeDivisionHeadOnLastWeek);
+      await printMultipleReportsDocument(
+        reportsToPrint,
+        paperFormat,
+        onProgress,
+        presentationMode,
+        includeDivisionHeadOnLastWeek,
+      );
     }
   };
 
@@ -625,7 +673,10 @@ export function HistoryView(props: {
     const totalMonthWorkingDaysStats = getEffectiveWorkingDaysInRange(
       effectiveStart,
       endOfMonth,
-      { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
+      {
+        enforceSystemStartDate: Boolean(effectiveStartDate),
+        systemStartDate: effectiveStartDate,
+      },
     );
     const totalMonthTarget = totalMonthWorkingDaysStats.totalWorkingDays;
 
@@ -636,12 +687,7 @@ export function HistoryView(props: {
     const submittedDaysSet = new Set(
       chronoReports
         .map((r) => r.reportDate)
-        .filter(
-          (d) =>
-            d >= rawStart &&
-            d <= endOfMonth &&
-            isWorkDay(d),
-        ),
+        .filter((d) => d >= rawStart && d <= endOfMonth && isWorkDay(d)),
     );
     const submittedCount = submittedDaysSet.size;
 
@@ -660,13 +706,13 @@ export function HistoryView(props: {
     }
 
     // Days elapsed up to effectiveEnd (today or end of month)
-    const elapsedStats = effectiveStart <= effectiveEnd
-      ? getEffectiveWorkingDaysInRange(
-          effectiveStart,
-          effectiveEnd,
-          { enforceSystemStartDate: Boolean(effectiveStartDate), systemStartDate: effectiveStartDate },
-        )
-      : { totalWorkingDays: 0 };
+    const elapsedStats =
+      effectiveStart <= effectiveEnd
+        ? getEffectiveWorkingDaysInRange(effectiveStart, effectiveEnd, {
+            enforceSystemStartDate: Boolean(effectiveStartDate),
+            systemStartDate: effectiveStartDate,
+          })
+        : { totalWorkingDays: 0 };
 
     const elapsedTargetDays = elapsedStats.totalWorkingDays;
 
@@ -675,10 +721,7 @@ export function HistoryView(props: {
       chronoReports
         .map((r) => r.reportDate)
         .filter(
-          (d) =>
-            d >= effectiveStart &&
-            d <= effectiveEnd &&
-            isWorkDay(d),
+          (d) => d >= effectiveStart && d <= effectiveEnd && isWorkDay(d),
         ),
     ).size;
 
@@ -686,12 +729,18 @@ export function HistoryView(props: {
     const missedCount = Math.max(0, elapsedTargetDays - submittedSoFarCount);
 
     // Upcoming days (working days in the month after today)
-    const upcomingCount = Math.max(0, totalMonthTarget - (submittedCount + missedCount));
+    const upcomingCount = Math.max(
+      0,
+      totalMonthTarget - (submittedCount + missedCount),
+    );
 
     // Percentages relative to total month target for the 3 progress bar sections
-    const pctSubmitted = totalMonthTarget > 0 ? (submittedCount / totalMonthTarget) * 100 : 0;
-    const pctMissed = totalMonthTarget > 0 ? (missedCount / totalMonthTarget) * 100 : 0;
-    const pctUpcoming = totalMonthTarget > 0 ? Math.max(0, 100 - pctSubmitted - pctMissed) : 0;
+    const pctSubmitted =
+      totalMonthTarget > 0 ? (submittedCount / totalMonthTarget) * 100 : 0;
+    const pctMissed =
+      totalMonthTarget > 0 ? (missedCount / totalMonthTarget) * 100 : 0;
+    const pctUpcoming =
+      totalMonthTarget > 0 ? Math.max(0, 100 - pctSubmitted - pctMissed) : 0;
 
     // Consistency compliance percentage so far (based on elapsed working days up to today)
     const pct =
@@ -741,11 +790,20 @@ export function HistoryView(props: {
     const endOfMonth = `${yyyy}-${mm}-${String(lastDay).padStart(2, "0")}`;
     const effectiveEnd = endOfMonth < props.today ? endOfMonth : props.today;
 
-    if (!effectiveStart || !effectiveEnd || effectiveStart > effectiveEnd) return [];
+    if (!effectiveStart || !effectiveEnd || effectiveStart > effectiveEnd)
+      return [];
 
     const [sY, sM, sD] = effectiveStart.slice(0, 10).split("-").map(Number);
     const [eY, eM, eD] = effectiveEnd.slice(0, 10).split("-").map(Number);
-    if (isNaN(sY) || isNaN(sM) || isNaN(sD) || isNaN(eY) || isNaN(eM) || isNaN(eD)) return [];
+    if (
+      isNaN(sY) ||
+      isNaN(sM) ||
+      isNaN(sD) ||
+      isNaN(eY) ||
+      isNaN(eM) ||
+      isNaN(eD)
+    )
+      return [];
 
     const current = new Date(sY, sM - 1, sD);
     const endLimit = new Date(eY, eM - 1, eD);
@@ -762,27 +820,41 @@ export function HistoryView(props: {
       const dateStr = `${yStr}-${mStr}-${dStr}`;
 
       // Khususkan untuk hari wajib saja (Senin - Jumat non-libur nasional)
-      if (isWorkDay(dateStr) && (!effectiveStartDate || dateStr >= effectiveStartDate)) {
+      if (
+        isWorkDay(dateStr) &&
+        (!effectiveStartDate || dateStr >= effectiveStartDate)
+      ) {
         days.push(dateStr);
       }
       current.setDate(current.getDate() + 1);
     }
 
     return days;
-  }, [chronoMonth, chronoYear, props.today, showChronologicalView, props.userSession, effectiveStartDate]);
+  }, [
+    chronoMonth,
+    chronoYear,
+    props.today,
+    showChronologicalView,
+    props.userSession,
+    effectiveStartDate,
+  ]);
 
   const chronoItems = useMemo(() => {
     if (!showChronologicalView) return [];
 
     // If this is not a regular user session (e.g. admin searching), just return the actual reports!
     if (!props.userSession) {
-      return chronoReports.map(r => ({ type: "report" as const, date: r.reportDate, report: r }));
+      return chronoReports.map((r) => ({
+        type: "report" as const,
+        date: r.reportDate,
+        report: r,
+      }));
     }
 
     // For regular users, we merge with expected working days
     const allDates = new Set([
-      ...chronoReports.map(r => r.reportDate),
-      ...expectedWorkingDays
+      ...chronoReports.map((r) => r.reportDate),
+      ...expectedWorkingDays,
     ]);
 
     const sortedDates = Array.from(allDates).sort((a, b) => b.localeCompare(a));
@@ -807,7 +879,13 @@ export function HistoryView(props: {
     });
 
     return items;
-  }, [chronoReports, showChronologicalView, props.userSession, expectedWorkingDays, effectiveStartDate]);
+  }, [
+    chronoReports,
+    showChronologicalView,
+    props.userSession,
+    expectedWorkingDays,
+    effectiveStartDate,
+  ]);
 
   const currentYm = useMemo(
     () => `${chronoYear}-${String(chronoMonth + 1).padStart(2, "0")}`,
@@ -990,32 +1068,33 @@ export function HistoryView(props: {
           <div className="flex md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center gap-3">
               {/* Mode Switcher for Admin (Hanya muncul jika searchbar sedang aktif mencari) */}
-              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
-                <div className="flex items-center gap-1 p-1 bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full shrink-0 shadow-2xs">
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("daily")}
-                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "daily"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
-                    }`}
-                  >
-                    Status Harian
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("chrono")}
-                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "chrono"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
-                    }`}
-                  >
-                    Riwayat Kronologis
-                  </button>
-                </div>
-              )}
+              {Boolean(props.adminSession) &&
+                statusSearchQuery.trim() !== "" && (
+                  <div className="flex items-center gap-1 p-1 bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] rounded-full shrink-0 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("daily")}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "daily"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                      }`}
+                    >
+                      Status Harian
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("chrono")}
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "chrono"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)]"
+                      }`}
+                    >
+                      Riwayat Kronologis
+                    </button>
+                  </div>
+                )}
 
               {/* Stats Capsule / Month-Year Selector */}
               {showChronologicalView ? (
@@ -1083,7 +1162,9 @@ export function HistoryView(props: {
               {Boolean(props.adminSession) && isSearching && (
                 <button
                   type="button"
-                  onClick={() => handleOpenPrintForUser(statusSearchQuery.trim())}
+                  onClick={() =>
+                    handleOpenPrintForUser(statusSearchQuery.trim())
+                  }
                   className="hidden md:inline-flex items-center gap-2 h-[46px] px-4 rounded-full bg-[var(--surface-panel-strong)] border border-[var(--border-soft)] hover:border-[var(--primary)] text-xs font-bold text-[var(--text-primary)] hover:text-[var(--primary)] shadow-sm hover:shadow transition-all cursor-pointer shrink-0"
                   title={`Cetak dokumen laporan petugas ${statusSearchQuery.trim()}`}
                 >
@@ -1193,32 +1274,33 @@ export function HistoryView(props: {
                   className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
                 />
               </div>
-              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
-                <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("daily")}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "daily"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    Status Harian
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("chrono")}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "chrono"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    Riwayat Kronologis
-                  </button>
-                </div>
-              )}
+              {Boolean(props.adminSession) &&
+                statusSearchQuery.trim() !== "" && (
+                  <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("daily")}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "daily"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Status Harian
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("chrono")}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "chrono"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Riwayat Kronologis
+                    </button>
+                  </div>
+                )}
             </div>
           )}
         </div>
@@ -1313,32 +1395,33 @@ export function HistoryView(props: {
                   className="bg-transparent border-0 outline-none text-sm text-[var(--text-primary)] placeholder-[var(--text-muted)] w-full focus:ring-0 p-0"
                 />
               </div>
-              {Boolean(props.adminSession) && statusSearchQuery.trim() !== "" && (
-                <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("daily")}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "daily"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    Status Harian
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAdminViewMode("chrono")}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
-                      adminViewMode === "chrono"
-                        ? "bg-[var(--primary)] text-white shadow-xs"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
-                    }`}
-                  >
-                    Riwayat Kronologis
-                  </button>
-                </div>
-              )}
+              {Boolean(props.adminSession) &&
+                statusSearchQuery.trim() !== "" && (
+                  <div className="flex items-center gap-1 p-1 bg-[var(--surface-muted)] border border-[var(--border-soft)] rounded-full shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("daily")}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "daily"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Status Harian
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminViewMode("chrono")}
+                      className={`px-3 py-1 rounded-full text-xs font-bold transition cursor-pointer ${
+                        adminViewMode === "chrono"
+                          ? "bg-[var(--primary)] text-white shadow-xs"
+                          : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                      }`}
+                    >
+                      Riwayat Kronologis
+                    </button>
+                  </div>
+                )}
             </div>
           )}
         </div>
@@ -1404,24 +1487,46 @@ export function HistoryView(props: {
                     <div className="flex items-center justify-between">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <h4 className="text-xs font-bold text-[var(--text-primary)]">Konsistensi Laporan</h4>
+                          <h4 className="text-xs font-bold text-[var(--text-primary)]">
+                            Konsistensi Laporan
+                          </h4>
                           <span className="group relative cursor-pointer text-[var(--text-soft)] hover:text-[var(--text-primary)] transition shrink-0">
-                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-3.5 w-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
                               <circle cx="12" cy="12" r="10" />
                               <line x1="12" y1="16" x2="12" y2="12" />
                               <line x1="12" y1="8" x2="12.01" y2="8" />
                             </svg>
                             <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
                               {startDateLabel ? (
-                                <>Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> (tanggal acuan yang ditetapkan) tidak dihitung sebagai beban target absensi kerja.</>
+                                <>
+                                  Hari Sabtu, Minggu, Hari Libur Nasional, serta
+                                  kalender sebelum{" "}
+                                  <strong>{startDateLabel}</strong> (tanggal
+                                  acuan yang ditetapkan) tidak dihitung sebagai
+                                  beban target absensi kerja.
+                                </>
                               ) : (
-                                <>Hari Sabtu, Minggu, dan Hari Libur Nasional tidak dihitung sebagai beban target absensi kerja.</>
+                                <>
+                                  Hari Sabtu, Minggu, dan Hari Libur Nasional
+                                  tidak dihitung sebagai beban target absensi
+                                  kerja.
+                                </>
                               )}
                             </span>
                           </span>
                         </div>
                       </div>
-                      <span className="text-sm font-extrabold text-[var(--text-primary)] tabular-nums">{consistencyStats.percentage}%</span>
+                      <span className="text-sm font-extrabold text-[var(--text-primary)] tabular-nums">
+                        {consistencyStats.percentage}%
+                      </span>
                     </div>
 
                     <div className="space-y-2">
@@ -1441,25 +1546,43 @@ export function HistoryView(props: {
                         <div className="flex flex-wrap items-center gap-3">
                           <div className="flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 inline-block" />
-                            <span>Sudah isi: <strong className="text-[var(--text-primary)]">{consistencyStats.submitted} hari</strong></span>
+                            <span>
+                              Sudah isi:{" "}
+                              <strong className="text-[var(--text-primary)]">
+                                {consistencyStats.submitted} hari
+                              </strong>
+                            </span>
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 inline-block" />
-                            <span>Belum isi: <strong className="text-[var(--text-primary)]">{consistencyStats.missed} hari</strong></span>
+                            <span>
+                              Belum isi:{" "}
+                              <strong className="text-[var(--text-primary)]">
+                                {consistencyStats.missed} hari
+                              </strong>
+                            </span>
                           </div>
                           <div className="flex items-center gap-1">
                             <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0 inline-block" />
-                            <span>Akan datang: <strong className="text-[var(--text-primary)]">{consistencyStats.upcoming} hari</strong></span>
+                            <span>
+                              Akan datang:{" "}
+                              <strong className="text-[var(--text-primary)]">
+                                {consistencyStats.upcoming} hari
+                              </strong>
+                            </span>
                           </div>
                         </div>
                         <div className="ml-auto">
-                          Target: <strong className="text-[var(--text-primary)]">{consistencyStats.totalMonthTarget} hari kerja efektif</strong>
+                          Target:{" "}
+                          <strong className="text-[var(--text-primary)]">
+                            {consistencyStats.totalMonthTarget} hari kerja
+                            efektif
+                          </strong>
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
-
               </div>
             </div>
 
@@ -1489,9 +1612,17 @@ export function HistoryView(props: {
                         {/* Custom instant tooltip overlay */}
                         <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2 rounded-lg bg-[var(--surface-tooltip)] text-[var(--text-tooltip)] text-[9px] font-medium leading-normal shadow-lg opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 origin-bottom z-50 text-center">
                           {startDateLabel ? (
-                            <>Hari Sabtu, Minggu, Hari Libur Nasional, serta kalender sebelum <strong>{startDateLabel}</strong> (tanggal acuan yang ditetapkan) tidak dihitung sebagai beban target absensi kerja.</>
+                            <>
+                              Hari Sabtu, Minggu, Hari Libur Nasional, serta
+                              kalender sebelum <strong>{startDateLabel}</strong>{" "}
+                              (tanggal acuan yang ditetapkan) tidak dihitung
+                              sebagai beban target absensi kerja.
+                            </>
                           ) : (
-                            <>Hari Sabtu, Minggu, dan Hari Libur Nasional tidak dihitung sebagai beban target absensi kerja.</>
+                            <>
+                              Hari Sabtu, Minggu, dan Hari Libur Nasional tidak
+                              dihitung sebagai beban target absensi kerja.
+                            </>
                           )}
                         </span>
                       </span>
@@ -1524,19 +1655,37 @@ export function HistoryView(props: {
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 inline-block" />
-                        <span>Sudah isi: <strong className="text-[var(--text-primary)]">{consistencyStats.submitted} hari</strong></span>
+                        <span>
+                          Sudah isi:{" "}
+                          <strong className="text-[var(--text-primary)]">
+                            {consistencyStats.submitted} hari
+                          </strong>
+                        </span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 inline-block" />
-                        <span>Belum isi: <strong className="text-[var(--text-primary)]">{consistencyStats.missed} hari</strong></span>
+                        <span>
+                          Belum isi:{" "}
+                          <strong className="text-[var(--text-primary)]">
+                            {consistencyStats.missed} hari
+                          </strong>
+                        </span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600 shrink-0 inline-block" />
-                        <span>Akan datang: <strong className="text-[var(--text-primary)]">{consistencyStats.upcoming} hari</strong></span>
+                        <span>
+                          Akan datang:{" "}
+                          <strong className="text-[var(--text-primary)]">
+                            {consistencyStats.upcoming} hari
+                          </strong>
+                        </span>
                       </div>
                     </div>
                     <div>
-                      Target: <strong className="text-[var(--text-primary)]">{consistencyStats.totalMonthTarget} hari kerja efektif</strong>
+                      Target:{" "}
+                      <strong className="text-[var(--text-primary)]">
+                        {consistencyStats.totalMonthTarget} hari kerja efektif
+                      </strong>
                     </div>
                   </div>
                 </div>
@@ -1562,7 +1711,9 @@ export function HistoryView(props: {
                   (w) => w.weekNumber === currentWeekInfo.weekNumber,
                 );
                 const itemKey =
-                  item.type === "report" ? item.report.id : `missing-${item.date}`;
+                  item.type === "report"
+                    ? item.report.id
+                    : `missing-${item.date}`;
 
                 return (
                   <Fragment key={itemKey}>
@@ -1586,7 +1737,8 @@ export function HistoryView(props: {
                     {item.type === "report" ? (
                       (() => {
                         const report = item.report!;
-                        const isExpanded = expandedCardNames[report.id] || false;
+                        const isExpanded =
+                          expandedCardNames[report.id] || false;
                         return (
                           <div
                             id={`date-group-${report.reportDate}`}
@@ -1597,330 +1749,353 @@ export function HistoryView(props: {
                                 : ""
                             }`}
                           >
-                      <div>
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div
-                              className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 bg-purple-500/10 text-purple-500 ${
-                                props.adminSession
-                                  ? "relative group/avatar cursor-pointer hover:bg-red-500/15"
-                                  : ""
-                              }`}
-                              onClick={(e) => {
-                                if (props.adminSession) {
-                                  e.stopPropagation();
-                                  setReportToDelete(report);
-                                  setDeleteConfirmInput("");
-                                }
-                              }}
-                              title={
-                                props.adminSession
-                                  ? "Hapus Laporan (Admin)"
-                                  : undefined
-                              }
-                            >
-                              <CalendarIcon
-                                className={`h-5 w-5 transition-transform duration-200 ${
-                                  props.adminSession
-                                    ? "group-hover/avatar:scale-0 group-hover/avatar:opacity-0"
-                                    : ""
-                                }`}
-                              />
-                              {props.adminSession && (
-                                <div className="absolute inset-0 bg-red-500 text-white rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-all duration-200 shadow-md">
-                                  <TrashIcon className="h-5 w-5" />
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <p className="font-bold text-[var(--text-primary)] truncate text-sm">
-                                  {formatWitaDate(report.reportDate)}
-                                </p>
-                                {report.source === "local" ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 shadow-2xs">
-                                    <HardDriveIcon className="h-3 w-3" />
-                                    <span>cadangan perangkat anda</span>
-                                  </span>
-                                ) : (
-                                  <span
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0 shadow-2xs"
-                                    title="Data tersimpan di Database Cloud"
+                            <div>
+                              <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className={`h-11 w-11 rounded-2xl flex items-center justify-center font-bold text-sm shrink-0 bg-purple-500/10 text-purple-500 ${
+                                      props.adminSession
+                                        ? "relative group/avatar cursor-pointer hover:bg-red-500/15"
+                                        : ""
+                                    }`}
+                                    onClick={(e) => {
+                                      if (props.adminSession) {
+                                        e.stopPropagation();
+                                        setReportToDelete(report);
+                                        setDeleteConfirmInput("");
+                                      }
+                                    }}
+                                    title={
+                                      props.adminSession
+                                        ? "Hapus Laporan (Admin)"
+                                        : undefined
+                                    }
                                   >
-                                    <DatabaseIcon className="h-3 w-3" />
-                                    <span>Database</span>
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
-                                TIM {report.tim || "TRC"} •{" "}
-                                {report.activities.length} Aktivitas •{" "}
-                                {report.updatedAt !== report.createdAt
-                                  ? `Diperbarui ${formatWitaDateTime(report.updatedAt)}`
-                                  : `Diunggah ${formatWitaDateTime(report.createdAt)}`}
-                              </p>
-                            </div>
-                          </div>
+                                    <CalendarIcon
+                                      className={`h-5 w-5 transition-transform duration-200 ${
+                                        props.adminSession
+                                          ? "group-hover/avatar:scale-0 group-hover/avatar:opacity-0"
+                                          : ""
+                                      }`}
+                                    />
+                                    {props.adminSession && (
+                                      <div className="absolute inset-0 bg-red-500 text-white rounded-2xl flex items-center justify-center opacity-0 group-hover/avatar:opacity-100 transition-all duration-200 shadow-md">
+                                        <TrashIcon className="h-5 w-5" />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <p className="font-bold text-[var(--text-primary)] truncate text-sm">
+                                        {formatWitaDate(report.reportDate)}
+                                      </p>
+                                      {report.source === "local" ? (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 shadow-2xs">
+                                          <HardDriveIcon className="h-3 w-3" />
+                                          <span>cadangan perangkat anda</span>
+                                        </span>
+                                      ) : Boolean(props.adminSession) ? (
+                                        <DatabaseAccountBadge
+                                          account={report.databaseAccount}
+                                        />
+                                      ) : null}
+                                    </div>
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
+                                      TIM {report.tim || "TRC"} •{" "}
+                                      {report.activities.length} Aktivitas •{" "}
+                                      {report.updatedAt !== report.createdAt
+                                        ? `Diperbarui ${formatWitaDateTime(report.updatedAt)}`
+                                        : `Diunggah ${formatWitaDateTime(report.createdAt)}`}
+                                    </p>
+                                  </div>
+                                </div>
 
-                          {/* Right side container */}
-                          <div className="flex items-center gap-3 shrink-0">
-                            <div
-                              className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {/* Edit Button */}
-                              {(report.reportDate === today ||
-                                canUseAnyReportDate) && (
+                                {/* Right side container */}
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <div
+                                    className="hidden md:flex items-center pl-4 border-l border-[var(--border-soft)] gap-2"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {/* Edit Button */}
+                                    {(report.reportDate === today ||
+                                      canUseAnyReportDate) && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void onHandleLoadEdit(report);
+                                        }}
+                                        disabled={
+                                          editLoadingReportId === report.id
+                                        }
+                                        className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                        title="Edit Laporan"
+                                      >
+                                        {editLoadingReportId === report.id ? (
+                                          <SpinnerIcon />
+                                        ) : (
+                                          <PencilIcon className="h-3.5 w-3.5" />
+                                        )}
+                                        <span>Edit</span>
+                                      </button>
+                                    )}
+
+                                    {/* Excel Export */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void onHandleExport(report);
+                                      }}
+                                      disabled={
+                                        excelExportingReportId === report.id
+                                      }
+                                      className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                      title="Download Excel"
+                                    >
+                                      {excelExportingReportId === report.id ? (
+                                        <SpinnerIcon />
+                                      ) : (
+                                        <DownloadIcon className="h-3.5 w-3.5" />
+                                      )}
+                                      <span>Excel</span>
+                                    </button>
+
+                                    {/* Print PDF Button */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenPrintAction(report);
+                                      }}
+                                      className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                      title="Cetak PDF"
+                                    >
+                                      <PrintIcon className="h-3.5 w-3.5" />
+                                      <span>Print</span>
+                                    </button>
+
+                                    {/* Save as PDF Button */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void onHandleSaveAsPdf(report);
+                                      }}
+                                      disabled={
+                                        pdfExportingReportId === report.id
+                                      }
+                                      className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                      title="Save PDF"
+                                    >
+                                      {pdfExportingReportId === report.id ? (
+                                        <SpinnerIcon />
+                                      ) : (
+                                        <FileDownIcon className="h-3.5 w-3.5" />
+                                      )}
+                                      <span>PDF</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Collapsible Activity List */}
+                              <div
+                                className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]"
+                                style={{
+                                  maxHeight: isExpanded ? "1000px" : "0px",
+                                  opacity: isExpanded ? 1 : 0,
+                                  marginTop: isExpanded ? "12px" : "0px",
+                                  paddingTop: isExpanded ? "8px" : "0px",
+                                  borderTopColor: isExpanded
+                                    ? "var(--border-soft)"
+                                    : "transparent",
+                                  borderTopWidth: isExpanded ? "1px" : "0px",
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
+                                  {report.activities.map(
+                                    (activity: ReportActivity) => (
+                                      <li
+                                        key={`${report.id}-${activity.no}`}
+                                        className="leading-relaxed py-2"
+                                      >
+                                        <div className="font-semibold text-[var(--text-primary)]">
+                                          {activity.no}. {activity.description}
+                                        </div>
+                                        <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
+                                          <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
+                                          <span>
+                                            {activity.startTime} -{" "}
+                                            {activity.endTime} WITA
+                                          </span>
+                                        </span>
+                                      </li>
+                                    ),
+                                  )}
+                                </ul>
+                              </div>
+                            </div>
+
+                            {/* Mobile Actions Container */}
+                            {isExpanded ? (
+                              <div
+                                className="md:hidden flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[var(--border-soft)]"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {/* Edit Button */}
+                                {(report.reportDate === today ||
+                                  canUseAnyReportDate) && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void onHandleLoadEdit(report);
+                                    }}
+                                    disabled={editLoadingReportId === report.id}
+                                    className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                    title="Edit Laporan"
+                                  >
+                                    {editLoadingReportId === report.id ? (
+                                      <SpinnerIcon />
+                                    ) : (
+                                      <PencilIcon className="h-3.5 w-3.5" />
+                                    )}
+                                    <span>Edit</span>
+                                  </button>
+                                )}
+
+                                {/* Excel Export */}
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    void onHandleLoadEdit(report);
+                                    void onHandleExport(report);
                                   }}
-                                  disabled={editLoadingReportId === report.id}
+                                  disabled={
+                                    excelExportingReportId === report.id
+                                  }
                                   className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                                  title="Edit Laporan"
+                                  title="Download Excel"
                                 >
-                                  {editLoadingReportId === report.id ? (
+                                  {excelExportingReportId === report.id ? (
                                     <SpinnerIcon />
                                   ) : (
-                                    <PencilIcon className="h-3.5 w-3.5" />
+                                    <DownloadIcon className="h-3.5 w-3.5" />
                                   )}
-                                  <span>Edit</span>
+                                  <span>Excel</span>
                                 </button>
-                              )}
 
-                              {/* Excel Export */}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void onHandleExport(report);
-                                }}
-                                disabled={excelExportingReportId === report.id}
-                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                                title="Download Excel"
-                              >
-                                {excelExportingReportId === report.id ? (
-                                  <SpinnerIcon />
-                                ) : (
-                                  <DownloadIcon className="h-3.5 w-3.5" />
-                                )}
-                                <span>Excel</span>
-                              </button>
+                                {/* Print PDF Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenPrintAction(report);
+                                  }}
+                                  className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                  title="Cetak PDF"
+                                >
+                                  <PrintIcon className="h-3.5 w-3.5" />
+                                  <span>Print</span>
+                                </button>
 
-                              {/* Print PDF Button */}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOpenPrintAction(report);
-                                }}
-                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                                title="Cetak PDF"
-                              >
-                                <PrintIcon className="h-3.5 w-3.5" />
-                                <span>Print</span>
-                              </button>
-
-                              {/* Save as PDF Button */}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void onHandleSaveAsPdf(report);
-                                }}
-                                disabled={pdfExportingReportId === report.id}
-                                className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                                title="Save PDF"
-                              >
-                                {pdfExportingReportId === report.id ? (
-                                  <SpinnerIcon />
-                                ) : (
-                                  <FileDownIcon className="h-3.5 w-3.5" />
-                                )}
-                                <span>PDF</span>
-                              </button>
+                                {/* Save as PDF Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void onHandleSaveAsPdf(report);
+                                  }}
+                                  disabled={pdfExportingReportId === report.id}
+                                  className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
+                                  title="Save PDF"
+                                >
+                                  {pdfExportingReportId === report.id ? (
+                                    <SpinnerIcon />
+                                  ) : (
+                                    <FileDownIcon className="h-3.5 w-3.5" />
+                                  )}
+                                  <span>PDF</span>
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      // Render missing report card placeholder
+                      <div
+                        id={`date-group-${item.date}`}
+                        className={`surface-card rounded-[26px] p-4 sm:p-5 border border-[var(--border-soft)] shadow-sm flex flex-row items-center justify-between gap-3 hover:scale-[1.01] transition-all bg-[var(--surface-panel-strong)]/40 ${
+                          flashingDate === item.date
+                            ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
+                            : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="h-10 w-10 rounded-xl bg-[var(--danger-soft)] text-[var(--danger)] flex items-center justify-center shrink-0">
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-5 w-5"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <line x1="12" y1="9" x2="12" y2="13" />
+                              <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-extrabold text-[var(--text-primary)] truncate leading-tight">
+                              {formatWitaDate(item.date)}
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                              <span className="inline-flex items-center text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] shrink-0">
+                                Belum dibuat
+                              </span>
+                              <span className="text-[9px] text-[var(--text-muted)] font-semibold hidden xs:inline truncate">
+                                Laporan harian kosong
+                              </span>
                             </div>
                           </div>
                         </div>
 
-                        {/* Collapsible Activity List */}
-                        <div
-                          className="overflow-hidden transition-all duration-300 ease-in-out border-t border-[var(--border-soft)]"
-                          style={{
-                            maxHeight: isExpanded ? "1000px" : "0px",
-                            opacity: isExpanded ? 1 : 0,
-                            marginTop: isExpanded ? "12px" : "0px",
-                            paddingTop: isExpanded ? "8px" : "0px",
-                            borderTopColor: isExpanded
-                              ? "var(--border-soft)"
-                              : "transparent",
-                            borderTopWidth: isExpanded ? "1px" : "0px",
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <ul className="divide-y divide-[var(--border-soft)] text-xs text-[var(--text-primary)]">
-                            {report.activities.map((activity: ReportActivity) => (
-                              <li
-                                key={`${report.id}-${activity.no}`}
-                                className="leading-relaxed py-2"
-                              >
-                                <div className="font-semibold text-[var(--text-primary)]">
-                                  {activity.no}. {activity.description}
-                                </div>
-                                <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 font-medium flex items-center gap-1">
-                                  <ClockIcon className="h-3 w-3 text-[var(--text-muted)]" />
-                                  <span>
-                                    {activity.startTime} - {activity.endTime} WITA
-                                  </span>
-                                </span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-
-                      {/* Mobile Actions Container */}
-                      {isExpanded ? (
-                        <div
-                          className="md:hidden flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[var(--border-soft)]"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {/* Edit Button */}
-                          {(report.reportDate === today ||
-                            canUseAnyReportDate) && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void onHandleLoadEdit(report);
-                              }}
-                              disabled={editLoadingReportId === report.id}
-                              className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                              title="Edit Laporan"
+                        <div className="shrink-0 flex items-center">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onStartNewReportForDate) {
+                                onStartNewReportForDate(item.date);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--primary)] text-white hover:bg-[var(--primary-strong)] text-[10px] font-extrabold transition shadow-sm shrink-0"
+                          >
+                            <span>Buat</span>
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-3 w-3"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
                             >
-                              {editLoadingReportId === report.id ? (
-                                <SpinnerIcon />
-                              ) : (
-                                <PencilIcon className="h-3.5 w-3.5" />
-                              )}
-                              <span>Edit</span>
-                            </button>
-                          )}
-
-                          {/* Excel Export */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void onHandleExport(report);
-                            }}
-                            disabled={excelExportingReportId === report.id}
-                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                            title="Download Excel"
-                          >
-                            {excelExportingReportId === report.id ? (
-                              <SpinnerIcon />
-                            ) : (
-                              <DownloadIcon className="h-3.5 w-3.5" />
-                            )}
-                            <span>Excel</span>
-                          </button>
-
-                          {/* Print PDF Button */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenPrintAction(report);
-                            }}
-                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                            title="Cetak PDF"
-                          >
-                            <PrintIcon className="h-3.5 w-3.5" />
-                            <span>Print</span>
-                          </button>
-
-                          {/* Save as PDF Button */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void onHandleSaveAsPdf(report);
-                            }}
-                            disabled={pdfExportingReportId === report.id}
-                            className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5"
-                            title="Save PDF"
-                          >
-                            {pdfExportingReportId === report.id ? (
-                              <SpinnerIcon />
-                            ) : (
-                              <FileDownIcon className="h-3.5 w-3.5" />
-                            )}
-                            <span>PDF</span>
+                              <line x1="7" y1="17" x2="17" y2="7" />
+                              <polyline points="7 7 17 7 17 17" />
+                            </svg>
                           </button>
                         </div>
-                      ) : null}
-                    </div>
-                  );
-                })()
-              ) : (
-                // Render missing report card placeholder
-                <div
-                  id={`date-group-${item.date}`}
-                  className={`surface-card rounded-[26px] p-4 sm:p-5 border border-[var(--border-soft)] shadow-sm flex flex-row items-center justify-between gap-3 hover:scale-[1.01] transition-all bg-[var(--surface-panel-strong)]/40 ${
-                    flashingDate === item.date
-                      ? "bg-purple-500/10 border-purple-500/30 scale-[1.01]"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="h-10 w-10 rounded-xl bg-[var(--danger-soft)] text-[var(--danger)] flex items-center justify-center shrink-0">
-                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                        <line x1="12" y1="9" x2="12" y2="13" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                      </svg>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <h4 className="text-xs font-extrabold text-[var(--text-primary)] truncate leading-tight">
-                        {formatWitaDate(item.date)}
-                      </h4>
-                      <div className="flex flex-wrap items-center gap-2 mt-1">
-                        <span className="inline-flex items-center text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] shrink-0">
-                          Belum dibuat
-                        </span>
-                        <span className="text-[9px] text-[var(--text-muted)] font-semibold hidden xs:inline truncate">
-                          Laporan harian kosong
-                        </span>
                       </div>
-                    </div>
-                  </div>
-
-                  <div className="shrink-0 flex items-center">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (onStartNewReportForDate) {
-                          onStartNewReportForDate(item.date);
-                        }
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--primary)] text-white hover:bg-[var(--primary-strong)] text-[10px] font-extrabold transition shadow-sm shrink-0"
-                    >
-                      <span>Buat</span>
-                      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="7" y1="17" x2="17" y2="7" />
-                        <polyline points="7 7 17 7 17 17" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </Fragment>
-          );
-        })
+                    )}
+                  </Fragment>
+                );
+              })
             )}
           </div>
         ) : (
@@ -2031,22 +2206,18 @@ export function HistoryView(props: {
                             <p className="font-bold text-[var(--text-primary)] truncate text-sm">
                               {row.name}
                             </p>
-                            {row.done && row.report && (
-                              row.report.source === "local" ? (
+                            {row.done &&
+                              row.report &&
+                              (row.report.source === "local" ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0 shadow-2xs">
                                   <HardDriveIcon className="h-3 w-3" />
                                   <span>cadangan perangkat anda</span>
                                 </span>
-                              ) : (
-                                <span
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0 shadow-2xs"
-                                  title="Data tersimpan di Database Cloud"
-                                >
-                                  <DatabaseIcon className="h-3 w-3" />
-                                  <span>Database</span>
-                                </span>
-                              )
-                            )}
+                              ) : Boolean(props.adminSession) ? (
+                                <DatabaseAccountBadge
+                                  account={row.report.databaseAccount}
+                                />
+                              ) : null)}
                           </div>
                           {row.done && row.report ? (
                             <p className="text-[10px] text-[var(--text-muted)] mt-1 font-semibold">
@@ -2293,226 +2464,324 @@ export function HistoryView(props: {
       </div>
 
       {/* Admin Delete Report Confirmation Modal via Portal */}
-      {reportToDelete && typeof document !== "undefined" && createPortal(
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center p-3.5 sm:p-6 bg-black/70 backdrop-blur-md animate-fadeIn"
-          onClick={() => {
-            if (!isDeletingReport) {
-              setReportToDelete(null);
-              setDeleteConfirmInput("");
-            }
-          }}
-          role="dialog"
-          aria-modal="true"
-        >
+      {reportToDelete &&
+        typeof document !== "undefined" &&
+        createPortal(
           <div
-            className="surface-card rounded-[28px] p-6 max-w-lg w-full border border-red-500/30 shadow-2xl space-y-5 animate-scaleUp overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-3.5 sm:p-6 bg-black/70 backdrop-blur-md animate-fadeIn"
+            onClick={() => {
+              if (!isDeletingReport) {
+                setReportToDelete(null);
+                setDeleteConfirmInput("");
+              }
+            }}
+            role="dialog"
+            aria-modal="true"
           >
-            {/* Header with Close Button */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3.5">
-                <div className="h-11 w-11 rounded-2xl bg-red-500/15 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
-                  <TrashIcon className="h-6 w-6" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-base font-bold text-[var(--text-primary)]">
-                    Konfirmasi Hapus Laporan
-                  </h3>
-                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                    Tindakan ini permanen dan akan menghapus laporan beserta seluruh foto bukti dari sistem.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isDeletingReport) {
-                    setReportToDelete(null);
-                    setDeleteConfirmInput("");
-                  }
-                }}
-                disabled={isDeletingReport}
-                className="h-8 w-8 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] transition shrink-0"
-                title="Tutup dialog"
-              >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Report Details Card */}
-            <div className="rounded-2xl bg-[var(--surface-panel-strong)] p-4 border border-[var(--border-soft)] space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-[var(--text-muted)] font-semibold">Nama Petugas:</span>
-                <strong className="text-[var(--text-primary)] text-right truncate max-w-[220px]">{reportToDelete.nama}</strong>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[var(--text-muted)] font-semibold">Tanggal Laporan:</span>
-                <strong className="text-[var(--text-primary)]">
-                  {formatWitaDate(reportToDelete.reportDate)}
-                </strong>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-[var(--text-muted)] font-semibold">Rincian:</span>
-                <strong className="text-[var(--text-primary)]">
-                  TIM {reportToDelete.tim || "TRC"} • {reportToDelete.activities.length} Aktivitas
-                </strong>
-              </div>
-            </div>
-
-            {/* Form for submission with Enter key */}
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!onHandleDeleteReport || !reportToDelete || isDeletingReport) return;
-                const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                const isMatch = typed === target1 || typed === target2;
-                if (!isMatch) return;
-
-                setIsDeletingReport(true);
-                try {
-                  await onHandleDeleteReport(reportToDelete);
-                  setReportToDelete(null);
-                  setDeleteConfirmInput("");
-                } catch {
-                  // error handled in hook
-                } finally {
-                  setIsDeletingReport(false);
-                }
-              }}
-              className="space-y-3"
+            <div
+              className="surface-card rounded-[28px] p-6 max-w-lg w-full border border-red-500/30 shadow-2xl space-y-5 animate-scaleUp overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
             >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="block text-xs font-semibold text-[var(--text-primary)]">
-                    Ketik nama dan tanggal untuk konfirmasi:
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
-                      setDeleteConfirmInput(pattern);
-                      if (navigator.clipboard) {
-                        void navigator.clipboard.writeText(pattern);
-                        setCopiedPattern(true);
-                        setTimeout(() => setCopiedPattern(false), 2000);
-                      }
-                    }}
-                    className="text-[10px] font-bold text-[var(--primary)] hover:underline flex items-center gap-1 shrink-0"
-                  >
-                    <span>{copiedPattern ? "✓ Tersalin & Terisi" : "Isi Otomatis"}</span>
-                  </button>
+              {/* Header with Close Button */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3.5">
+                  <div className="h-11 w-11 rounded-2xl bg-red-500/15 text-red-600 dark:text-red-400 flex items-center justify-center shrink-0">
+                    <TrashIcon className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold text-[var(--text-primary)]">
+                      Konfirmasi Hapus Laporan
+                    </h3>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                      Tindakan ini permanen dan akan menghapus laporan beserta
+                      seluruh foto bukti dari sistem.
+                    </p>
+                  </div>
                 </div>
-
-                <div className="flex items-center justify-between p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs font-mono font-bold text-red-600 dark:text-red-400 gap-2">
-                  <span className="select-all break-all">{reportToDelete.nama} {reportToDelete.reportDate}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
-                      if (navigator.clipboard) {
-                        void navigator.clipboard.writeText(pattern);
-                        setCopiedPattern(true);
-                        setTimeout(() => setCopiedPattern(false), 2000);
-                      }
-                    }}
-                    className="p-1 rounded hover:bg-red-500/20 transition shrink-0"
-                    title="Salin teks konfirmasi"
-                  >
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                    </svg>
-                  </button>
-                </div>
-
-                <input
-                  type="text"
-                  value={deleteConfirmInput}
-                  onChange={(e) => setDeleteConfirmInput(e.target.value)}
-                  placeholder={`Ketik: ${reportToDelete.nama} ${reportToDelete.reportDate}`}
-                  className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-red-500 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none transition shadow-inner text-[var(--text-primary)] font-medium"
-                  autoFocus
-                  disabled={isDeletingReport}
-                />
-
-                {(() => {
-                  const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                  const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                  const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                  const isMatch = typed === target1 || typed === target2;
-
-                  if (isMatch) {
-                    return (
-                      <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
-                        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        <span>Teks konfirmasi cocok. Tekan Enter atau tombol Hapus Laporan untuk melanjutkan.</span>
-                      </p>
-                    );
-                  } else if (deleteConfirmInput.length > 0) {
-                    return (
-                      <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 animate-fadeIn">
-                        Teks belum sesuai dengan nama dan tanggal laporan.
-                      </p>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-
-              {/* Modal Actions */}
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--border-soft)]">
                 <button
                   type="button"
                   onClick={() => {
-                    setReportToDelete(null);
-                    setDeleteConfirmInput("");
+                    if (!isDeletingReport) {
+                      setReportToDelete(null);
+                      setDeleteConfirmInput("");
+                    }
                   }}
                   disabled={isDeletingReport}
-                  className="btn-secondary px-4 py-2 text-xs"
+                  className="h-8 w-8 rounded-full flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-muted)] transition shrink-0"
+                  title="Tutup dialog"
                 >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={
-                    isDeletingReport ||
-                    !(
-                      (() => {
-                        const typed = deleteConfirmInput.trim().toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                        const target1 = `${reportToDelete.nama} ${reportToDelete.reportDate}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                        const target2 = `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`.toLowerCase().replace(/,/g, " ").replace(/-/g, " ").replace(/\s+/g, " ");
-                        return typed === target1 || typed === target2;
-                      })()
-                    )
-                  }
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold transition shadow-md shadow-red-600/20"
-                >
-                  {isDeletingReport ? (
-                    <>
-                      <SpinnerIcon />
-                      <span>Menghapus...</span>
-                    </>
-                  ) : (
-                    <>
-                      <TrashIcon className="h-4 w-4" />
-                      <span>Hapus Laporan</span>
-                    </>
-                  )}
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
                 </button>
               </div>
-            </form>
-          </div>
-        </div>,
-        document.body
-      )}
+
+              {/* Report Details Card */}
+              <div className="rounded-2xl bg-[var(--surface-panel-strong)] p-4 border border-[var(--border-soft)] space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--text-muted)] font-semibold">
+                    Nama Petugas:
+                  </span>
+                  <strong className="text-[var(--text-primary)] text-right truncate max-w-[220px]">
+                    {reportToDelete.nama}
+                  </strong>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--text-muted)] font-semibold">
+                    Tanggal Laporan:
+                  </span>
+                  <strong className="text-[var(--text-primary)]">
+                    {formatWitaDate(reportToDelete.reportDate)}
+                  </strong>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--text-muted)] font-semibold">
+                    Rincian:
+                  </span>
+                  <strong className="text-[var(--text-primary)]">
+                    TIM {reportToDelete.tim || "TRC"} •{" "}
+                    {reportToDelete.activities.length} Aktivitas
+                  </strong>
+                </div>
+              </div>
+
+              {/* Form for submission with Enter key */}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (
+                    !onHandleDeleteReport ||
+                    !reportToDelete ||
+                    isDeletingReport
+                  )
+                    return;
+                  const typed = deleteConfirmInput
+                    .trim()
+                    .toLowerCase()
+                    .replace(/,/g, " ")
+                    .replace(/-/g, " ")
+                    .replace(/\s+/g, " ");
+                  const target1 =
+                    `${reportToDelete.nama} ${reportToDelete.reportDate}`
+                      .toLowerCase()
+                      .replace(/,/g, " ")
+                      .replace(/-/g, " ")
+                      .replace(/\s+/g, " ");
+                  const target2 =
+                    `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`
+                      .toLowerCase()
+                      .replace(/,/g, " ")
+                      .replace(/-/g, " ")
+                      .replace(/\s+/g, " ");
+                  const isMatch = typed === target1 || typed === target2;
+                  if (!isMatch) return;
+
+                  setIsDeletingReport(true);
+                  try {
+                    await onHandleDeleteReport(reportToDelete);
+                    setReportToDelete(null);
+                    setDeleteConfirmInput("");
+                  } catch {
+                    // error handled in hook
+                  } finally {
+                    setIsDeletingReport(false);
+                  }
+                }}
+                className="space-y-3"
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-[var(--text-primary)]">
+                      Ketik nama dan tanggal untuk konfirmasi:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
+                        setDeleteConfirmInput(pattern);
+                        if (navigator.clipboard) {
+                          void navigator.clipboard.writeText(pattern);
+                          setCopiedPattern(true);
+                          setTimeout(() => setCopiedPattern(false), 2000);
+                        }
+                      }}
+                      className="text-[10px] font-bold text-[var(--primary)] hover:underline flex items-center gap-1 shrink-0"
+                    >
+                      <span>
+                        {copiedPattern ? "✓ Tersalin & Terisi" : "Isi Otomatis"}
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs font-mono font-bold text-red-600 dark:text-red-400 gap-2">
+                    <span className="select-all break-all">
+                      {reportToDelete.nama} {reportToDelete.reportDate}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const pattern = `${reportToDelete.nama} ${reportToDelete.reportDate}`;
+                        if (navigator.clipboard) {
+                          void navigator.clipboard.writeText(pattern);
+                          setCopiedPattern(true);
+                          setTimeout(() => setCopiedPattern(false), 2000);
+                        }
+                      }}
+                      className="p-1 rounded hover:bg-red-500/20 transition shrink-0"
+                      title="Salin teks konfirmasi"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <rect
+                          width="14"
+                          height="14"
+                          x="8"
+                          y="8"
+                          rx="2"
+                          ry="2"
+                        />
+                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <input
+                    type="text"
+                    value={deleteConfirmInput}
+                    onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                    placeholder={`Ketik: ${reportToDelete.nama} ${reportToDelete.reportDate}`}
+                    className="w-full bg-[var(--surface-muted)] border border-[var(--border-soft)] focus:border-red-500 rounded-xl px-3.5 py-2.5 text-xs focus:outline-none transition shadow-inner text-[var(--text-primary)] font-medium"
+                    autoFocus
+                    disabled={isDeletingReport}
+                  />
+
+                  {(() => {
+                    const typed = deleteConfirmInput
+                      .trim()
+                      .toLowerCase()
+                      .replace(/,/g, " ")
+                      .replace(/-/g, " ")
+                      .replace(/\s+/g, " ");
+                    const target1 =
+                      `${reportToDelete.nama} ${reportToDelete.reportDate}`
+                        .toLowerCase()
+                        .replace(/,/g, " ")
+                        .replace(/-/g, " ")
+                        .replace(/\s+/g, " ");
+                    const target2 =
+                      `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`
+                        .toLowerCase()
+                        .replace(/,/g, " ")
+                        .replace(/-/g, " ")
+                        .replace(/\s+/g, " ");
+                    const isMatch = typed === target1 || typed === target2;
+
+                    if (isMatch) {
+                      return (
+                        <p className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 animate-fadeIn">
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-3.5 w-3.5 shrink-0"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          <span>
+                            Teks konfirmasi cocok. Tekan Enter atau tombol Hapus
+                            Laporan untuk melanjutkan.
+                          </span>
+                        </p>
+                      );
+                    } else if (deleteConfirmInput.length > 0) {
+                      return (
+                        <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 animate-fadeIn">
+                          Teks belum sesuai dengan nama dan tanggal laporan.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+
+                {/* Modal Actions */}
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--border-soft)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReportToDelete(null);
+                      setDeleteConfirmInput("");
+                    }}
+                    disabled={isDeletingReport}
+                    className="btn-secondary px-4 py-2 text-xs"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isDeletingReport ||
+                      !(() => {
+                        const typed = deleteConfirmInput
+                          .trim()
+                          .toLowerCase()
+                          .replace(/,/g, " ")
+                          .replace(/-/g, " ")
+                          .replace(/\s+/g, " ");
+                        const target1 =
+                          `${reportToDelete.nama} ${reportToDelete.reportDate}`
+                            .toLowerCase()
+                            .replace(/,/g, " ")
+                            .replace(/-/g, " ")
+                            .replace(/\s+/g, " ");
+                        const target2 =
+                          `${reportToDelete.nama} ${formatWitaDate(reportToDelete.reportDate)}`
+                            .toLowerCase()
+                            .replace(/,/g, " ")
+                            .replace(/-/g, " ")
+                            .replace(/\s+/g, " ");
+                        return typed === target1 || typed === target2;
+                      })()
+                    }
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold transition shadow-md shadow-red-600/20"
+                  >
+                    {isDeletingReport ? (
+                      <>
+                        <SpinnerIcon />
+                        <span>Menghapus...</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrashIcon className="h-4 w-4" />
+                        <span>Hapus Laporan</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {/* Drafts Modal Fallback */}
       {!onOpenSavedDrafts && (

@@ -93,6 +93,9 @@ export function groupReportsToConsolidatedDateEntries(
 /**
  * Returns Monday and Sunday (YYYY-MM-DD) for any calendar date.
  * Assumes Monday-Sunday civil calendar week.
+ * Special case: If day 1 of the month is a Sunday, it is merged into the first
+ * full week of that month (Monday day 2 s/d Sunday day 8) so that Week 1 is not
+ * skipped for weekday reports.
  */
 export function getCalendarWeekRange(dateInput: string): CalendarWeekRange {
   // Parse date safely without timezone skew
@@ -104,6 +107,27 @@ export function getCalendarWeekRange(dateInput: string): CalendarWeekRange {
 
   // In JS getDay(): 0 is Sunday, 1 is Monday ... 6 is Saturday
   const dayOfWeek = d.getDay();
+
+  // If day 1 of the month is Sunday, merge it into the first full week of this month (day 2 - 8)
+  if (day === 1 && dayOfWeek === 0) {
+    const mondayDate = new Date(d);
+    mondayDate.setDate(2);
+    const sundayDate = new Date(d);
+    sundayDate.setDate(8);
+
+    const formatToYmd = (date: Date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const dayStr = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${dayStr}`;
+    };
+
+    return {
+      monday: formatToYmd(mondayDate),
+      sunday: formatToYmd(sundayDate),
+    };
+  }
+
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const diffToSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
 
@@ -174,7 +198,11 @@ export function groupReportsByCalendarWeek(reports: Report[]): CalendarWeekGroup
   return Array.from(map.values())
     .sort((a, b) => a.mondayDate.localeCompare(b.mondayDate))
     .map((g) => {
-      const startFormatted = formatWitaDate(g.mondayDate);
+      const effectiveStart =
+        g.earliestReportDate && g.earliestReportDate < g.mondayDate
+          ? g.earliestReportDate
+          : g.mondayDate;
+      const startFormatted = formatWitaDate(effectiveStart);
       const endFormatted = formatWitaDate(g.sundayDate);
       return {
         ...g,
@@ -275,10 +303,16 @@ export function getMonthCalendarWeeks(
       const mStartStr = `${year}-${mStr}-01`;
       const mEndStr = `${year}-${mStr}-${String(lastDayOfMonth).padStart(2, "0")}`;
 
-      const startDay = monday < mStartStr ? "01" : monday.split("-")[2];
-      const endDay = sunday > mEndStr ? String(lastDayOfMonth).padStart(2, "0") : sunday.split("-")[2];
+      // In the first week of the month, always anchor start to 01 (e.g. when day 1 is Sunday)
+      const startDay =
+        weeks.length === 0 || monday < mStartStr ? "01" : monday.split("-")[2];
+      const endDay =
+        sunday > mEndStr ? String(lastDayOfMonth).padStart(2, "0") : sunday.split("-")[2];
 
-      const isCurrentWeek = today >= monday && today <= sunday;
+      const startDate = `${year}-${mStr}-${startDay}`;
+      const endDate = `${year}-${mStr}-${endDay}`;
+      const isCurrentWeek =
+        (today >= monday || today >= startDate) && today <= sunday;
       const mName = MONTH_SHORT_NAMES[month - 1];
       const rangeLabel = `${parseInt(startDay, 10)} - ${parseInt(endDay, 10)} ${mName}`;
 
@@ -287,8 +321,8 @@ export function getMonthCalendarWeeks(
         weekKey,
         monday,
         sunday,
-        startDate: `${year}-${mStr}-${startDay}`,
-        endDate: `${year}-${mStr}-${endDay}`,
+        startDate,
+        endDate,
         label: `Minggu ${weeks.length + 1}`,
         rangeLabel,
         isCurrentWeek,
@@ -310,13 +344,18 @@ export function getCalendarWeeksFromReports(
   const today = todayDateInput || getTodayDateStr();
 
   return groups.map((g, idx) => {
-    const isCurrentWeek = today >= g.mondayDate && today <= g.sundayDate;
+    const effectiveStart =
+      g.earliestReportDate && g.earliestReportDate < g.mondayDate
+        ? g.earliestReportDate
+        : g.mondayDate;
+    const isCurrentWeek =
+      (today >= g.mondayDate || today >= effectiveStart) && today <= g.sundayDate;
     return {
       weekNumber: idx + 1,
       weekKey: g.weekKey,
       monday: g.mondayDate,
       sunday: g.sundayDate,
-      startDate: g.mondayDate,
+      startDate: effectiveStart,
       endDate: g.sundayDate,
       label: `Minggu ${idx + 1}`,
       rangeLabel: g.periodLabel,
