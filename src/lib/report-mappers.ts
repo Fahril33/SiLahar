@@ -102,17 +102,19 @@ export function mapReportRow(row: ReportRow, client?: SupabaseClient | null): Re
   const isJanMar = isJanToMarPeriod(row.report_date);
   const useJanMarPusdalops = isPusdalops && isJanMar;
 
-  // Resolusi akun database berdasarkan aturan routing periode yang dikonfigurasi admin
+  // Resolusi akun database berdasarkan client sumber aktual; routing periode hanya sebagai fallback jika client tidak diketahui
   const targetAccount = resolveAccountForDate(row.report_date);
   const targetLegacyUrl = legacySupabaseUrl;
-  const isLegacy = targetAccount === "legacy" || (
-    targetAccount !== "primary" &&
-    Boolean(
-      (legacySupabase && client === legacySupabase) ||
-      (targetLegacyUrl && row.daily_report_activities?.some((a) =>
-        a.daily_report_activity_photos?.some((p) => Boolean(p.public_url && p.public_url.includes(targetLegacyUrl))),
-      ))
-    )
+  const isLegacy = Boolean(
+    (legacySupabase && client === legacySupabase) ||
+      ((!client || client !== supabase) &&
+        (targetAccount === "legacy" ||
+          (targetLegacyUrl &&
+            row.daily_report_activities?.some((a) =>
+              a.daily_report_activity_photos?.some((p) =>
+                Boolean(p.public_url && p.public_url.includes(targetLegacyUrl)),
+              ),
+            )))),
   );
 
   const cachedTeamTypes = loadCachedTeamTypes<TeamType[]>();

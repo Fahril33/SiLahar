@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { SearchFilterInput } from "./search-filter-input";
 
-export type ReporterSortMode = "name-asc" | "name-desc" | "join-time";
+export type ReporterSortMode = "name-asc" | "name-desc" | "join-time" | "reports-desc";
 
 const SORT_CONFIG: Record<
   ReporterSortMode,
@@ -9,6 +9,7 @@ const SORT_CONFIG: Record<
 > = {
   "name-asc": { shortLabel: "A-Z", label: "Nama A-Z" },
   "name-desc": { shortLabel: "Z-A", label: "Nama Z-A" },
+  "reports-desc": { shortLabel: "Laporan", label: "Laporan Terbanyak" },
   "join-time": { shortLabel: "Join", label: "Waktu masuk" },
 };
 
@@ -50,7 +51,8 @@ function SortIcon() {
 
 function getNextSortMode(mode: ReporterSortMode): ReporterSortMode {
   if (mode === "name-asc") return "name-desc";
-  if (mode === "name-desc") return "join-time";
+  if (mode === "name-desc") return "reports-desc";
+  if (mode === "reports-desc") return "join-time";
   return "name-asc";
 }
 

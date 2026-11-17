@@ -19,6 +19,14 @@ import {
   isAdminName,
   normalizeReporterName,
 } from "./reporter-name";
+import {
+  loadCachedReporterNames,
+  saveCachedReporterNames,
+  loadDeviceSubmittedNames,
+  saveDeviceSubmittedNames,
+  loadCachedReports,
+  saveCachedReports,
+} from "./storage";
 import type {
   DraftReport,
   Report,
@@ -242,19 +250,22 @@ export async function fetchReports() {
 
   const results = await Promise.all(clients.map((c) => fetchClientReports(c)));
 
-  // Kumpulkan kunci tanggal & nama laporan dari DB baru agar tidak terduplikasi oleh legacy
+  // Kumpulkan kunci tanggal & nama laporan dari DB baru agar salinan di legacy selalu terdeduplikasi
   const primaryKeys = new Set<string>();
-  for (const rep of results[0] || []) {
-    primaryKeys.add(`${rep.reportDate}_${rep.nama.trim().toUpperCase()}`);
+  for (const list of results) {
+    for (const rep of list) {
+      if (rep.databaseAccount !== "legacy") {
+        primaryKeys.add(`${rep.reportDate}_${normalizeReporterName(rep.nama)}`);
+      }
+    }
   }
 
-  // Deduplikasi by ID: primary client (new database) takes precedence
+  // Deduplikasi by ID dan (reportDate + normalized nama): primary client (new database) takes precedence
   const reportMap = new Map<string, Report>();
   for (const list of results) {
     for (const report of list) {
-      const routedAccount = resolveAccountForDate(report.reportDate);
-      if (routedAccount === "primary" && report.databaseAccount === "legacy") {
-        const key = `${report.reportDate}_${report.nama.trim().toUpperCase()}`;
+      if (report.databaseAccount === "legacy") {
+        const key = `${report.reportDate}_${normalizeReporterName(report.nama)}`;
         if (primaryKeys.has(key)) {
           continue;
         }
@@ -312,6 +323,204 @@ export async function fetchReporterDirectoryNames() {
   return Array.from(nameSet).sort((a, b) => a.localeCompare(b));
 }
 
+type AuditReportRow = {
+  id: string;
+  reporter_directory_id?: string | null;
+  reporter_name: string | null;
+  report_date: string | null;
+  display_date_text?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+type UniqueDbReport = {
+  canonicalKey: string;
+  ids: Set<string>;
+  dateKey: string;
+  displayKey: string;
+};
+
+async function fetchDailyReportAuditRows(
+  client: SupabaseClient,
+): Promise<{ rows: AuditReportRow[]; ok: boolean }> {
+  const pageSize = 1000;
+  let selectCols =
+    "id, reporter_directory_id, reporter_name, report_date, display_date_text, created_at, updated_at";
+  const fallbackCols =
+    "id, reporter_directory_id, reporter_name, report_date, updated_at";
+
+  const rows: AuditReportRow[] = [];
+  let from = 0;
+
+  while (true) {
+    let { data, error } = await client
+      .from("daily_reports")
+      .select(selectCols)
+      .order("report_date", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error && from === 0 && selectCols !== fallbackCols) {
+      selectCols = fallbackCols;
+      const retry = await client
+        .from("daily_reports")
+        .select(selectCols)
+        .order("report_date", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (error) {
+      logSafeWarn("Gagal audit daily_reports dari client Supabase:", error);
+      return { rows, ok: false };
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    rows.push(...(data as unknown as AuditReportRow[]));
+    if (data.length < pageSize) {
+      break;
+    }
+    from += pageSize;
+  }
+
+  return { rows, ok: true };
+}
+
+function dedupeUserDbReports(rows: AuditReportRow[]): UniqueDbReport[] {
+  const map = new Map<string, UniqueDbReport>();
+  for (const row of rows) {
+    const dateKey = row.report_date ? row.report_date.trim().slice(0, 10) : "";
+    const displayKey = row.display_date_text
+      ? normalizeReporterName(row.display_date_text)
+      : "";
+    const canonicalKey = dateKey || displayKey || row.id;
+    const existing = map.get(canonicalKey);
+    if (existing) {
+      existing.ids.add(row.id);
+      if (!existing.dateKey && dateKey) existing.dateKey = dateKey;
+      if (!existing.displayKey && displayKey) existing.displayKey = displayKey;
+    } else {
+      map.set(canonicalKey, {
+        canonicalKey,
+        ids: new Set([row.id]),
+        dateKey,
+        displayKey,
+      });
+    }
+  }
+  return Array.from(map.values());
+}
+
+function countCrossDbSyncedReports(
+  primaryList: UniqueDbReport[],
+  legacyList: UniqueDbReport[],
+): number {
+  if (primaryList.length === 0 || legacyList.length === 0) return 0;
+
+  const matchedPrimary = new Set<number>();
+  const matchedLegacy = new Set<number>();
+
+  // Index primary report IDs -> index
+  const primaryIdToIndex = new Map<string, number>();
+  primaryList.forEach((p, idx) => {
+    for (const id of p.ids) {
+      if (!primaryIdToIndex.has(id)) {
+        primaryIdToIndex.set(id, idx);
+      }
+    }
+  });
+
+  // Pass 1: exact ID match
+  legacyList.forEach((leg, lIdx) => {
+    for (const id of leg.ids) {
+      const pIdx = primaryIdToIndex.get(id);
+      if (pIdx !== undefined && !matchedPrimary.has(pIdx)) {
+        matchedPrimary.add(pIdx);
+        matchedLegacy.add(lIdx);
+        break;
+      }
+    }
+  });
+
+  // Pass 2: report_date (YYYY-MM-DD) match
+  const primaryDateToIndices = new Map<string, number[]>();
+  primaryList.forEach((p, idx) => {
+    if (matchedPrimary.has(idx) || !p.dateKey) return;
+    const arr = primaryDateToIndices.get(p.dateKey) || [];
+    arr.push(idx);
+    primaryDateToIndices.set(p.dateKey, arr);
+  });
+
+  legacyList.forEach((leg, lIdx) => {
+    if (matchedLegacy.has(lIdx) || !leg.dateKey) return;
+    const candidates = primaryDateToIndices.get(leg.dateKey);
+    if (!candidates) return;
+    const pIdx = candidates.find((idx) => !matchedPrimary.has(idx));
+    if (pIdx !== undefined) {
+      matchedPrimary.add(pIdx);
+      matchedLegacy.add(lIdx);
+    }
+  });
+
+  // Pass 3: normalized display_date_text match
+  const primaryDisplayToIndices = new Map<string, number[]>();
+  primaryList.forEach((p, idx) => {
+    if (matchedPrimary.has(idx) || !p.displayKey) return;
+    const arr = primaryDisplayToIndices.get(p.displayKey) || [];
+    arr.push(idx);
+    primaryDisplayToIndices.set(p.displayKey, arr);
+  });
+
+  legacyList.forEach((leg, lIdx) => {
+    if (matchedLegacy.has(lIdx) || !leg.displayKey) return;
+    const candidates = primaryDisplayToIndices.get(leg.displayKey);
+    if (!candidates) return;
+    const pIdx = candidates.find((idx) => !matchedPrimary.has(idx));
+    if (pIdx !== undefined) {
+      matchedPrimary.add(pIdx);
+      matchedLegacy.add(lIdx);
+    }
+  });
+
+  return matchedLegacy.size;
+}
+
+function pickTimestamp(
+  current: string | null | undefined,
+  candidate: string | null | undefined,
+  mode: "earliest" | "latest",
+): string | null {
+  if (!candidate || candidate.trim() === "") return current ?? null;
+  if (!current || current.trim() === "") return candidate;
+
+  const curIsDateOnly = current.trim().length <= 10;
+  const candIsDateOnly = candidate.trim().length <= 10;
+  if (candIsDateOnly && !curIsDateOnly && candidate.slice(0, 10) === current.slice(0, 10)) {
+    return current;
+  }
+  if (curIsDateOnly && !candIsDateOnly && current.slice(0, 10) === candidate.slice(0, 10)) {
+    return candidate;
+  }
+
+  const cTime = Date.parse(current);
+  const nTime = Date.parse(candidate);
+  if (Number.isNaN(cTime)) return Number.isNaN(nTime) ? current : candidate;
+  if (Number.isNaN(nTime)) return current;
+
+  return mode === "earliest"
+    ? nTime < cTime
+      ? candidate
+      : current
+    : nTime > cTime
+      ? candidate
+      : current;
+}
+
 export async function fetchReporterDirectoryProfiles() {
   const clients = getReadSupabaseClients();
   if (clients.length === 0) {
@@ -319,55 +528,231 @@ export async function fetchReporterDirectoryProfiles() {
   }
 
   const profileMap = new Map<string, ReporterDirectoryProfile>();
+  const auditResults = new Map<
+    "primary" | "legacy",
+    { rows: AuditReportRow[]; ok: boolean }
+  >();
 
   await Promise.all(
     clients.map(async (client) => {
-      try {
-        const { data, error } = await client
-          .from("reporter_directory")
-          .select(
-            "id, full_name, first_reported_at, last_reported_at, total_reports, is_active",
-          )
-          .order("full_name", { ascending: true });
+      const isPrimary = client === supabase;
+      const accountType: "primary" | "legacy" = isPrimary ? "primary" : "legacy";
 
-        if (error) {
-          logSafeWarn("Gagal fetch reporter_directory profiles dari salah satu client:", error);
-          return;
-        }
-
-        for (const row of (data ?? [])) {
-          const profile = mapReporterDirectoryRow(row as ReporterDirectoryRow);
-          if (isAdminName(profile.fullName)) continue;
-
-          const key = profile.fullName.trim().toUpperCase();
-          const existing = profileMap.get(key);
-          if (!existing) {
-            profileMap.set(key, profile);
-          } else {
-            profileMap.set(key, {
-              ...existing,
-              totalReports: (existing.totalReports || 0) + (profile.totalReports || 0),
-              firstReportedAt:
-                existing.firstReportedAt && profile.firstReportedAt
-                  ? existing.firstReportedAt < profile.firstReportedAt
-                    ? existing.firstReportedAt
-                    : profile.firstReportedAt
-                  : existing.firstReportedAt || profile.firstReportedAt,
-              lastReportedAt:
-                existing.lastReportedAt && profile.lastReportedAt
-                  ? existing.lastReportedAt > profile.lastReportedAt
-                    ? existing.lastReportedAt
-                    : profile.lastReportedAt
-                  : existing.lastReportedAt || profile.lastReportedAt,
-              isActive: existing.isActive || profile.isActive,
-            });
+      const [dirRes, auditRes] = await Promise.all([
+        (async () => {
+          try {
+            return await client
+              .from("reporter_directory")
+              .select(
+                "id, full_name, first_reported_at, last_reported_at, total_reports, is_active",
+              )
+              .order("full_name", { ascending: true });
+          } catch (err) {
+            return { data: null, error: err };
           }
+        })(),
+        fetchDailyReportAuditRows(client),
+      ]);
+
+      auditResults.set(accountType, auditRes);
+
+      if (dirRes.error) {
+        logSafeWarn(
+          "Gagal fetch reporter_directory profiles dari salah satu client:",
+          dirRes.error,
+        );
+        return;
+      }
+
+      for (const row of dirRes.data ?? []) {
+        const profile = mapReporterDirectoryRow(row as ReporterDirectoryRow);
+        if (isAdminName(profile.fullName)) continue;
+
+        const key = normalizeReporterName(profile.fullName);
+        if (!key) continue;
+
+        const existing = profileMap.get(key);
+        const reportsCount = profile.totalReports || 0;
+
+        if (!existing) {
+          profileMap.set(key, {
+            ...profile,
+            dbSources: [accountType],
+            primaryId: isPrimary ? profile.id : null,
+            legacyId: !isPrimary ? profile.id : null,
+            primaryReportsCount: isPrimary ? reportsCount : 0,
+            legacyReportsCount: !isPrimary ? reportsCount : 0,
+          });
+        } else {
+          const nextDbSources = Array.from(
+            new Set([...(existing.dbSources || []), accountType]),
+          );
+          profileMap.set(key, {
+            ...existing,
+            id: isPrimary ? profile.id : existing.id,
+            fullName: isPrimary ? profile.fullName : existing.fullName,
+            primaryId: isPrimary ? profile.id : existing.primaryId,
+            legacyId: !isPrimary ? profile.id : existing.legacyId,
+            primaryReportsCount: isPrimary
+              ? reportsCount
+              : existing.primaryReportsCount || 0,
+            legacyReportsCount: !isPrimary
+              ? reportsCount
+              : existing.legacyReportsCount || 0,
+            dbSources: nextDbSources,
+            totalReports: Math.max(
+              existing.totalReports || 0,
+              profile.totalReports || 0,
+            ),
+            firstReportedAt: pickTimestamp(
+              existing.firstReportedAt,
+              profile.firstReportedAt,
+              "earliest",
+            ),
+            lastReportedAt: pickTimestamp(
+              existing.lastReportedAt,
+              profile.lastReportedAt,
+              "latest",
+            ),
+            isActive: existing.isActive || profile.isActive,
+          });
         }
-      } catch (err) {
-        logSafeWarn("Error fetch reporter_directory profiles:", err);
       }
     }),
   );
+
+  // Build ID lookup indices to correlate daily_reports even if reporter_name changed
+  const profileByPrimaryId = new Map<string, string>();
+  const profileByLegacyId = new Map<string, string>();
+  for (const [key, profile] of profileMap.entries()) {
+    if (profile.primaryId) profileByPrimaryId.set(profile.primaryId, key);
+    if (profile.legacyId) profileByLegacyId.set(profile.legacyId, key);
+  }
+
+  const primaryReportsByUser = new Map<string, AuditReportRow[]>();
+  const legacyReportsByUser = new Map<string, AuditReportRow[]>();
+
+  const primaryAudit = auditResults.get("primary");
+  const legacyAudit = auditResults.get("legacy");
+  const primaryAuditOk = Boolean(primaryAudit?.ok);
+  const legacyAuditOk = Boolean(legacyAudit?.ok);
+
+  if (primaryAuditOk && primaryAudit) {
+    for (const row of primaryAudit.rows) {
+      let targetKey = row.reporter_directory_id
+        ? profileByPrimaryId.get(row.reporter_directory_id) ??
+          profileByLegacyId.get(row.reporter_directory_id)
+        : undefined;
+      if (!targetKey && row.reporter_name) {
+        const nameKey = normalizeReporterName(row.reporter_name);
+        if (profileMap.has(nameKey)) targetKey = nameKey;
+      }
+      if (!targetKey) continue;
+      const arr = primaryReportsByUser.get(targetKey) || [];
+      arr.push(row);
+      primaryReportsByUser.set(targetKey, arr);
+    }
+  }
+
+  if (legacyAuditOk && legacyAudit) {
+    for (const row of legacyAudit.rows) {
+      let targetKey = row.reporter_directory_id
+        ? profileByLegacyId.get(row.reporter_directory_id) ??
+          profileByPrimaryId.get(row.reporter_directory_id)
+        : undefined;
+      if (!targetKey && row.reporter_name) {
+        const nameKey = normalizeReporterName(row.reporter_name);
+        if (profileMap.has(nameKey)) targetKey = nameKey;
+      }
+      if (!targetKey) continue;
+      const arr = legacyReportsByUser.get(targetKey) || [];
+      arr.push(row);
+      legacyReportsByUser.set(targetKey, arr);
+    }
+  }
+
+  const hasLegacyClient = Boolean(legacySupabase);
+  const bothAuditsOk =
+    Boolean(supabase ? primaryAuditOk : true) &&
+    Boolean(hasLegacyClient ? legacyAuditOk : true);
+
+  for (const [key, profile] of profileMap.entries()) {
+    const pRows = primaryReportsByUser.get(key) || [];
+    const lRows = legacyReportsByUser.get(key) || [];
+
+    const pUnique = dedupeUserDbReports(pRows);
+    const lUnique = dedupeUserDbReports(lRows);
+
+    const primaryCount = primaryAuditOk
+      ? pUnique.length
+      : profile.primaryReportsCount ?? 0;
+    const legacyCount = legacyAuditOk
+      ? lUnique.length
+      : profile.legacyReportsCount ?? 0;
+
+    let syncedCount = 0;
+    let totalReports: number;
+    let primaryOnlyCount: number;
+    let legacyOnlyCount: number;
+
+    if (bothAuditsOk) {
+      syncedCount = hasLegacyClient
+        ? countCrossDbSyncedReports(pUnique, lUnique)
+        : 0;
+      primaryOnlyCount = Math.max(0, primaryCount - syncedCount);
+      legacyOnlyCount = Math.max(0, legacyCount - syncedCount);
+      totalReports = primaryCount + legacyCount - syncedCount;
+    } else {
+      primaryOnlyCount = primaryCount;
+      legacyOnlyCount = legacyCount;
+      totalReports = Math.max(primaryCount, legacyCount);
+    }
+
+    const dbSourcesSet = new Set<"primary" | "legacy">(profile.dbSources || []);
+    if (profile.primaryId || primaryCount > 0) dbSourcesSet.add("primary");
+    if (profile.legacyId || legacyCount > 0) dbSourcesSet.add("legacy");
+
+    let firstReportedAt = profile.firstReportedAt;
+    let lastReportedAt = profile.lastReportedAt;
+    for (const r of pRows) {
+      firstReportedAt = pickTimestamp(
+        firstReportedAt,
+        r.created_at || r.updated_at || r.report_date,
+        "earliest",
+      );
+      lastReportedAt = pickTimestamp(
+        lastReportedAt,
+        r.updated_at || r.created_at || r.report_date,
+        "latest",
+      );
+    }
+    for (const r of lRows) {
+      firstReportedAt = pickTimestamp(
+        firstReportedAt,
+        r.created_at || r.updated_at || r.report_date,
+        "earliest",
+      );
+      lastReportedAt = pickTimestamp(
+        lastReportedAt,
+        r.updated_at || r.created_at || r.report_date,
+        "latest",
+      );
+    }
+
+    profileMap.set(key, {
+      ...profile,
+      dbSources: Array.from(dbSourcesSet),
+      primaryReportsCount: primaryCount,
+      legacyReportsCount: legacyCount,
+      syncedReportsCount: syncedCount,
+      primaryOnlyReportsCount: primaryOnlyCount,
+      legacyOnlyReportsCount: legacyOnlyCount,
+      totalReports,
+      actualAudited: bothAuditsOk,
+      firstReportedAt,
+      lastReportedAt,
+    });
+  }
 
   return Array.from(profileMap.values()).sort((a, b) =>
     a.fullName.localeCompare(b.fullName),
@@ -689,6 +1074,18 @@ export async function signInAdminAccount(email: string, password: string) {
     throw new Error("Sesi login admin belum berhasil dibuat.");
   }
 
+  // Also log into legacySupabase if available so admin permissions are active across both databases
+  if (legacySupabase) {
+    try {
+      await legacySupabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+    } catch (legErr) {
+      logSafeWarn("Catatan autentikasi database legacy:", legErr);
+    }
+  }
+
   try {
     const profile = await fetchAdminProfile(data.session.user.id);
 
@@ -704,14 +1101,15 @@ export async function signInAdminAccount(email: string, password: string) {
 }
 
 export async function signOutAdminAccount() {
-  if (!supabase) {
-    return;
+  if (supabase) {
+    try {
+      await supabase.auth.signOut();
+    } catch {}
   }
-
-  const { error } = await supabase.auth.signOut();
-
-  if (error) {
-    throw error;
+  if (legacySupabase) {
+    try {
+      await legacySupabase.auth.signOut();
+    } catch {}
   }
 }
 
@@ -869,7 +1267,14 @@ export async function renameReporterDirectoryProfile(
   }
 }
 
-export async function deleteReporterDirectoryTrace(reporterId: string) {
+export async function deleteReporterDirectoryTrace(
+  reporterId: string,
+  reporterName?: string,
+  options?: {
+    primaryId?: string | null;
+    legacyId?: string | null;
+  },
+) {
   const clients = getReadSupabaseClients();
   if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
@@ -879,53 +1284,367 @@ export async function deleteReporterDirectoryTrace(reporterId: string) {
   let lastError: any = null;
 
   for (const client of clients) {
-    try {
-      const { data, error: reportFetchError } = await client
-        .from("daily_reports")
-        .select(
-          `
-          id,
-          daily_report_activities (
-            daily_report_activity_photos (
-              storage_path
-            )
-          )
-        `,
-        )
-        .eq("reporter_directory_id", reporterId);
+    const isPrimary = client === supabase;
+    const initialTargetId = isPrimary
+      ? options?.primaryId || reporterId
+      : options?.legacyId || reporterId;
 
-      if (!reportFetchError && data) {
-        const storagePaths = ((data ?? []) as ReporterTraceReportRow[])
+    try {
+      // 1. Resolve actual user in this client by targetId OR by full_name
+      // Note: Never use .or() with names that may contain commas!
+      let clientUserId: string | null = null;
+      if (initialTargetId && !initialTargetId.startsWith("orphan-")) {
+        try {
+          const { data: userById } = await client
+            .from("reporter_directory")
+            .select("id, full_name")
+            .eq("id", initialTargetId)
+            .maybeSingle();
+          if (userById?.id) {
+            clientUserId = userById.id;
+          }
+        } catch {}
+      }
+
+      if (!clientUserId && reporterName) {
+        try {
+          const { data: userByName } = await client
+            .from("reporter_directory")
+            .select("id, full_name")
+            .eq("full_name", reporterName.trim())
+            .maybeSingle();
+          if (userByName?.id) {
+            clientUserId = userByName.id;
+          } else {
+            const { data: userByIlike } = await client
+              .from("reporter_directory")
+              .select("id, full_name")
+              .ilike("full_name", reporterName.trim())
+              .maybeSingle();
+            if (userByIlike?.id) {
+              clientUserId = userByIlike.id;
+            }
+          }
+        } catch {}
+      }
+
+      const resolvedTargetId = clientUserId || (initialTargetId && !initialTargetId.startsWith("orphan-") ? initialTargetId : null);
+
+      // 2. Fetch all reports for this user in this client (both by reporter_directory_id and by reporter_name)
+      // Query safely without PostgREST .or() to handle titles/names with commas
+      const reportMap = new Map<string, ReporterTraceReportRow>();
+
+      if (resolvedTargetId) {
+        try {
+          const { data: byIdReports } = await client
+            .from("daily_reports")
+            .select(`
+              id,
+              daily_report_activities (
+                id,
+                daily_report_activity_photos (
+                  id,
+                  storage_path
+                )
+              )
+            `)
+            .eq("reporter_directory_id", resolvedTargetId);
+
+          for (const r of (byIdReports ?? [])) {
+            reportMap.set(r.id, r as ReporterTraceReportRow);
+          }
+        } catch {}
+      }
+
+      if (reporterName) {
+        const trimmedName = reporterName.trim();
+        const formattedDbName = formatReporterNameForDatabase(reporterName);
+
+        try {
+          const { data: byNameReports } = await client
+            .from("daily_reports")
+            .select(`
+              id,
+              daily_report_activities (
+                id,
+                daily_report_activity_photos (
+                  id,
+                  storage_path
+                )
+              )
+            `)
+            .eq("reporter_name", trimmedName);
+
+          for (const r of (byNameReports ?? [])) {
+            reportMap.set(r.id, r as ReporterTraceReportRow);
+          }
+        } catch {}
+
+        if (formattedDbName !== trimmedName) {
+          try {
+            const { data: byFormattedReports } = await client
+              .from("daily_reports")
+              .select(`
+                id,
+                daily_report_activities (
+                  id,
+                  daily_report_activity_photos (
+                    id,
+                    storage_path
+                  )
+                )
+              `)
+              .eq("reporter_name", formattedDbName);
+
+            for (const r of (byFormattedReports ?? [])) {
+              reportMap.set(r.id, r as ReporterTraceReportRow);
+            }
+          } catch {}
+        }
+
+        try {
+          const { data: byIlikeReports } = await client
+            .from("daily_reports")
+            .select(`
+              id,
+              daily_report_activities (
+                id,
+                daily_report_activity_photos (
+                  id,
+                  storage_path
+                )
+              )
+            `)
+            .ilike("reporter_name", trimmedName);
+
+          for (const r of (byIlikeReports ?? [])) {
+            reportMap.set(r.id, r as ReporterTraceReportRow);
+          }
+        } catch {}
+      }
+
+      // 3. Delete related photos from storage bucket
+      const allReports = Array.from(reportMap.values());
+      const reportIds = Array.from(reportMap.keys());
+
+      if (allReports.length > 0) {
+        const storagePaths = allReports
           .flatMap((report) =>
             (report.daily_report_activities ?? []).flatMap((activity) =>
               (activity.daily_report_activity_photos ?? []).map(
-                (photo) => photo.storage_path,
+                (photo) => {
+                  const p = photo.storage_path;
+                  return p ? p.replace(/^daily-report-proofs\//, "").replace(/^\/+/, "") : "";
+                },
               ),
             ),
           )
           .filter(Boolean);
 
         if (storagePaths.length > 0) {
-          await client.storage.from(PROOF_BUCKET).remove(storagePaths);
+          try {
+            await client.storage.from(PROOF_BUCKET).remove(storagePaths);
+          } catch (storageErr) {
+            logSafeWarn("Gagal menghapus storage photos:", storageErr);
+          }
         }
       }
 
-      const { error } = await client.rpc("delete_reporter_directory_trace", {
-        reporter_id_input: reporterId,
-      });
-
-      if (!error) {
-        deletedAny = true;
-      } else {
-        lastError = error;
+      // 4. Try RPC delete_reporter_directory_trace if resolvedTargetId exists
+      if (resolvedTargetId) {
+        try {
+          const { error: rpcErr } = await client.rpc("delete_reporter_directory_trace", {
+            reporter_id_input: resolvedTargetId,
+          });
+          if (!rpcErr) {
+            deletedAny = true;
+          }
+        } catch {
+          // ignore RPC errors and continue with direct deletion
+        }
       }
-    } catch (err) {
-      lastError = err;
+
+      // 5. Direct delete child activities and photos, then reports from daily_reports
+      if (reportIds.length > 0) {
+        for (let i = 0; i < reportIds.length; i += 50) {
+          const batch = reportIds.slice(i, i + 50);
+
+          // Delete child photos and activities first to prevent FK constraint violations
+          try {
+            const { data: actRows } = await client
+              .from("daily_report_activities")
+              .select("id")
+              .in("report_id", batch);
+
+            const actIds = (actRows ?? []).map((a: any) => a.id).filter(Boolean);
+            if (actIds.length > 0) {
+              await client
+                .from("daily_report_activity_photos")
+                .delete()
+                .in("activity_id", actIds);
+
+              await client
+                .from("daily_report_activities")
+                .delete()
+                .in("id", actIds);
+            }
+          } catch {}
+
+          // Delete daily_reports batch
+          try {
+            const { error: repDelErr, count: repCount } = await client
+              .from("daily_reports")
+              .delete({ count: "exact" })
+              .in("id", batch);
+
+            if (!repDelErr && repCount && repCount > 0) {
+              deletedAny = true;
+            }
+            if (repDelErr) {
+              lastError = repDelErr;
+            }
+          } catch (batchErr) {
+            lastError = batchErr;
+          }
+        }
+      }
+
+      // Also clean by reporter_name exact and ilike
+      if (reporterName) {
+        const trimmedName = reporterName.trim();
+        const formattedDbName = formatReporterNameForDatabase(reporterName);
+
+        try {
+          const { error: delByNameErr, count: byNameCount } = await client
+            .from("daily_reports")
+            .delete({ count: "exact" })
+            .eq("reporter_name", trimmedName);
+
+          if (!delByNameErr && byNameCount && byNameCount > 0) {
+            deletedAny = true;
+          }
+        } catch {}
+
+        if (formattedDbName !== trimmedName) {
+          try {
+            const { count: byFmtCount } = await client
+              .from("daily_reports")
+              .delete({ count: "exact" })
+              .eq("reporter_name", formattedDbName);
+
+            if (byFmtCount && byFmtCount > 0) {
+              deletedAny = true;
+            }
+          } catch {}
+        }
+
+        try {
+          const { error: delByIlikeErr, count: byIlikeCount } = await client
+            .from("daily_reports")
+            .delete({ count: "exact" })
+            .ilike("reporter_name", trimmedName);
+
+          if (!delByIlikeErr && byIlikeCount && byIlikeCount > 0) {
+            deletedAny = true;
+          }
+        } catch {}
+      }
+
+      // Also clean by reporter_directory_id
+      if (resolvedTargetId) {
+        try {
+          const { error: delByIdErr, count: byIdCount } = await client
+            .from("daily_reports")
+            .delete({ count: "exact" })
+            .eq("reporter_directory_id", resolvedTargetId);
+
+          if (!delByIdErr && byIdCount && byIdCount > 0) {
+            deletedAny = true;
+          }
+          if (delByIdErr) {
+            lastError = delByIdErr;
+          }
+        } catch (delIdErr) {
+          lastError = delIdErr;
+        }
+
+        // 6. Delete reporter_directory entry by ID
+        try {
+          const { error: userDelErr, count: userCount } = await client
+            .from("reporter_directory")
+            .delete({ count: "exact" })
+            .eq("id", resolvedTargetId);
+
+          if (!userDelErr && userCount && userCount > 0) {
+            deletedAny = true;
+          }
+          if (userDelErr) {
+            lastError = userDelErr;
+          }
+        } catch (delUserErr) {
+          lastError = delUserErr;
+        }
+      }
+
+      // Also delete reporter_directory entry by full_name
+      if (reporterName) {
+        try {
+          const { count: uNameCount } = await client
+            .from("reporter_directory")
+            .delete({ count: "exact" })
+            .eq("full_name", reporterName.trim());
+
+          if (uNameCount && uNameCount > 0) {
+            deletedAny = true;
+          }
+        } catch {}
+
+        try {
+          const { count: uIlikeCount } = await client
+            .from("reporter_directory")
+            .delete({ count: "exact" })
+            .ilike("full_name", reporterName.trim());
+
+          if (uIlikeCount && uIlikeCount > 0) {
+            deletedAny = true;
+          }
+        } catch {}
+      }
+    } catch (clientErr) {
+      lastError = clientErr;
     }
   }
 
-  if (!deletedAny && lastError) {
-    throw lastError;
+  // Also clean up local storage caches
+  if (reporterName && typeof window !== "undefined") {
+    try {
+      const normTarget = normalizeReporterName(reporterName);
+      const cached = loadCachedReporterNames().filter(
+        (n) => normalizeReporterName(n) !== normTarget,
+      );
+      saveCachedReporterNames(cached);
+
+      const devNames = loadDeviceSubmittedNames().filter(
+        (n) => normalizeReporterName(n) !== normTarget,
+      );
+      saveDeviceSubmittedNames(devNames);
+
+      const cachedReps = loadCachedReports().filter(
+        (r) => normalizeReporterName(r.nama) !== normTarget,
+      );
+      saveCachedReports(cachedReps);
+    } catch {}
+  }
+
+  if (!deletedAny) {
+    if (lastError) {
+      throw new Error(
+        `Penghapusan gagal: ${lastError.message || lastError.error_description || JSON.stringify(lastError)}`,
+      );
+    }
+    throw new Error(
+      "Penghapusan gagal: Tidak ada data yang berhasil dihapus dari database. Pastikan sesi admin memiliki izin hak akses.",
+    );
   }
 }
 
@@ -1010,7 +1729,16 @@ export async function registerReporter(name: string, pass: string): Promise<Repo
   };
 }
 
-export async function updateReporterProfile(reporterId: string, nextName: string, nextPass: string) {
+export async function updateReporterProfile(
+  reporterId: string,
+  nextName: string,
+  nextPass: string,
+  options?: {
+    primaryId?: string | null;
+    legacyId?: string | null;
+    oldName?: string;
+  },
+) {
   const clients = getReadSupabaseClients();
   if (clients.length === 0) {
     throw new Error("Supabase client belum terkonfigurasi.");
@@ -1020,9 +1748,42 @@ export async function updateReporterProfile(reporterId: string, nextName: string
   let lastError: any = null;
 
   for (const client of clients) {
+    const isPrimary = client === supabase;
+    let targetId = isPrimary
+      ? options?.primaryId || reporterId
+      : options?.legacyId || reporterId;
+
     try {
+      // Find matching user in this client if oldName provided and targetId not found
+      if (options?.oldName) {
+        let userRow: { id: string } | null = null;
+        if (targetId && !targetId.startsWith("orphan-")) {
+          try {
+            const { data } = await client
+              .from("reporter_directory")
+              .select("id")
+              .eq("id", targetId)
+              .maybeSingle();
+            if (data?.id) userRow = data;
+          } catch {}
+        }
+        if (!userRow) {
+          try {
+            const { data } = await client
+              .from("reporter_directory")
+              .select("id")
+              .eq("full_name", options.oldName.trim())
+              .maybeSingle();
+            if (data?.id) userRow = data;
+          } catch {}
+        }
+        if (userRow?.id) {
+          targetId = userRow.id;
+        }
+      }
+
       const { error } = await client.rpc("update_reporter_profile", {
-        reporter_id: reporterId,
+        reporter_id: targetId,
         next_name: nextName,
         next_password: nextPass,
       });
@@ -1030,7 +1791,20 @@ export async function updateReporterProfile(reporterId: string, nextName: string
       if (!error) {
         updatedAny = true;
       } else {
-        lastError = error;
+        // Fallback: direct update if RPC is missing
+        const { error: directErr } = await client
+          .from("reporter_directory")
+          .update({
+            full_name: nextName,
+            normalized_name: formatReporterNameForDatabase(nextName),
+          })
+          .eq("id", targetId);
+
+        if (!directErr) {
+          updatedAny = true;
+        } else {
+          lastError = error;
+        }
       }
     } catch (err) {
       lastError = err;
@@ -1051,6 +1825,12 @@ export async function adminGetReporterPasswords(): Promise<Record<string, string
   const res: Record<string, string> = {};
   for (const client of clients) {
     try {
+      // Check if client is authenticated before calling admin-only RPC to avoid 400 network error
+      const { data: sessionData } = await client.auth.getSession();
+      if (!sessionData?.session) {
+        continue;
+      }
+
       const { data, error } = await client.rpc("admin_get_reporter_passwords");
       if (!error && data) {
         for (const row of data) {

@@ -49,6 +49,7 @@ import {
   includesReporterName,
   isAdminName,
   isSameReporterName,
+  normalizeReporterName,
   resolveCanonicalName,
 } from "../lib/reporter-name";
 import {
@@ -121,6 +122,7 @@ import {
   saveDraft as persistDraft,
   saveCachedReporterNames,
   saveCachedReports,
+  saveDeviceSubmittedNames,
 } from "../lib/storage";
 import { getWitaToday, isWitaFriday } from "../lib/time";
 import { optimizeReportImages } from "../lib/image-optimizer";
@@ -776,13 +778,25 @@ export function useReportDashboard() {
         ? [currentUserSession.fullName]
         : [];
 
-      const allReporterNames = deduplicateReporterNames([
-        ...dbRN,
-        ...cachedNames,
-        ...reportNames,
-        ...deviceNames,
-        ...activeUserNames,
-      ]);
+      // Server is the source of truth. Cached/device names are only used as an
+      // offline fallback when the server returned nothing, otherwise deleted
+      // accounts would be resurrected forever from localStorage.
+      const serverHasData = dbRP.length > 0 || dbR.length > 0;
+      const allReporterNames = deduplicateReporterNames(
+        serverHasData
+          ? [...dbRN, ...reportNames, ...activeUserNames]
+          : [...dbRN, ...cachedNames, ...reportNames, ...deviceNames, ...activeUserNames],
+      );
+
+      if (serverHasData && typeof window !== "undefined") {
+        // Prune stale device-submitted names that no longer exist on the server
+        const validNorms = new Set(allReporterNames.map((n) => normalizeReporterName(n)));
+        const prunedDeviceNames = deviceNames.filter((n) => validNorms.has(normalizeReporterName(n)));
+        if (prunedDeviceNames.length !== deviceNames.length) {
+          saveDeviceSubmittedNames(prunedDeviceNames);
+          setDeviceSubmittedNames(prunedDeviceNames);
+        }
+      }
 
       setReports(mergedReports);
       setReporterProfiles(mergedProfiles);
@@ -2152,7 +2166,11 @@ export function useReportDashboard() {
       setAdminActiveAction("rename-reporter");
       setAdminActiveItemId(reporter.id);
       try {
-        await updateReporterProfile(reporter.id, nextName, nextPass);
+        await updateReporterProfile(reporter.id, nextName, nextPass, {
+          primaryId: reporter.primaryId,
+          legacyId: reporter.legacyId,
+          oldName: reporter.fullName,
+        });
         if (nameChanged) {
           if (isSameReporterName(draft.nama, reporter.fullName)) {
             setDraft((current) => normalizeDraft({ ...current, nama: nextName }));
@@ -2165,19 +2183,74 @@ export function useReportDashboard() {
     }
   }
 
-  async function handleDeleteReporterTrace(reporter: ReporterDirectoryProfile) {
-    if (!adminSession) { await showError("Akses admin diperlukan", "Silakan login admin."); return; }
-    if (await askConfirmation("Hapus jejak pengguna?", `Data ${reporter.fullName} akan dihapus permanen.`, "Hapus permanen")) {
-      setAdminSubmitting(true);
-      setAdminActiveAction("delete-reporter");
-      setAdminActiveItemId(reporter.id);
-      try {
-        await deleteReporterDirectoryTrace(reporter.id);
-        if (isSameReporterName(draft.nama, reporter.fullName)) resetDraftState();
-        await loadDashboardData();
-        await showSuccess("Jejak dihapus", "Data sudah dihapus.");
-      } catch (err) { console.error(err); await showError("Hapus gagal", "Gagal menghapus jejak."); }
-      finally { setAdminSubmitting(false); setAdminActiveAction(null); setAdminActiveItemId(null); }
+  async function handleDeleteReporterTrace(
+    reporter: ReporterDirectoryProfile,
+    adminPasswordInput?: string,
+  ) {
+    if (!adminSession) {
+      await showError("Akses admin diperlukan", "Silakan login admin.");
+      return;
+    }
+
+    // If no password was provided directly, ask for confirmation
+    if (
+      !adminPasswordInput &&
+      !(await askConfirmation(
+        "Hapus jejak pengguna?",
+        `Data ${reporter.fullName} akan dihapus permanen.`,
+        "Hapus permanen",
+      ))
+    ) {
+      return;
+    }
+
+    setAdminSubmitting(true);
+    setAdminActiveAction("delete-reporter");
+    setAdminActiveItemId(reporter.id);
+    try {
+      // Authenticate both database clients if password was provided to ensure RLS permissions
+      if (adminPasswordInput && adminSession.user?.email) {
+        const email = adminSession.user.email;
+        if (supabase) {
+          const { error: priAuthErr } = await supabase.auth.signInWithPassword({
+            email,
+            password: adminPasswordInput,
+          });
+          if (priAuthErr) {
+            throw new Error(`Password administrator salah: ${priAuthErr.message}`);
+          }
+        }
+        if (legacySupabase) {
+          await legacySupabase.auth
+            .signInWithPassword({
+              email,
+              password: adminPasswordInput,
+            })
+            .catch((err) => {
+              logSafeError(err, "Dashboard/DeleteReporterTraceLegacyAuth");
+            });
+        }
+      }
+
+      await deleteReporterDirectoryTrace(reporter.id, reporter.fullName, {
+        primaryId: reporter.primaryId,
+        legacyId: reporter.legacyId,
+      });
+
+      if (isSameReporterName(draft.nama, reporter.fullName)) resetDraftState();
+      await loadDashboardData();
+      await showSuccess(
+        "Jejak Berhasil Dihapus",
+        `Seluruh data, laporan, dan akun ${reporter.fullName} telah dihapus permanen.`,
+      );
+    } catch (err: any) {
+      console.error(err);
+      await showError("Hapus Gagal", err.message || "Gagal menghapus jejak.");
+      throw err;
+    } finally {
+      setAdminSubmitting(false);
+      setAdminActiveAction(null);
+      setAdminActiveItemId(null);
     }
   }
 

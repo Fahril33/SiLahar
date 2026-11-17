@@ -99,6 +99,7 @@ export type AdminDashboardViewProps = {
   ) => Promise<void>;
   onHandleDeleteReporterTrace: (
     reporter: ReporterDirectoryProfile,
+    adminPassword?: string,
   ) => Promise<void>;
   onHandleBulkExport: (reports: Report[]) => Promise<void>;
   bulkExporting: boolean;

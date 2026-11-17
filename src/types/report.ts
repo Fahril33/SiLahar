@@ -62,6 +62,15 @@ export type ReporterDirectoryProfile = {
   totalReports: number;
   isActive: boolean;
   password?: string;
+  dbSources?: ("primary" | "legacy")[];
+  primaryId?: string | null;
+  legacyId?: string | null;
+  primaryReportsCount?: number;
+  legacyReportsCount?: number;
+  syncedReportsCount?: number;
+  primaryOnlyReportsCount?: number;
+  legacyOnlyReportsCount?: number;
+  actualAudited?: boolean;
 };
 
 export type DocumentPresentationMode = "daily" | "weekly" | "custom";

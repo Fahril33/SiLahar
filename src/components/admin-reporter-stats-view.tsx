@@ -229,8 +229,13 @@ export function AdminReporterStatsView(props: {
         />
         <StatCard
           label="Jumlah laporan"
-          value={`${analytics.totalReports}`}
+          value={`${props.reporter.actualAudited ? props.reporter.totalReports : analytics.totalReports}`}
           tone="text-[var(--info)]"
+          subtext={
+            props.reporter.actualAudited
+              ? `${props.reporter.primaryReportsCount ?? 0} di DB Utama • ${props.reporter.legacyReportsCount ?? 0} di DB Lama${props.reporter.syncedReportsCount ? ` (${props.reporter.syncedReportsCount} salinan 2 DB)` : ""}`
+              : undefined
+          }
         />
         <StatCard
           label="Jumlah aktivitas"
